@@ -62,6 +62,10 @@ class Session(SQLModel, table=True):
     garmin_workout_id: int | None = None
     garmin_schedule_id: int | None = None
     sync_error: str | None = None
+    # Anciens ids Garmin à nettoyer (remplacement ou retrait d'une séance exportée)
+    pending_old_workout_id: int | None = None
+    pending_old_schedule_id: int | None = None
+    pending_removal: bool = False  # supprimer la ligne une fois Garmin nettoyé
 
     def to_spec(self) -> SessionSpec:
         return SessionSpec(

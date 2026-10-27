@@ -1,0 +1,10 @@
+.venv/
+__pycache__/
+*.pyc
+dist/
+.tools/
+.superpowers/
+garmin_tokens.json
+coach/web_dist/
+node_modules/
+.pytest_cache/

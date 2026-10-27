@@ -1,0 +1,57 @@
+{
+  "_comment": "synthétique — à remplacer par une capture réelle via get_workout_by_id (voir plan tâche 5)",
+  "workoutName": "S3 – VMA",
+  "sportType": {"sportTypeId": 1, "sportTypeKey": "running"},
+  "workoutSegments": [
+    {
+      "segmentOrder": 1,
+      "sportType": {"sportTypeId": 1, "sportTypeKey": "running"},
+      "workoutSteps": [
+        {
+          "type": "ExecutableStepDTO",
+          "stepOrder": 1,
+          "stepType": {"stepTypeId": 1, "stepTypeKey": "warmup"},
+          "endCondition": {"conditionTypeId": 2, "conditionTypeKey": "time"},
+          "endConditionValue": 900,
+          "targetType": {"workoutTargetTypeId": 1, "workoutTargetTypeKey": "no.target"}
+        },
+        {
+          "type": "RepeatGroupDTO",
+          "stepOrder": 2,
+          "stepType": {"stepTypeId": 6, "stepTypeKey": "repeat"},
+          "numberOfIterations": 6,
+          "endCondition": {"conditionTypeId": 7, "conditionTypeKey": "iterations"},
+          "endConditionValue": 6,
+          "workoutSteps": [
+            {
+              "type": "ExecutableStepDTO",
+              "stepOrder": 3,
+              "stepType": {"stepTypeId": 3, "stepTypeKey": "interval"},
+              "endCondition": {"conditionTypeId": 3, "conditionTypeKey": "distance"},
+              "endConditionValue": 400,
+              "targetType": {"workoutTargetTypeId": 6, "workoutTargetTypeKey": "pace.zone"},
+              "targetValueOne": 4.484,
+              "targetValueTwo": 4.739
+            },
+            {
+              "type": "ExecutableStepDTO",
+              "stepOrder": 4,
+              "stepType": {"stepTypeId": 4, "stepTypeKey": "recovery"},
+              "endCondition": {"conditionTypeId": 3, "conditionTypeKey": "distance"},
+              "endConditionValue": 200,
+              "targetType": {"workoutTargetTypeId": 1, "workoutTargetTypeKey": "no.target"}
+            }
+          ]
+        },
+        {
+          "type": "ExecutableStepDTO",
+          "stepOrder": 5,
+          "stepType": {"stepTypeId": 2, "stepTypeKey": "cooldown"},
+          "endCondition": {"conditionTypeId": 2, "conditionTypeKey": "time"},
+          "endConditionValue": 600,
+          "targetType": {"workoutTargetTypeId": 1, "workoutTargetTypeKey": "no.target"}
+        }
+      ]
+    }
+  ]
+}

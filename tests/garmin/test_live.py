@@ -63,7 +63,9 @@ def test_workout_roundtrip():
         c.unschedule(sid)
         sid = None
     finally:
-        if sid is not None:
-            c.unschedule(sid)
-        if wid is not None:
-            c.delete_workout(wid)
+        try:
+            if sid is not None:
+                c.unschedule(sid)
+        finally:
+            if wid is not None:
+                c.delete_workout(wid)

@@ -316,3 +316,32 @@ def test_fake_fail_on_and_reads():
         f.metrics()
     assert f.calls == ["upload_workout"]  # écritures réussies seulement
     assert len(f.activities(date(2026, 10, 1), date(2026, 10, 27))) == 1
+
+
+@pytest.mark.parametrize("speed,expected", [(0.35, 286), (4.0, 250), (16.0, None), (0.005, None), (0.05, None), (1.0, None)])
+def test_pace_plausibility_guard(speed, expected):
+    lib = full_lib()
+    lib.responses["get_lactate_threshold"] = {"speed_and_heart_rate": {"speed": speed}}
+    assert GarminClient(lib).metrics().threshold_pace_s_km == expected
+
+
+def test_pace_guard_bounds_values():
+    from coach.garmin.client import _pace_s_km
+
+    assert _pace_s_km(1000 / 60) is None  # 60 s/km
+    assert _pace_s_km(0.05) is None  # 0,5 m/s apres x10 = 2000 s/km
+
+
+@pytest.mark.parametrize("method,arg", [("unschedule", 7), ("delete_workout", 9)])
+def test_write_404_is_noop(method, arg):
+    lib = FakeLib(error=GarminConnectNotFoundError("404"))
+    getattr(GarminClient(lib), method)(arg)
+    assert lib.calls == 1
+
+
+@pytest.mark.parametrize("method", ["unschedule", "delete_workout"])
+def test_write_other_errors_still_mapped(method):
+    with pytest.raises(GarminUnavailable):
+        getattr(GarminClient(FakeLib(error=GarminConnectConnectionError("500"))), method)(1)
+    with pytest.raises(GarminAuthRequired):
+        getattr(GarminClient(FakeLib(error=GarminConnectAuthenticationError("401"))), method)(1)

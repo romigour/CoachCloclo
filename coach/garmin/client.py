@@ -30,6 +30,7 @@ from coach.garmin.port import (
 )
 
 RETRY_DELAY_S = 5
+PACE_MIN_S_KM, PACE_MAX_S_KM = 150, 600
 
 
 class _NotFound(GarminUnavailable):
@@ -66,7 +67,9 @@ def _pace_s_km(speed: Any) -> int | None:
         return None
     if s < 1:
         s *= 10
-    return round(1000 / s)
+    pace = round(1000 / s)
+    # Garde de plausibilité (2:30 à 10:00 /km) : hors plage, unité probablement fausse.
+    return pace if PACE_MIN_S_KM <= pace <= PACE_MAX_S_KM else None
 
 
 def _running_zones(zones: Any) -> dict:
@@ -237,7 +240,13 @@ class GarminClient:
         self._call(self._api.reschedule_workout, schedule_id, d.isoformat())
 
     def unschedule(self, schedule_id: int) -> None:
-        self._call(self._api.unschedule_workout, schedule_id)
+        try:
+            self._call(self._api.unschedule_workout, schedule_id)
+        except _NotFound:
+            pass  # déjà retiré
 
     def delete_workout(self, workout_id: int) -> None:
-        self._call(self._api.delete_workout, workout_id)
+        try:
+            self._call(self._api.delete_workout, workout_id)
+        except _NotFound:
+            pass  # déjà supprimé

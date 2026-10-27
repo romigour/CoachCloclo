@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from coach.analysis.gpx import GpxError, analyze_gpx, summary_to_text
+from coach.analysis.gpx import GpxError, _detect_climbs, _smooth, analyze_gpx, summary_to_text
 
 _FIXTURES = Path(__file__).parent.parent / "fixtures" / "gpx"
 
@@ -45,3 +45,41 @@ def test_single_point_raises():
 def test_summary_text_mentions_climbs():
     t = summary_to_text(analyze_gpx(FIX("climb.gpx")))
     assert "montée" in t and "D+" in t and t.startswith("Parcours de 10.0 km")
+
+
+def _km(n: int) -> list[float]:
+    """Une mesure tous les 100 m."""
+    return [i * 0.1 for i in range(n)]
+
+
+def test_small_dip_inside_climb_does_not_split():
+    # montée 100 -> 200, creux de 10 m (< 20), remontée jusqu'à 300, puis descente
+    ele = [100, 150, 200, 190, 250, 300, 250, 200]
+    climbs = _detect_climbs(_km(len(ele)), [float(e) for e in ele])
+    assert len(climbs) == 1
+    assert climbs[0].gain_m == 200 and climbs[0].start_km == 0.0
+
+
+def test_big_dip_splits_climb():
+    ele = [100.0, 160.0, 130.0, 100.0, 170.0, 230.0]
+    assert len(_detect_climbs(_km(len(ele)), ele)) == 2
+
+
+def test_gain_of_50m_or_less_is_not_a_climb():
+    ele = [100.0, 120.0, 150.0, 120.0, 100.0]
+    assert _detect_climbs(_km(len(ele)), ele) == []
+
+
+def test_climb_still_rising_at_end_is_closed():
+    ele = [100.0, 100.0, 160.0, 220.0, 280.0]
+    climbs = _detect_climbs(_km(len(ele)), ele)
+    assert len(climbs) == 1
+    assert climbs[0].gain_m == 180 and climbs[0].start_km == pytest.approx(0.1)
+    assert climbs[0].length_km == pytest.approx(0.3)
+
+
+def test_smooth_attenuates_spike_and_shrinks_window_at_edges():
+    out = _smooth([0.0, 0.0, 100.0, 0.0, 0.0])
+    assert out[2] == pytest.approx(20.0)
+    assert out[0] == pytest.approx(100 / 3) and out[1] == pytest.approx(25.0)  # fenêtres de 3 et 4 points
+    assert _smooth([10.0, 20.0]) == [15.0, 15.0]

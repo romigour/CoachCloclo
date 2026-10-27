@@ -9,6 +9,7 @@ from coach.garmin.port import ActivitySummary, FakeGarminClient, Metrics
 from coach.llm.provider import FakeLLMProvider, LLMUsageLimit
 from coach.llm.schemas import AdjustmentResponse, Change
 from coach.plan.models import Activity, Proposal
+from tests.llm.factories import make_session
 from coach.services.sync import SyncResult, sync
 from tests.plan.factories import make_db_session, make_goal
 
@@ -184,3 +185,18 @@ def test_overlap_window_two_days(repo, coach_home, accepted_plan):
     r = sync(repo, garmin, FakeLLMProvider([adjustment_json()]), now=NOW)
     assert r.new_activities == 1
     assert repo.activity_by_garmin_id(20) is not None and repo.activity_by_garmin_id(21) is None
+
+
+def test_pending_removal_excluded_from_week_counts(repo, coach_home, fake_garmin, accepted_plan):
+    # semaine 2 : 3 séances ; l'une est en cours de retrait -> Claude peut en ajouter une
+    week2 = repo.sessions(accepted_plan.id, week_index=2)
+    gone = week2[0]
+    gone.status = "sync_error"
+    gone.pending_removal = True
+    repo.update(gone)
+    add = Change(op="add", session=make_session(week_index=2, order=4, title="Ajout"), reason="r")
+    llm = FakeLLMProvider([adjustment_json([add])])
+    r = sync(repo, fake_garmin, llm, now=NOW)
+    assert r.proposal_id is not None
+    with repo.transaction() as db:
+        assert db.get(Proposal, r.proposal_id).status == "pending"

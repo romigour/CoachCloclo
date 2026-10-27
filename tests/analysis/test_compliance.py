@@ -130,3 +130,23 @@ def test_warning_consecutive_hard_days():
 def test_warning_ignores_same_session():
     vma = _session(1, type="VMA", scheduled=TUE)
     assert not hard_session_warnings(vma, TUE, [vma])
+
+
+def test_sync_error_session_with_date_matches_like_exported():
+    s = _session(1, status="sync_error")
+    a = _act(10)
+    assert match_activities([s], [a], make_goal()) == [(1, 10)]
+
+
+def test_sync_error_pending_removal_not_matched():
+    s = _session(1, status="sync_error")
+    s.pending_removal = True
+    assert match_activities([s], [_act(10)], make_goal()) == []
+
+
+def test_mark_missed_includes_sync_error_but_not_pending_removal():
+    goal = make_goal()
+    err = _session(1, status="sync_error", scheduled=date(2026, 11, 3), week=2)
+    removing = _session(2, status="sync_error", scheduled=date(2026, 11, 3), week=2)
+    removing.pending_removal = True
+    assert mark_missed([err, removing], goal, date(2026, 11, 11)) == [1]

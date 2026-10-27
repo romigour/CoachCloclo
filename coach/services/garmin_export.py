@@ -136,6 +136,8 @@ def unschedule_session(repo: Repo, garmin: GarminPort, session_id: int) -> None:
         raise ExportError("Seule une séance exportée peut être retirée du calendrier")
     if session.garmin_schedule_id is not None:
         garmin.unschedule(session.garmin_schedule_id)
+        session.garmin_schedule_id = None
+        session = repo.update(session)
     if session.garmin_workout_id is not None:
         garmin.delete_workout(session.garmin_workout_id)
     session.status = "todo"
@@ -175,7 +177,7 @@ def _sync(repo: Repo, garmin: GarminPort, session_id: int, zones: Zones | None, 
             state["wrote"] = True
             session.pending_old_workout_id = None
             session = repo.update(session)
-    except _GARMIN_ERRORS as e:
+    except (*_GARMIN_ERRORS, ValueError) as e:
         if early and isinstance(e, _EARLY_ERRORS) and not state["wrote"]:
             raise
         session = repo.session(session_id)
@@ -198,6 +200,13 @@ def retry_sync_error(repo: Repo, garmin: GarminPort, session_id: int) -> None:
     session = _get(repo, session_id)
     if session.status != "sync_error":
         raise ExportError("Cette séance n'a pas d'erreur de synchronisation")
+    if (
+        not session.pending_removal
+        and session.garmin_schedule_id is None
+        and session.scheduled_date is not None
+        and session.scheduled_date < garmin.today()
+    ):
+        raise ExportError("Date passée : retire la séance ou choisis une nouvelle date")
     if not _sync(repo, garmin, session_id, None, early=True):
         raise ExportError(repo.session(session_id).sync_error or "Synchronisation échouée")
 
@@ -249,6 +258,13 @@ def apply_proposal(repo: Repo, garmin: GarminPort, proposal_id: int) -> list[int
         if c.op == "modify" and _get(repo, c.session_id).status == "exported":
             zones = _zones(repo)
             break
+    if zones is not None:  # toutes les conversions avant la moindre écriture
+        for c in changes:
+            if c.op == "modify" and _get(repo, c.session_id).status == "exported":
+                try:
+                    session_to_workout_json(c.session, zones, name=c.session.title)
+                except ValueError as e:
+                    raise ExportError(f"Conversion Garmin impossible : {e}") from e
 
     to_sync: list[int] = []
     with repo.transaction() as db:
@@ -269,6 +285,12 @@ def apply_proposal(repo: Repo, garmin: GarminPort, proposal_id: int) -> list[int
             s = db.get(Session, c.session_id)
             if s is None:
                 raise ExportError(f"Séance {c.session_id} introuvable")
+            if s.status not in ("todo", "exported"):
+                raise ExportError(
+                    "Séance en erreur de synchronisation : réessaie d'abord"
+                    if s.status == "sync_error"
+                    else "Séance déjà réalisée ou manquée : l'historique ne peut pas changer"
+                )
             if c.op == "modify":
                 fresh = Session.from_spec(c.session, goal_id=s.goal_id)
                 for f in (
@@ -283,17 +305,10 @@ def apply_proposal(repo: Repo, garmin: GarminPort, proposal_id: int) -> list[int
                 db.add(s)
             elif s.status == "todo":
                 db.delete(s)
-            elif s.status in ("exported", "sync_error"):
-                if s.status == "exported":
-                    _mark_for_cleanup(s, removal=True)
-                else:
-                    s.pending_removal = True
-                    s.pending_old_workout_id = s.pending_old_workout_id or s.garmin_workout_id
-                    s.pending_old_schedule_id = s.pending_old_schedule_id or s.garmin_schedule_id
-                    s.garmin_workout_id = s.garmin_schedule_id = None
+            else:  # exported
+                _mark_for_cleanup(s, removal=True)
                 to_sync.append(s.id)
                 db.add(s)
-            # done / missed : l'historique est conservé, rien à retirer
         proposal.status = "accepted"
         db.add(proposal)
 

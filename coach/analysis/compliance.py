@@ -26,6 +26,13 @@ def _expected_min(session: Session) -> float:
     return estimate_duration_min(session)
 
 
+def _scheduled(s: Session) -> bool:
+    """Séance planifiée sur Garmin, y compris en erreur de synchro (hors retrait en cours)."""
+    return s.status == "exported" or (
+        s.status == "sync_error" and not s.pending_removal and s.scheduled_date is not None
+    )
+
+
 def match_activities(
     sessions: list[Session], activities: list[Activity], goal: Goal
 ) -> list[tuple[int, int]]:
@@ -40,7 +47,7 @@ def match_activities(
         free.remove(best)
         pairs.append((session.id, best.id))
 
-    for s in (x for x in sessions if x.status == "exported" and x.scheduled_date is not None):
+    for s in (x for x in sessions if _scheduled(x) and x.scheduled_date is not None):
         exp = _expected_min(s)
         cands = [a for a in free if abs((a.date - s.scheduled_date).days) <= 1]
         take(s, cands, lambda a: (abs((a.date - s.scheduled_date).days), abs((a.duration_s or 0) / 60 - exp)))
@@ -58,7 +65,7 @@ def mark_missed(sessions: list[Session], goal: Goal, today: date) -> list[int]:
     return [
         s.id
         for s in sessions
-        if s.status in ("todo", "exported") and week_monday(goal, s.week_index) + timedelta(days=6) < today
+        if (s.status == "todo" or _scheduled(s)) and week_monday(goal, s.week_index) + timedelta(days=6) < today
     ]
 
 

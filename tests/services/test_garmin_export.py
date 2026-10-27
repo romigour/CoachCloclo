@@ -282,3 +282,126 @@ def test_reject_changes_nothing(repo, fake_garmin, session_w3):
     assert repo.pending_proposal() is None and fake_garmin.calls == []
     with pytest.raises(ExportError):
         apply_proposal(repo, fake_garmin, p.id)
+
+
+def _sync_error_session(repo, fake_garmin, exported_session):
+    fake_garmin.fail_on = {"schedule"}
+    p = proposal_of(repo, modify(exported_session.id))
+    apply_proposal(repo, fake_garmin, p.id)
+    fake_garmin.fail_on.clear()
+    fake_garmin.calls.clear()
+    return repo.session(exported_session.id)
+
+
+@pytest.mark.parametrize("op", ["modify", "remove"])
+def test_proposal_on_sync_error_session_rejected(repo, fake_garmin, exported_session, op):
+    s = _sync_error_session(repo, fake_garmin, exported_session)
+    change = modify(s.id) if op == "modify" else Change(op="remove", session_id=s.id, reason="r")
+    p = proposal_of(repo, change)
+    with pytest.raises(ExportError, match="réessaie d'abord"):
+        apply_proposal(repo, fake_garmin, p.id)
+    assert repo.pending_proposal().id == p.id and fake_garmin.calls == []
+
+
+@pytest.mark.parametrize("status", ["done", "missed"])
+@pytest.mark.parametrize("op", ["modify", "remove"])
+def test_proposal_on_done_or_missed_rejected(repo, fake_garmin, session_w3, status, op):
+    session_w3.status = status
+    repo.update(session_w3)
+    change = modify(session_w3.id) if op == "modify" else Change(op="remove", session_id=session_w3.id, reason="r")
+    p = proposal_of(repo, change)
+    with pytest.raises(ExportError, match="historique"):
+        apply_proposal(repo, fake_garmin, p.id)
+    assert repo.session(session_w3.id).title == "Sortie facile"
+    assert repo.pending_proposal().id == p.id
+
+
+def test_conversion_failure_changes_nothing(repo, goal, fake_garmin, session_w3):
+    # zones sans allure : un workout cible allure ne peut pas être converti
+    no_pace = compute_zones(
+        threshold_pace_s_km=None, pred_10k_s=None, garmin_hr_zones=None, hr_max=190, hr_rest=50
+    )
+    assert no_pace.pace is None
+    repo.add(AthleteSnapshot(date=date(2026, 11, 2), zones_json=no_pace.model_dump_json()))
+    export_session(repo, fake_garmin, session_w3.id, D)  # cible FC : convertible
+    fake_garmin.calls.clear()
+    p = proposal_of(repo, modify(session_w3.id, target_kind="pace"))
+    with pytest.raises(ExportError, match="Conversion"):
+        apply_proposal(repo, fake_garmin, p.id)
+    s = repo.session(session_w3.id)
+    assert s.title == "Sortie facile" and s.status == "exported"
+    assert repo.pending_proposal().id == p.id and fake_garmin.calls == []
+
+
+def test_one_failure_does_not_stop_other_sessions(repo, goal):
+    class FailFirstUpload(FakeGarminClient):
+        n = 0
+
+        def upload_workout(self, workout):
+            self.n += 1
+            if self.n == 3:  # 2 exports initiaux, puis le premier remplacement
+                raise GarminUnavailable("boum")
+            return super().upload_workout(workout)
+
+    g = FailFirstUpload()
+    a = repo.add(make_db_session(goal.id, week_index=3, order=1))
+    b = repo.add(make_db_session(goal.id, week_index=3, order=2, title="B"))
+    export_session(repo, g, a.id, D)
+    export_session(repo, g, b.id, date(2026, 11, 12))
+    p = proposal_of(repo, modify(a.id), modify(b.id))
+    assert apply_proposal(repo, g, p.id) == [a.id]
+    assert repo.session(a.id).status == "sync_error"
+    sb = repo.session(b.id)
+    assert sb.status == "exported" and sb.title == "Nouvelle séance"
+
+
+def test_preconversion_error_aborts_before_commit(repo, goal, fake_garmin, session_w3, monkeypatch):
+    export_session(repo, fake_garmin, session_w3.id, D)
+    p = proposal_of(repo, modify(session_w3.id))
+    import coach.services.garmin_export as ge
+
+    def boom(*a, **k):
+        raise ValueError("conversion cassée")
+
+    monkeypatch.setattr(ge, "session_to_workout_json", boom, raising=True)
+    # la pré-conversion échoue avant toute écriture
+    with pytest.raises(ExportError, match="conversion cassée"):
+        apply_proposal(repo, fake_garmin, p.id)
+    assert repo.pending_proposal().id == p.id
+
+
+def test_retry_with_past_date_rejected(repo, goal, exported_session):
+    g = FakeGarminClient(fail_on={"schedule"}, today=date(2026, 11, 20))
+    g.workouts[exported_session.garmin_workout_id] = {}
+    g.schedules[exported_session.garmin_schedule_id] = (exported_session.garmin_workout_id, D)
+    p = proposal_of(repo, modify(exported_session.id))
+    apply_proposal(repo, g, p.id)
+    g.fail_on.clear()
+    g.calls.clear()
+    with pytest.raises(ExportError, match="Date passée"):
+        retry_sync_error(repo, g, exported_session.id)
+    assert g.calls == [] and repo.session(exported_session.id).status == "sync_error"
+
+
+def test_unschedule_failure_keeps_schedule_cleared(repo, fake_garmin, exported_session):
+    fake_garmin.fail_on = {"delete_workout"}
+    with pytest.raises(GarminUnavailable):
+        unschedule_session(repo, fake_garmin, exported_session.id)
+    s = repo.session(exported_session.id)
+    assert s.garmin_schedule_id is None and s.garmin_workout_id is not None
+    fake_garmin.fail_on.clear()
+    unschedule_session(repo, fake_garmin, exported_session.id)
+    assert repo.session(exported_session.id).status == "todo" and fake_garmin.workouts == {}
+
+
+def test_valueerror_after_commit_becomes_sync_error(repo, goal, fake_garmin, exported_session, monkeypatch):
+    import coach.services.garmin_export as ge
+
+    def boom(*a, **k):
+        raise ValueError("conversion cassée")
+
+    p = proposal_of(repo, modify(exported_session.id))
+    monkeypatch.setattr(ge, "_upload_and_schedule", boom)
+    assert apply_proposal(repo, fake_garmin, p.id) == [exported_session.id]
+    s = repo.session(exported_session.id)
+    assert s.status == "sync_error" and "conversion cassée" in s.sync_error

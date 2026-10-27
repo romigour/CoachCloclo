@@ -127,7 +127,7 @@ def _propose(
     current_week = week_of(goal, today)
     upcoming = [s for s in sessions if s.status in ("todo", "exported") and s.week_index >= current_week]
     counts: dict[int, int] = {}
-    for s in sessions:
+    for s in (x for x in sessions if not x.pending_removal):
         counts[s.week_index] = counts.get(s.week_index, 0) + 1
     editable = {s.id for s in upcoming}
     week_of_session = {s.id: s.week_index for s in sessions}

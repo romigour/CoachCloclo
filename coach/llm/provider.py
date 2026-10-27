@@ -5,7 +5,7 @@ import shutil
 import subprocess
 from typing import Protocol
 
-from coach.config import Settings
+from coach.config import Settings, data_dir
 
 
 class LLMError(Exception):
@@ -54,24 +54,37 @@ class ClaudeCliProvider:
     `--tools ""` (désactive tous les outils intégrés ; pas besoin de
     `--disallowedTools`) et `--no-session-persistence` (n'écrit pas dans
     l'historique de sessions). Le prompt passe par stdin.
+
+    Isolation : `--strict-mcp-config` sans `--mcp-config` (aucun serveur MCP),
+    `--disable-slash-commands` (aucune skill) et exécution dans un dossier
+    neutre vide (`<données>/claude-cwd`) pour qu'aucun CLAUDE.md, .mcp.json
+    ou hook de projet ne s'applique. `--bare` est écarté (il n'accepte pas
+    l'OAuth de l'abonnement) ; `--setting-sources` n'est pas utilisé (impact
+    sur l'authentification non vérifiable). Pas de `--system-prompt-file` dans
+    l'aide : le prompt système passe en argument (limite ~32 k caractères sous
+    Windows).
     """
 
     def __init__(self, executable: str = "claude", timeout_s: int = 180,
-                 runner=subprocess.run, which=shutil.which):
+                 runner=subprocess.run, which=shutil.which, cwd=None):
         self.executable = executable
         self.timeout_s = timeout_s
         self.runner = runner
         self.which = which
+        self.cwd = cwd
 
     def complete(self, system: str, prompt: str) -> str:
         exe = self.which(self.executable)
         if exe is None:
             raise LLMUnavailable("CLI claude introuvable")
         args = [exe, "-p", "--output-format", "json", "--system-prompt", system,
-                "--tools", "", "--no-session-persistence"]
+                "--tools", "", "--no-session-persistence",
+                "--strict-mcp-config", "--disable-slash-commands"]
+        cwd = self.cwd if self.cwd is not None else data_dir() / "claude-cwd"
+        cwd.mkdir(parents=True, exist_ok=True)
         try:
             proc = self.runner(args, input=prompt, encoding="utf-8", capture_output=True,
-                               timeout=self.timeout_s)
+                               timeout=self.timeout_s, cwd=cwd)
         except FileNotFoundError as e:
             raise LLMUnavailable("CLI claude introuvable") from e
         except subprocess.TimeoutExpired as e:
@@ -86,13 +99,16 @@ class ClaudeCliProvider:
                 raise LLMUnavailable(_NOT_LOGGED) from None
             detail = (stderr.strip() or stdout.strip())[:500]
             raise LLMError(f"Réponse illisible du CLI claude (code {proc.returncode}) : {detail}") from None
-        text = str(envelope.get("result", ""))
+        result = envelope.get("result")
+        text = "" if result is None else str(result)
         if envelope.get("is_error"):
             if "limit" in text.lower():
                 raise LLMUsageLimit(text)
             if _mentions_auth(text):
                 raise LLMUnavailable(_NOT_LOGGED)
             raise LLMError(f"Erreur du CLI claude : {text[:500]}")
+        if result is None:
+            raise LLMError(f"Réponse Claude vide (subtype {envelope.get('subtype')})")
         return text
 
 

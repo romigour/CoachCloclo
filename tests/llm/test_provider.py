@@ -17,6 +17,11 @@ from coach.llm.provider import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _isolated_home(coach_home):
+    return coach_home
+
+
 def fake_run(stdout="", stderr="", returncode=0, raises=None):
     def run(args, **kwargs):
         run.args, run.kwargs = args, kwargs
@@ -31,8 +36,8 @@ def which_ok(name):
     return "C:/bin/claude.exe"
 
 
-def cli(run, which=which_ok):
-    return ClaudeCliProvider(runner=run, which=which)
+def cli(run, which=which_ok, cwd=None):
+    return ClaudeCliProvider(runner=run, which=which, cwd=cwd)
 
 
 def test_cli_provider_parses_envelope():
@@ -135,3 +140,24 @@ def test_provider_from_settings():
         provider_from_settings(Settings(llm_mode="api"))
     p = provider_from_settings(Settings(llm_mode="api", anthropic_api_key="k"))
     assert isinstance(p, AnthropicApiProvider)
+
+
+def test_cli_isolation_flags_and_cwd(tmp_path):
+    run = fake_run(stdout=json.dumps({"is_error": False, "result": "x"}))
+    neutral = tmp_path / "neutral"
+    cli(run, cwd=neutral).complete("s", "p")
+    assert "--strict-mcp-config" in run.args and "--mcp-config" not in run.args
+    assert "--disable-slash-commands" in run.args
+    assert run.kwargs["cwd"] == neutral and neutral.is_dir()
+
+
+def test_cli_default_cwd_is_neutral_dir_in_data_dir(coach_home):
+    run = fake_run(stdout=json.dumps({"is_error": False, "result": "x"}))
+    cli(run).complete("s", "p")
+    assert run.kwargs["cwd"] == coach_home / "claude-cwd"
+
+
+def test_cli_empty_result_is_error(tmp_path):
+    for env in ({"is_error": False, "subtype": "success"}, {"is_error": False, "result": None}):
+        with pytest.raises(LLMError, match="vide"):
+            cli(fake_run(stdout=json.dumps(env)), cwd=tmp_path).complete("s", "p")

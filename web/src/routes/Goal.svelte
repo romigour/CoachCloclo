@@ -137,7 +137,7 @@
     </label>
     <label>
       Séances par semaine
-      <input type="number" min="1" max="7" bind:value={perWeek} required />
+      <input type="number" min="2" max="7" bind:value={perWeek} required />
     </label>
     <label>
       Tracé GPX (facultatif)

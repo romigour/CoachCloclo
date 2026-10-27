@@ -9,7 +9,7 @@ from coach.api.app import create_app
 from coach.api.deps import hash_pin, verify_pin
 from coach.config import load_settings, save_settings
 from coach.garmin.port import FakeGarminClient, GarminAuthRequired, Metrics
-from coach.llm.provider import FakeLLMProvider, LLMUsageLimit
+from coach.llm.provider import FakeLLMProvider, LLMError, LLMUsageLimit
 from coach.plan.models import Activity
 from tests.llm.factories import valid_plan_json
 
@@ -46,6 +46,13 @@ class FakeLogin:
 class LimitedLLM:
     def complete(self, system, prompt):
         raise LLMUsageLimit("limite")
+
+
+class BrokenLLM:
+    """Erreur LLM générique (ex. jeton OAuth du CLI expiré, réponse illisible)."""
+
+    def complete(self, system, prompt):
+        raise LLMError("Réponse illisible du CLI claude (code 1) : OAuth token has expired")
 
 
 @pytest.fixture(autouse=True)
@@ -260,6 +267,47 @@ def test_llm_limit_maps_to_429_with_code(make_client):
     assert r.json()["code"] == "llm_limit"
 
 
+def test_generic_llm_error_maps_to_502_on_generate(make_client):
+    client = make_client(llm=BrokenLLM())
+    goal = _create_goal(client).json()
+    r = client.post(f"/api/goals/{goal['id']}/generate")
+    assert r.status_code == 502
+    assert r.json() == {
+        "code": "llm_error",
+        "detail": "Réponse illisible du CLI claude (code 1) : OAuth token has expired",
+    }
+
+
+def test_generic_llm_error_maps_to_502_on_sync(make_client, fake_garmin):
+    from datetime import date
+
+    from coach.garmin.port import ActivitySummary
+
+    client = make_client(llm=FakeLLMProvider([valid_plan_json(14, 3)]))
+    goal = _create_goal(client).json()
+    client.post(f"/api/goals/{goal['id']}/generate")
+    client.post(f"/api/goals/{goal['id']}/accept")
+    fake_garmin._activities = [
+        ActivitySummary(garmin_id=1, date=date(2026, 11, 3), type_key="running",
+                        duration_s=2700, distance_m=9000, raw={})
+    ]
+    client.app.state.llm_factory = lambda: BrokenLLM()
+    r = client.post("/api/sync")
+    assert r.status_code == 502 and r.json()["code"] == "llm_error"
+
+
+@pytest.mark.parametrize(
+    "field,value", [("sessions_per_week", "1"), ("sessions_per_week", "8"), ("distance_km", "0")]
+)
+def test_invalid_goal_values_return_422(make_client, field, value):
+    r = _create_goal(make_client(), **{field: value})
+    assert r.status_code == 422
+    body = r.json()
+    assert body["code"] == "invalid"
+    assert body["detail"] and all(set(e) == {"loc", "msg"} for e in body["detail"])
+    assert any(field in e["loc"] for e in body["detail"])
+
+
 def test_garmin_auth_maps_to_401(make_client):
     r = make_client(garmin="auth").post("/api/sync")
     assert r.status_code == 401 and r.json()["code"] == "garmin_auth"
@@ -295,7 +343,7 @@ def test_pin_rate_limited_after_five_failures(make_client):
 
 
 def test_lan_without_pin_refuses_to_start(make_client):
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="coach start --lan"):
         make_client(lan=True)
 
 

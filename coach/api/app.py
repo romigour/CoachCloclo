@@ -16,7 +16,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi import APIRouter, Depends, FastAPI, File, Form, Request, UploadFile
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 from sqlmodel import select
 
 from coach.analysis.gpx import GpxError
@@ -30,6 +30,7 @@ from coach.garmin.port import (
     GarminUnavailable,
 )
 from coach.llm.provider import (
+    LLMError,
     LLMInvalidResponse,
     LLMProvider,
     LLMTimeout,
@@ -86,6 +87,11 @@ def _error(status: int, code: str, detail) -> JSONResponse:
     return JSONResponse(status_code=status, content={"code": code, "detail": detail})
 
 
+def _invalid(errors: list[dict], prefix: tuple = ()) -> JSONResponse:
+    # jamais d'écho de `input` : il peut contenir clé API ou mot de passe
+    return _error(422, "invalid", [{"loc": [*prefix, *e["loc"]], "msg": e["msg"]} for e in errors])
+
+
 def _goal_dict(goal: Goal) -> dict:
     return {
         "id": goal.id,
@@ -131,13 +137,12 @@ def _register_errors(app: FastAPI) -> None:
     add(LLMUnavailable, 503, "llm_unavailable")
     add(LLMTimeout, 502, "llm_timeout", "Claude a mis trop de temps à répondre")
     add(LLMInvalidResponse, 502, "llm_invalid", "Claude a renvoyé une réponse invalide")
+    add(LLMError, 502, "llm_error")  # après les sous-classes (la plus précise l'emporte)
     add(CoachError, 422, "invalid")  # inclut GoalError et ExportError
     add(GpxError, 422, "invalid_gpx")
 
     async def validation_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
-        # jamais d'écho de `input` : il peut contenir clé API ou mot de passe
-        detail = [{"loc": list(e["loc"]), "msg": e["msg"]} for e in exc.errors()]
-        return _error(422, "invalid", detail)
+        return _invalid(exc.errors())
 
     app.add_exception_handler(RequestValidationError, validation_handler)
 
@@ -177,7 +182,7 @@ def create_app(
 ) -> FastAPI:
     """`login_client` (start_login/finish_login) et `clock` sont injectables pour les tests."""
     if lan and not load_settings().pin_hash:
-        raise ValueError("Le mode LAN exige un PIN : définis-en un avec `coach set-pin`")
+        raise ValueError("Le mode LAN exige un PIN : lance `coach start --lan` pour en définir un")
 
     app = FastAPI(title="Coach")
     app.state.garmin_factory = garmin_factory
@@ -318,14 +323,17 @@ def create_app(
         raw = gpx.file.read(MAX_GPX_BYTES + 1) if gpx is not None else None
         if raw is not None and len(raw) > MAX_GPX_BYTES:
             return _error(413, "too_large", "Fichier GPX trop volumineux (10 Mo maximum)")
-        data = GoalInput(
-            type=type,
-            distance_km=distance_km,
-            d_plus_m=d_plus_m,
-            race_date=race_date,
-            sessions_per_week=sessions_per_week,
-            gpx=raw,
-        )
+        try:
+            data = GoalInput(
+                type=type,
+                distance_km=distance_km,
+                d_plus_m=d_plus_m,
+                race_date=race_date,
+                sessions_per_week=sessions_per_week,
+                gpx=raw,
+            )
+        except ValidationError as e:
+            return _invalid(e.errors(), ("body",))
         return _goal_dict(create_goal(repo, garmin, data))
 
     @api.post("/goals/{goal_id}/generate")

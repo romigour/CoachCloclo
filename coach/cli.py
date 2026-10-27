@@ -3,6 +3,7 @@
 import getpass
 import shutil
 import subprocess
+import sys
 import threading
 import webbrowser
 
@@ -19,6 +20,16 @@ from coach.llm.provider import provider_from_settings
 
 app = typer.Typer(help="Coach : plans running/trail à partir de tes données Garmin.",
                   no_args_is_help=True, add_completion=False)
+
+
+@app.callback()
+def _main() -> None:
+    """Force l'UTF-8 en sortie (consoles Windows cp1252, CI) pour les ✓/✗/→."""
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, ValueError):
+            pass
 
 
 def _ask_pin() -> str:

@@ -1,0 +1,54 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build-test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - uses: astral-sh/setup-uv@v5
+      - name: Front (install, tests, build)
+        working-directory: web
+        run: |
+          npm ci
+          npm test
+          npm run build
+      - name: Tests Python
+        run: uv run pytest
+      - name: Build wheel
+        run: uv build
+      - name: Installeur (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $wheel = (Get-ChildItem dist/coach_running-*.whl | Select-Object -First 1).FullName
+          $env:COACH_SOURCE = $wheel
+          $env:COACH_INSTALL_NO_START = '1'
+          $env:COACH_INSTALL_OFFLINE = '1'
+          ./install.ps1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          coach doctor --offline
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Installeur (macOS / Linux)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          export COACH_SOURCE="$(ls "$PWD"/dist/coach_running-*.whl | head -n1)"
+          export COACH_INSTALL_NO_START=1
+          export COACH_INSTALL_OFFLINE=1
+          chmod +x install.sh
+          ./install.sh
+          export PATH="$HOME/.local/bin:$PATH"
+          coach doctor --offline

@@ -23,14 +23,14 @@ beforeEach(() => vi.unstubAllGlobals());
 
 test("ExportDialog shows warning but keeps button enabled", async () => {
   mockApi({ "export-check": { warnings: ["Séance dure à moins de 48 h"] } });
-  render(ExportDialog, { session, weekMonday: "2026-11-09" });
+  render(ExportDialog, { session, weekMonday: "2026-11-09", today: "2026-11-04" });
   expect(await screen.findByText(/48 h/)).toBeVisible();
   expect(screen.getByRole("button", { name: "Exporter" })).toBeEnabled();
 });
 
 test("ExportDialog offers only the 7 days of the week, suggested day preselected", async () => {
   mockApi({ "export-check": { warnings: [] } });
-  render(ExportDialog, { session, weekMonday: "2026-11-09" });
+  render(ExportDialog, { session, weekMonday: "2026-11-09", today: "2026-11-04" });
   const select = screen.getByRole("combobox") as HTMLSelectElement;
   expect(Array.from(select.options).map((o) => o.value)).toEqual([
     "2026-11-09", "2026-11-10", "2026-11-11", "2026-11-12", "2026-11-13", "2026-11-14", "2026-11-15",
@@ -42,7 +42,7 @@ test("ExportDialog offers only the 7 days of the week, suggested day preselected
 test("ExportDialog re-checks on change then exports with CSRF header", async () => {
   mockApi({ "export-check": { warnings: [] }, "/export": { warnings: [] } });
   const ondone = vi.fn();
-  render(ExportDialog, { session, weekMonday: "2026-11-09", ondone });
+  render(ExportDialog, { session, weekMonday: "2026-11-09", today: "2026-11-04", ondone });
   await fireEvent.change(screen.getByRole("combobox"), { target: { value: "2026-11-14" } });
   await waitFor(() => expect(calls.some((c) => c.url.includes("date=2026-11-14"))).toBe(true));
   await fireEvent.click(screen.getByRole("button", { name: "Exporter" }));
@@ -55,6 +55,24 @@ test("ExportDialog re-checks on change then exports with CSRF header", async () 
 
 test("a missed session preselects the suggested day, not its past scheduled date", () => {
   mockApi({ "export-check": { warnings: [] } });
-  render(ExportDialog, { session: { ...session, status: "missed", scheduled_date: "2026-11-10" }, weekMonday: "2026-11-09" });
+  render(ExportDialog, { session: { ...session, status: "missed", scheduled_date: "2026-11-10" }, weekMonday: "2026-11-09", today: "2026-11-04" });
   expect((screen.getByRole("combobox") as HTMLSelectElement).value).toBe("2026-11-12");
+});
+
+test("ExportDialog never offers a day before today", async () => {
+  mockApi({ "export-check": { warnings: [] } });
+  render(ExportDialog, { session: { ...session, suggested_day: "mardi" }, weekMonday: "2026-11-09", today: "2026-11-12" });
+  const select = screen.getByRole("combobox") as HTMLSelectElement;
+  expect(Array.from(select.options).map((o) => o.value)).toEqual([
+    "2026-11-12", "2026-11-13", "2026-11-14", "2026-11-15",
+  ]);
+  expect(select.value).toBe("2026-11-12");
+});
+
+test("ExportDialog on a past week offers no day and disables the action", () => {
+  mockApi({ "export-check": { warnings: [] } });
+  render(ExportDialog, { session, weekMonday: "2026-11-09", today: "2026-11-20", mode: "move" });
+  expect(screen.queryByRole("combobox")).toBeNull();
+  expect(screen.getByText(/semaine est passée/)).toBeVisible();
+  expect(screen.getByRole("button", { name: "Déplacer" })).toBeDisabled();
 });

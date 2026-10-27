@@ -34,6 +34,12 @@ export function defaultExportDate(weekMonday: string, suggestedDay: Weekday): st
   return addDays(weekMonday, idx < 0 ? 0 : idx);
 }
 
+/** Date locale du jour au format ISO. */
+export function todayIso(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
 /** « jeudi 12 novembre » */
 export function formatDay(iso: string): string {
   const d = parse(iso);

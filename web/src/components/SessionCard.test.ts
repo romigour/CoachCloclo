@@ -45,3 +45,10 @@ test("Aucune unmatches the current activity", async () => {
   expect(calls[0].url).toBe("/api/activities/1/match");
   expect(JSON.parse(calls[0].body!)).toEqual({ session_id: null });
 });
+
+test("a missed session offers no export (the backend only exports todo sessions)", () => {
+  render(SessionCard, { session: { ...session, status: "missed", scheduled_date: null }, weekMonday: "2026-11-09" });
+  expect(screen.queryByRole("button", { name: "Exporter" })).toBeNull();
+  render(SessionCard, { session: { ...session, id: 8, status: "todo", scheduled_date: null }, weekMonday: "2026-11-09" });
+  expect(screen.getByRole("button", { name: "Exporter" })).toBeVisible();
+});

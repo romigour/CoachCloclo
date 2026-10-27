@@ -92,7 +92,7 @@
 
   {#if !readonly}
     <div class="row">
-      {#if session.status === "todo" || session.status === "missed"}
+      {#if session.status === "todo"}
         <button class="primary" onclick={() => (dialog = "export")} disabled={busy}>Exporter</button>
       {/if}
       {#if session.status === "exported" || session.status === "sync_error"}

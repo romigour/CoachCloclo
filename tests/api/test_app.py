@@ -192,7 +192,9 @@ def test_export_and_unschedule(make_client, fake_garmin):
     client.post(f"/api/goals/{goal['id']}/accept")
     # zones nécessaires à l'export : générées par la génération (snapshot)
     sid = client.get("/api/plan").json()["weeks"][0]["sessions"][0]["id"]
-    r = client.post(f"/api/sessions/{sid}/export", json={"date": "2026-11-03"})
+    r = client.post(f"/api/sessions/{sid}/export", json={"date": "2026-11-03"})  # avant aujourd'hui
+    assert r.status_code == 422 and "passée" in r.json()["detail"]
+    r = client.post(f"/api/sessions/{sid}/export", json={"date": "2026-11-05"})
     assert r.status_code == 200 and "warnings" in r.json()
     assert fake_garmin.schedules
     r = client.post(f"/api/sessions/{sid}/unschedule")

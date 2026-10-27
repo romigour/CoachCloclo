@@ -2,6 +2,10 @@
 
 Ordre sûr de remplacement d'une séance exportée : upload du nouveau, planification du nouveau,
 puis seulement retrait de l'ancien. Un échec avant le nouveau `schedule` laisse l'ancien en place.
+
+Sortie d'une séance `sync_error` : réessayer, déplacer (nouvelle date dans la semaine, puis même
+synchro) ou retirer (nettoie ids actuels et anciens). La synchro des activités n'y touche pas tant
+que d'anciens ids restent à nettoyer (voir `compliance._awaiting_cleanup`) : aucun orphelin Garmin.
 """
 
 from datetime import date
@@ -64,6 +68,11 @@ def _check_day(repo: Repo, session: Session, d: date) -> None:
         raise ExportError("Le jour choisi doit appartenir à la semaine de la séance")
 
 
+def _check_not_past(garmin: GarminPort, d: date) -> None:
+    if d < garmin.today():
+        raise ExportError("Impossible de planifier une séance à une date passée")
+
+
 def _warnings(repo: Repo, session: Session, d: date) -> list[str]:
     return hard_session_warnings(session, d, repo.sessions(session.goal_id))
 
@@ -106,6 +115,7 @@ def export_session(repo: Repo, garmin: GarminPort, session_id: int, d: date) -> 
     if session.status != "todo":
         raise ExportError("Séance déjà exportée : déplace-la plutôt")
     _check_day(repo, session, d)
+    _check_not_past(garmin, d)
     zones = _zones(repo)
     warnings = _warnings(repo, session, d)
     workout_id, schedule_id = _upload_and_schedule(garmin, session, zones, d)
@@ -119,31 +129,52 @@ def export_session(repo: Repo, garmin: GarminPort, session_id: int, d: date) -> 
 
 
 def move_session(repo: Repo, garmin: GarminPort, session_id: int, d: date) -> list[str]:
+    """Déplace une séance exportée ; pour une `sync_error`, change la date puis relance la synchro."""
     session = _get(repo, session_id)
-    if session.status != "exported" or session.garmin_schedule_id is None:
+    retrying = session.status == "sync_error"
+    if retrying and session.pending_removal:
+        raise ExportError("Séance en cours de retrait : retire-la ou réessaie")
+    if not retrying and (session.status != "exported" or session.garmin_schedule_id is None):
         raise ExportError("Seule une séance exportée peut être déplacée")
     _check_day(repo, session, d)
+    _check_not_past(garmin, d)
     warnings = _warnings(repo, session, d)
-    garmin.reschedule(session.garmin_schedule_id, d)
+    if session.garmin_schedule_id is not None:
+        garmin.reschedule(session.garmin_schedule_id, d)
     session.scheduled_date = d
     repo.update(session)
+    if retrying and not _sync(repo, garmin, session_id, None, early=True):
+        raise ExportError(repo.session(session_id).sync_error or "Synchronisation échouée")
     return warnings
 
 
+_ID_PAIRS = (
+    ("garmin_schedule_id", "garmin_workout_id"),
+    ("pending_old_schedule_id", "pending_old_workout_id"),
+)
+
+
 def unschedule_session(repo: Repo, garmin: GarminPort, session_id: int) -> None:
+    """Retire du calendrier Garmin (ids actuels et, pour une `sync_error`, anciens ids à nettoyer)."""
     session = _get(repo, session_id)
-    if session.status != "exported":
+    if session.status not in ("exported", "sync_error"):
         raise ExportError("Seule une séance exportée peut être retirée du calendrier")
-    if session.garmin_schedule_id is not None:
-        garmin.unschedule(session.garmin_schedule_id)
-        session.garmin_schedule_id = None
-        session = repo.update(session)
-    if session.garmin_workout_id is not None:
-        garmin.delete_workout(session.garmin_workout_id)
+    for schedule_attr, workout_attr in _ID_PAIRS:  # chaque id effacé dès qu'il est traité
+        if getattr(session, schedule_attr) is not None:
+            garmin.unschedule(getattr(session, schedule_attr))
+            setattr(session, schedule_attr, None)
+            session = repo.update(session)
+        if getattr(session, workout_attr) is not None:
+            garmin.delete_workout(getattr(session, workout_attr))
+            setattr(session, workout_attr, None)
+            session = repo.update(session)
+    if session.pending_removal:
+        with repo.transaction() as db:
+            db.delete(db.get(Session, session_id))
+        return
     session.status = "todo"
     session.scheduled_date = None
-    session.garmin_workout_id = None
-    session.garmin_schedule_id = None
+    session.sync_error = None
     repo.update(session)
 
 

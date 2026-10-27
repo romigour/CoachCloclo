@@ -150,3 +150,22 @@ def test_mark_missed_includes_sync_error_but_not_pending_removal():
     removing = _session(2, status="sync_error", scheduled=date(2026, 11, 3), week=2)
     removing.pending_removal = True
     assert mark_missed([err, removing], goal, date(2026, 11, 11)) == [1]
+
+
+def test_sync_error_awaiting_cleanup_neither_matched_nor_missed():
+    # d'anciens ids Garmin restent à nettoyer : la synchro (sans écriture Garmin) n'y touche pas
+    goal = make_goal()
+    s = _session(1, status="sync_error", scheduled=date(2026, 11, 3), week=2)
+    s.pending_old_workout_id = 1000
+    assert match_activities([s], [_act(10, d=date(2026, 11, 3))], goal) == []
+    assert mark_missed([s], goal, date(2026, 11, 11)) == []
+    s.pending_old_workout_id, s.pending_old_schedule_id = None, 5000
+    assert mark_missed([s], goal, date(2026, 11, 11)) == []
+
+
+def test_warning_counts_scheduled_sync_error_as_exported():
+    vma = _session(1, status="todo", type="VMA", scheduled=None)
+    err = _session(2, status="sync_error", type="seuil", scheduled=TUE, title="Seuil")
+    assert hard_session_warnings(vma, WED, [err])
+    err.pending_removal = True
+    assert not hard_session_warnings(vma, WED, [err])

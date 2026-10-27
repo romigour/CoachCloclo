@@ -405,3 +405,99 @@ def test_valueerror_after_commit_becomes_sync_error(repo, goal, fake_garmin, exp
     assert apply_proposal(repo, fake_garmin, p.id) == [exported_session.id]
     s = repo.session(exported_session.id)
     assert s.status == "sync_error" and "conversion cassée" in s.sync_error
+
+
+def test_export_and_move_refuse_past_date(repo, goal, session_w3):
+    g = FakeGarminClient(today=date(2026, 11, 11))
+    with pytest.raises(ExportError, match="passé"):
+        export_session(repo, g, session_w3.id, D)
+    assert g.calls == [] and repo.session(session_w3.id).status == "todo"
+    export_session(repo, g, session_w3.id, date(2026, 11, 12))
+    g.calls.clear()
+    with pytest.raises(ExportError, match="passé"):
+        move_session(repo, g, session_w3.id, D)
+    assert g.calls == [] and repo.session(session_w3.id).scheduled_date == date(2026, 11, 12)
+
+
+def test_unschedule_sync_error_cleans_current_and_old_ids(repo, fake_garmin, exported_session):
+    fake_garmin.fail_on = {"unschedule"}  # nouveau planifié, ancien à nettoyer
+    apply_proposal(repo, fake_garmin, proposal_of(repo, modify(exported_session.id)).id)
+    assert len(fake_garmin.workouts) == 2
+    fake_garmin.fail_on.clear()
+    unschedule_session(repo, fake_garmin, exported_session.id)
+    s = repo.session(exported_session.id)
+    assert fake_garmin.workouts == {} and fake_garmin.schedules == {} and fake_garmin.calendar == {}
+    assert s.status == "todo" and s.sync_error is None and s.scheduled_date is None
+    assert (s.garmin_workout_id, s.garmin_schedule_id) == (None, None)
+    assert (s.pending_old_workout_id, s.pending_old_schedule_id) == (None, None)
+
+
+def test_unschedule_sync_error_pending_removal_deletes_row(repo, fake_garmin, exported_session):
+    fake_garmin.fail_on = {"delete_workout"}
+    p = proposal_of(repo, Change(op="remove", session_id=exported_session.id, reason="r"))
+    apply_proposal(repo, fake_garmin, p.id)
+    fake_garmin.fail_on.clear()
+    unschedule_session(repo, fake_garmin, exported_session.id)
+    assert fake_garmin.workouts == {} and fake_garmin.schedules == {}
+    with pytest.raises(KeyError):
+        repo.session(exported_session.id)
+
+
+def test_move_sync_error_schedules_new_date_then_cleans_old(repo, fake_garmin, exported_session):
+    s = _sync_error_session(repo, fake_garmin, exported_session)  # le nouveau `schedule` a échoué
+    new_day = date(2026, 11, 13)
+    move_session(repo, fake_garmin, s.id, new_day)
+    s = repo.session(s.id)
+    assert s.status == "exported" and s.scheduled_date == new_day and s.sync_error is None
+    assert fake_garmin.calls == ["upload_workout", "schedule", "unschedule", "delete_workout"]
+    assert fake_garmin.calendar == {new_day: [s.garmin_schedule_id]}
+    assert list(fake_garmin.workouts) == [s.garmin_workout_id]
+    assert (s.pending_old_workout_id, s.pending_old_schedule_id) == (None, None)
+
+
+def test_move_sync_error_with_new_schedule_reschedules_it(repo, fake_garmin, exported_session):
+    fake_garmin.fail_on = {"unschedule"}
+    apply_proposal(repo, fake_garmin, proposal_of(repo, modify(exported_session.id)).id)
+    fake_garmin.fail_on.clear()
+    fake_garmin.calls.clear()
+    new_day = date(2026, 11, 13)
+    move_session(repo, fake_garmin, exported_session.id, new_day)
+    s = repo.session(exported_session.id)
+    assert fake_garmin.calls == ["reschedule", "unschedule", "delete_workout"]
+    assert s.status == "exported" and fake_garmin.calendar == {new_day: [s.garmin_schedule_id]}
+    assert list(fake_garmin.workouts) == [s.garmin_workout_id]
+
+
+def test_move_sync_error_outside_week_or_pending_removal_rejected(repo, fake_garmin, exported_session):
+    s = _sync_error_session(repo, fake_garmin, exported_session)
+    with pytest.raises(ExportError, match="semaine"):
+        move_session(repo, fake_garmin, s.id, date(2026, 11, 20))
+    s.pending_removal = True
+    repo.update(s)
+    with pytest.raises(ExportError):
+        move_session(repo, fake_garmin, s.id, D)
+    assert fake_garmin.calls == []
+
+
+def test_failed_replacement_then_past_date_then_unschedule_leaves_no_orphan(repo, coach_home, goal):
+    from datetime import datetime
+
+    from coach.garmin.port import Metrics
+    from coach.llm.provider import FakeLLMProvider
+    from coach.services.sync import sync
+
+    g = FakeGarminClient(metrics=Metrics(hr_max=190, hr_rest=50, threshold_pace_s_km=300))
+    s = repo.add(make_db_session(goal.id, week_index=3))
+    export_session(repo, g, s.id, D)
+    g.fail_on = {"schedule"}
+    assert apply_proposal(repo, g, proposal_of(repo, modify(s.id)).id) == [s.id]
+    g.fail_on.clear()
+    g._today = date(2026, 11, 20)  # la semaine 3 est passée
+    with pytest.raises(ExportError, match="Date passée"):
+        retry_sync_error(repo, g, s.id)
+    sync(repo, g, FakeLLMProvider([]), now=datetime(2026, 11, 20, 8))
+    assert repo.session(s.id).status == "sync_error"  # ni manquée ni réalisée : ids à nettoyer
+    unschedule_session(repo, g, s.id)
+    sync(repo, g, FakeLLMProvider([]), now=datetime(2026, 11, 20, 9))
+    assert g.workouts == {} and g.schedules == {} and g.calendar == {}
+    assert repo.session(s.id).status == "missed"

@@ -20,6 +20,7 @@ from coach.services import CoachError
 from coach.services.context import recent_history, refresh_snapshot
 
 MIN_DAYS_BEFORE_RACE = 14
+_NOT_FOUND = "Objectif introuvable ou archivé"
 
 
 class GoalError(CoachError):
@@ -45,38 +46,43 @@ def create_goal(repo: Repo, garmin: GarminPort, data: GoalInput) -> Goal:
     if summary is not None and summary.d_plus_m is not None and d_plus == 0:
         d_plus = summary.d_plus_m
 
-    with repo.transaction() as db:
-        for old in db.exec(select(Goal).where(Goal.status == "active")).all():
-            old.status = "archived"
-            db.add(old)
-            todo = select(Session).where(Session.goal_id == old.id, Session.status == "todo")
-            for s in db.exec(todo).all():
-                db.delete(s)
-    goal = repo.add(
-        Goal(
-            type=data.type,
-            distance_km=data.distance_km,
-            d_plus_m=d_plus,
-            race_date=data.race_date,
-            sessions_per_week=data.sessions_per_week,
-            plan_start=calendar.plan_start(today),
-        )
+    goal = Goal(
+        type=data.type,
+        distance_km=data.distance_km,
+        d_plus_m=d_plus,
+        race_date=data.race_date,
+        sessions_per_week=data.sessions_per_week,
+        plan_start=calendar.plan_start(today),
+        gpx_summary_json=summary.model_dump_json() if summary is not None else None,
     )
-    if summary is not None:
-        path = data_dir() / "gpx" / f"{goal.id}.gpx"
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_bytes(data.gpx)
-        goal.gpx_path = str(path)
-        goal.gpx_summary_json = summary.model_dump_json()
-        goal = repo.update(goal)
+    path = None
+    try:
+        with repo.transaction() as db:
+            for old in db.exec(select(Goal).where(Goal.status == "active")).all():
+                old.status = "archived"
+                db.add(old)
+                todo = select(Session).where(Session.goal_id == old.id, Session.status == "todo")
+                for s in db.exec(todo).all():
+                    db.delete(s)
+            db.add(goal)
+            db.flush()  # obtient l'id
+            if summary is not None:
+                path = data_dir() / "gpx" / f"{goal.id}.gpx"
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(data.gpx)
+                goal.gpx_path = str(path)
+    except BaseException:
+        if path is not None:
+            path.unlink(missing_ok=True)
+        raise
     return goal
 
 
 def _get_goal(repo: Repo, goal_id: int) -> Goal:
     with repo.transaction() as db:
         goal = db.get(Goal, goal_id)
-    if goal is None:
-        raise GoalError("Objectif introuvable")
+    if goal is None or goal.status != "active":
+        raise GoalError(_NOT_FOUND)
     return goal
 
 
@@ -109,6 +115,8 @@ def generate_plan(repo: Repo, garmin: GarminPort, llm: LLMProvider, goal_id: int
             for spec in week.sessions:
                 db.add(Session.from_spec(spec, goal_id))
         g = db.get(Goal, goal_id)
+        if g is None:
+            raise GoalError(_NOT_FOUND)
         g.plan_accepted = False
         db.add(g)
     return plan
@@ -118,7 +126,7 @@ def accept_plan(repo: Repo, goal_id: int) -> None:
     """Valide le plan : l'export vers Garmin devient possible."""
     with repo.transaction() as db:
         goal = db.get(Goal, goal_id)
-        if goal is None:
-            raise GoalError("Objectif introuvable")
+        if goal is None or goal.status != "active":
+            raise GoalError(_NOT_FOUND)
         goal.plan_accepted = True
         db.add(goal)

@@ -2,7 +2,9 @@ from datetime import date, timedelta
 from pathlib import Path
 
 import pytest
+from sqlmodel import select
 
+from coach.analysis.gpx import GpxError
 from coach.garmin.port import FakeGarminClient, Metrics
 from coach.llm.provider import FakeLLMProvider, LLMInvalidResponse
 from coach.plan.models import Goal
@@ -110,3 +112,37 @@ def test_new_goal_archives_previous(repo, fake_garmin):
 def test_refresh_snapshot_without_hr_max(repo):
     with pytest.raises(CoachError, match="FC max inconnue"):
         refresh_snapshot(repo, FakeGarminClient(metrics=Metrics()))
+
+
+def test_gpx_write_failure_keeps_previous_goal(repo, coach_home, fake_garmin, monkeypatch):
+    old = _goal(repo, fake_garmin)
+    todo = repo.add(make_db_session(old.id, week_index=1, order=1))
+
+    def boom(self, data):
+        raise OSError("disque plein")
+
+    monkeypatch.setattr(Path, "write_bytes", boom)
+    with pytest.raises(OSError):
+        create_goal(repo, fake_garmin, goal_input(gpx=FIXTURES / "climb.gpx"))
+    assert repo.active_goal().id == old.id
+    assert [s.id for s in repo.sessions(old.id)] == [todo.id]
+    with repo.transaction() as db:
+        assert len(db.exec(select(Goal)).all()) == 1
+    assert not list((coach_home / "gpx").glob("*.gpx"))
+
+
+def test_gpx_error_creates_no_goal(repo, fake_garmin):
+    with pytest.raises(GpxError):
+        create_goal(repo, fake_garmin, goal_input(gpx=FIXTURES / "broken.gpx"))
+    assert repo.active_goal() is None
+
+
+def test_unknown_or_archived_goal_rejected(repo, fake_garmin):
+    old = _goal(repo, fake_garmin)
+    _goal(repo, fake_garmin)  # archive `old`
+    llm = FakeLLMProvider([valid_plan_json(14, 3)])
+    for bad in (old.id, 999):
+        with pytest.raises(GoalError, match="introuvable ou archivé"):
+            generate_plan(repo, fake_garmin, llm, bad)
+        with pytest.raises(GoalError, match="introuvable ou archivé"):
+            accept_plan(repo, bad)

@@ -216,6 +216,42 @@ def test_manual_match(make_client, repo):
     assert client.post("/api/activities/999/match", json={"session_id": None}).status_code == 404
 
 
+def test_activities_of_plan_week(make_client, repo):
+    from datetime import date
+
+    client = make_client(llm=FakeLLMProvider([valid_plan_json(14, 3)]))
+    assert client.get("/api/activities?week=1").json() == []  # pas d'objectif
+    goal = _create_goal(client).json()
+    monday = date.fromisoformat(client.get("/api/plan").json()["goal"]["plan_start"])
+    from datetime import timedelta
+
+    inside = repo.add(Activity(garmin_activity_id=11, date=monday + timedelta(days=6), type_key="running",
+                               duration_s=3100.0, distance_m=10200.0, d_plus_m=50.0, avg_hr=150.0))
+    first = repo.add(Activity(garmin_activity_id=12, date=monday, type_key="running"))
+    repo.add(Activity(garmin_activity_id=13, date=monday + timedelta(days=7), type_key="running"))
+    repo.add(Activity(garmin_activity_id=14, date=monday - timedelta(days=1), type_key="running"))
+    rows = client.get("/api/activities?week=1").json()
+    assert [r["id"] for r in rows] == [first.id, inside.id]
+    assert rows[1] == {
+        "id": inside.id, "date": (monday + timedelta(days=6)).isoformat(), "type_key": "running",
+        "duration_s": 3100.0, "distance_m": 10200.0, "d_plus_m": 50.0, "avg_hr": 150.0,
+        "session_id": None, "match_source": None,
+    }
+    assert len(client.get("/api/activities?week=2").json()) == 1
+    assert client.get("/api/activities").status_code == 422  # week obligatoire
+    assert goal["id"]
+
+
+def test_activities_respects_host_and_pin(make_client):
+    client = make_client()
+    assert client.get("/api/activities?week=1", headers={"Host": "evil.example"}).status_code == 400
+    save_settings(load_settings().model_copy(update={"pin_hash": hash_pin("1234")}))
+    lan = make_client(lan=True)
+    assert lan.get("/api/activities?week=1").json()["code"] == "pin_required"
+    lan.post("/api/auth/pin", json={"pin": "1234"})
+    assert lan.get("/api/activities?week=1").status_code == 200
+
+
 def test_llm_limit_maps_to_429_with_code(make_client):
     client = make_client(llm=LimitedLLM())
     goal = _create_goal(client).json()

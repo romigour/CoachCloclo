@@ -6,7 +6,8 @@
     onsynced,
     onerror,
     auto = true,
-  }: { onsynced?: () => void; onerror?: (e: unknown) => void; auto?: boolean } = $props();
+    disabled = false,
+  }: { onsynced?: () => void; onerror?: (e: unknown) => void; auto?: boolean; disabled?: boolean } = $props();
 
   let busy = $state(false);
 
@@ -28,6 +29,6 @@
   });
 </script>
 
-<button class="sync" onclick={run} disabled={busy} aria-busy={busy}>
+<button class="sync" onclick={run} disabled={busy || disabled} aria-busy={busy}>
   {busy ? "Analyse de ta séance par Claude…" : "Synchroniser"}
 </button>

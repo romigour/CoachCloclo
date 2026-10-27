@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { api, type Session } from "../lib/api";
+  import { api, type Activity, type Session } from "../lib/api";
+  import { formatActivity } from "../lib/activity";
   import { formatDay } from "../lib/dates";
   import { STATUS_LABEL, TYPE_LABEL } from "../lib/labels";
   import { formatSteps } from "../lib/steps";
@@ -9,18 +10,23 @@
     session,
     weekMonday,
     readonly = false,
+    activities = [],
     onchanged,
     onerror,
   }: {
     session: Session;
     weekMonday: string;
     readonly?: boolean;
+    activities?: Activity[];
     onchanged?: () => void;
     onerror?: (e: unknown) => void;
   } = $props();
 
   let dialog = $state<"export" | "move" | null>(null);
   let busy = $state(false);
+  let correcting = $state(false);
+
+  const matched = $derived(activities.find((a) => a.session_id === session.id) ?? null);
 
   const lines = $derived(formatSteps(session.steps));
 
@@ -34,6 +40,11 @@
     } finally {
       busy = false;
     }
+  }
+
+  async function rematch(activityId: number, sessionId: number | null) {
+    await act(() => api.match(activityId, sessionId));
+    correcting = false;
   }
 
   function done() {
@@ -58,6 +69,25 @@
   <ul class="steps">
     {#each lines as line}<li>{line}</li>{/each}
   </ul>
+  {#if !readonly && (matched || session.status === "done")}
+    <p class="matched">
+      Activité : {matched ? formatActivity(matched) : "rattachée"}
+      <button class="link" onclick={() => (correcting = !correcting)} disabled={busy}>Corriger</button>
+    </p>
+    {#if correcting}
+      <div class="row correct">
+        {#each activities as a (a.id)}
+          <button class:primary={a.session_id === session.id} onclick={() => rematch(a.id, session.id)} disabled={busy}>
+            {formatActivity(a)}
+          </button>
+        {/each}
+        {#if matched}
+          <button onclick={() => rematch(matched.id, null)} disabled={busy}>Aucune</button>
+        {/if}
+        {#if !activities.length}<span class="meta">Aucune activité cette semaine</span>{/if}
+      </div>
+    {/if}
+  {/if}
   {#if session.sync_error}<p class="error">{session.sync_error}</p>{/if}
 
   {#if !readonly}

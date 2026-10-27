@@ -64,6 +64,18 @@ export type Goal = {
   gpx_summary: Record<string, unknown> | null;
 };
 
+export type Activity = {
+  id: number;
+  date: string;
+  type_key: string;
+  duration_s: number | null;
+  distance_m: number | null;
+  d_plus_m: number | null;
+  avg_hr: number | null;
+  session_id: number | null;
+  match_source: string | null;
+};
+
 export type Week = { week_index: number; week_monday: string; sessions: Session[] };
 export type Plan = { goal: Goal | null; weeks: Week[] };
 
@@ -169,6 +181,7 @@ export const api = {
   moveSession: (id: number, date: string) => post<{ warnings: string[] }>(`/sessions/${id}/move`, { date }),
   unschedule: (id: number) => post<{ status: string }>(`/sessions/${id}/unschedule`),
   retry: (id: number) => post<{ status: string }>(`/sessions/${id}/retry`),
+  activities: (week: number) => get<Activity[]>(`/activities?week=${week}`),
   match: (activityId: number, sessionId: number | null) =>
     post<{ status: string }>(`/activities/${activityId}/match`, { session_id: sessionId }),
   sync: () => post<Record<string, unknown>>("/sync"),

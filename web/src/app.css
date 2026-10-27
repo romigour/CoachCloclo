@@ -118,3 +118,6 @@ button:disabled { opacity: 0.6; cursor: default; }
 .reason { font-style: italic; }
 .sticky { position: sticky; bottom: 0; background: var(--bg); padding: 0.6rem 0; }
 details summary { cursor: pointer; }
+
+button.link { min-height: 0; padding: 0.1rem 0.5rem; margin-left: 0.4rem; font-size: 0.85rem; }
+.matched { font-size: 0.9rem; }

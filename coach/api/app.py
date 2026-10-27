@@ -7,7 +7,7 @@ import socket
 import threading
 import time
 from collections.abc import Callable
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import urlparse
 from typing import Annotated, Literal
@@ -383,6 +383,30 @@ def create_app(
         return {"status": "ok"}
 
     # --- activités, synchro, propositions ---------------------------------------------------
+
+    @api.get("/activities")
+    def get_activities(week: int, repo: RepoDep):
+        """Activités de l'objectif actif dans la semaine `week` du plan (lundi..dimanche)."""
+        goal = repo.active_goal()
+        if goal is None:
+            return []
+        monday = calendar.week_monday(goal, week)
+        sunday = monday + timedelta(days=6)
+        return [
+            {
+                "id": a.id,
+                "date": a.date.isoformat(),
+                "type_key": a.type_key,
+                "duration_s": a.duration_s,
+                "distance_m": a.distance_m,
+                "d_plus_m": a.d_plus_m,
+                "avg_hr": a.avg_hr,
+                "session_id": a.session_id,
+                "match_source": a.match_source,
+            }
+            for a in repo.activities_since(monday)
+            if a.date <= sunday
+        ]
 
     @api.post("/activities/{activity_id}/match")
     def post_match(activity_id: int, body: MatchBody, repo: RepoDep):

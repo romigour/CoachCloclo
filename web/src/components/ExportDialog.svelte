@@ -20,7 +20,7 @@
 
   const days = $derived(weekDays(weekMonday));
   const preferred = () =>
-    session.scheduled_date && weekDays(weekMonday).includes(session.scheduled_date)
+    session.status !== "missed" && session.scheduled_date && weekDays(weekMonday).includes(session.scheduled_date)
       ? session.scheduled_date
       : defaultExportDate(weekMonday, session.suggested_day);
 

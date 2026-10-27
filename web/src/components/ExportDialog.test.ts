@@ -52,3 +52,9 @@ test("ExportDialog re-checks on change then exports with CSRF header", async () 
   expect(JSON.parse(post.body!)).toEqual({ date: "2026-11-14" });
   expect(post.headers?.["X-Coach"]).toBe("1");
 });
+
+test("a missed session preselects the suggested day, not its past scheduled date", () => {
+  mockApi({ "export-check": { warnings: [] } });
+  render(ExportDialog, { session: { ...session, status: "missed", scheduled_date: "2026-11-10" }, weekMonday: "2026-11-09" });
+  expect((screen.getByRole("combobox") as HTMLSelectElement).value).toBe("2026-11-12");
+});

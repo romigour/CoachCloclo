@@ -46,3 +46,13 @@ export function formatDate(iso: string): string {
   const d = parse(iso);
   return `${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]} ${d.getUTCFullYear()}`;
 }
+
+const SHORT_DAYS = ["lun.", "mar.", "mer.", "jeu.", "ven.", "sam.", "dim."];
+
+/** « mar. 11/11 » */
+export function formatShortDay(iso: string): string {
+  const d = parse(iso);
+  const dd = String(d.getUTCDate()).padStart(2, "0");
+  const mm = String(d.getUTCMonth() + 1).padStart(2, "0");
+  return `${SHORT_DAYS[(d.getUTCDay() + 6) % 7]} ${dd}/${mm}`;
+}

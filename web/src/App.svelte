@@ -2,7 +2,6 @@
   import { onMount } from "svelte";
   import { api, type Status } from "./lib/api";
   import ErrorBanner from "./components/ErrorBanner.svelte";
-  import SyncButton from "./components/SyncButton.svelte";
   import Setup from "./routes/Setup.svelte";
   import Goal from "./routes/Goal.svelte";
   import Plan from "./routes/Plan.svelte";
@@ -16,6 +15,8 @@
   let error = $state<unknown>(null);
   let version = $state(0);
   let ready = $state(false);
+  let syncing = $state(false);
+  let autoSyncStarted = false; // une seule synchro automatique par chargement de l'app
 
   function parse(): Route | null {
     const name = location.hash.replace(/^#\//, "");
@@ -34,17 +35,36 @@
   async function start() {
     await refresh();
     ready = true;
+    if (!autoSyncStarted && !error && status?.garmin === "ok" && status.goal) {
+      autoSyncStarted = true;
+      autoSync();
+    }
     if (!route && !error) {
       location.hash = status?.garmin === "auth_required" ? "#/setup" : status?.goal ? "#/plan" : "#/goal";
     }
   }
 
   onMount(() => {
-    const onhash = () => (route = parse());
+    const onhash = () => {
+      route = parse();
+      error = null;
+    };
     window.addEventListener("hashchange", onhash);
     start();
     return () => window.removeEventListener("hashchange", onhash);
   });
+
+  async function autoSync() {
+    syncing = true;
+    try {
+      await api.sync();
+      synced();
+    } catch (e) {
+      failed(e);
+    } finally {
+      syncing = false;
+    }
+  }
 
   function synced() {
     version++;
@@ -68,6 +88,10 @@
 <main>
   <ErrorBanner {error} onpin={start} />
 
+  {#if syncing}
+    <p class="card busy" role="status">Analyse de ta séance par Claude…</p>
+  {/if}
+
   {#if status?.pending_proposal_id != null && route !== "proposal"}
     <a class="banner info" href="#/proposal">Claude propose des changements à ton plan — voir la proposition</a>
   {/if}
@@ -78,10 +102,7 @@
     {:else if route === "goal"}
       <Goal onchanged={refresh} />
     {:else if route === "plan"}
-      <div class="sync-row">
-        <SyncButton onsynced={synced} onerror={failed} />
-      </div>
-      <Plan {version} onerror={failed} />
+      <Plan {version} {syncing} onsynced={synced} onerror={failed} />
     {:else if route === "proposal"}
       <Proposal onchanged={refresh} />
     {/if}

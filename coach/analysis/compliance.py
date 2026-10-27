@@ -1,0 +1,77 @@
+"""Rattachement des activités aux séances, séances manquées, avertissement 48 h."""
+
+from datetime import date, timedelta
+
+from coach.llm.schemas import HARD_TYPES, RepeatSpec
+from coach.plan.calendar import week_monday, week_of
+from coach.plan.models import Activity, Goal, Session
+
+RUNNING_TYPES = {"running", "trail_running", "treadmill_running", "track_running"}
+_PACE_S_PER_KM = 360  # allure supposée pour convertir une distance en durée
+
+
+def estimate_duration_min(session: Session) -> float:
+    """Durée estimée (min) : somme des étapes (répétitions multipliées), distance à 360 s/km."""
+    total_s = 0.0
+    for step in session.to_spec().steps:
+        reps, inner = (step.repeat, step.steps) if isinstance(step, RepeatSpec) else (1, [step])
+        for s in inner:
+            total_s += reps * (s.duration_s if s.duration_s is not None else s.distance_m * _PACE_S_PER_KM / 1000)
+    return total_s / 60
+
+
+def _expected_min(session: Session) -> float:
+    if session.est_duration_min is not None:
+        return session.est_duration_min
+    return estimate_duration_min(session)
+
+
+def match_activities(
+    sessions: list[Session], activities: list[Activity], goal: Goal
+) -> list[tuple[int, int]]:
+    """Paires (session_id, activity_id) ; aucune écriture."""
+    free = [a for a in activities if a.session_id is None and a.type_key in RUNNING_TYPES]
+    pairs: list[tuple[int, int]] = []
+
+    def take(session: Session, candidates: list[Activity], key) -> None:
+        if not candidates:
+            return
+        best = min(candidates, key=key)
+        free.remove(best)
+        pairs.append((session.id, best.id))
+
+    for s in (x for x in sessions if x.status == "exported" and x.scheduled_date is not None):
+        exp = _expected_min(s)
+        cands = [a for a in free if abs((a.date - s.scheduled_date).days) <= 1]
+        take(s, cands, lambda a: (abs((a.date - s.scheduled_date).days), abs((a.duration_s or 0) / 60 - exp)))
+
+    for s in (x for x in sessions if x.status == "todo"):
+        exp = _expected_min(s)
+        cands = [a for a in free if week_of(goal, a.date) == s.week_index]
+        take(s, cands, lambda a: abs((a.duration_s or 0) / 60 - exp))
+
+    return pairs
+
+
+def mark_missed(sessions: list[Session], goal: Goal, today: date) -> list[int]:
+    """Ids des séances todo/exported dont la semaine est entièrement passée."""
+    return [
+        s.id
+        for s in sessions
+        if s.status in ("todo", "exported") and week_monday(goal, s.week_index) + timedelta(days=6) < today
+    ]
+
+
+def hard_session_warnings(session: Session, target: date, others: list[Session]) -> list[str]:
+    """Avertit si une séance dure est placée à moins de 48 h d'une autre séance dure exportée."""
+    if session.type not in HARD_TYPES:
+        return []
+    return [
+        f"Séance dure à moins de 48 h de « {o.title} » ({o.scheduled_date.isoformat()})"
+        for o in others
+        if o.id != session.id
+        and o.status == "exported"
+        and o.type in HARD_TYPES
+        and o.scheduled_date is not None
+        and abs((o.scheduled_date - target).days) < 2
+    ]

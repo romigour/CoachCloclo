@@ -9,7 +9,7 @@ Remplace `<URL>` par l'adresse brute des scripts d'installation du dépôt.
 - **Windows (PowerShell)** : `irm <URL>/install.ps1 | iex`
 - **macOS / Linux** : `curl -LsSf <URL>/install.sh | bash`
 
-Le script installe `uv` si besoin, installe Coach (`uv tool install --python 3.12 coach-running`), lance `coach doctor --fix`, puis `coach start` si tout est vert. Il ne te demande jamais d'identifiant lui-même : `doctor --fix` délègue à `claude` (connexion Claude) et à `coach login-garmin` (connexion Garmin, avec MFA éventuel).
+Le script installe `uv` si besoin, installe Coach (`uv tool install --python 3.12 coach-running`), lance `coach doctor --fix`, puis `coach start` si tout est vert. Il ne te demande jamais d'identifiant lui-même : `doctor --fix` ouvre `claude` dans ton terminal (« Connecte-toi dans Claude puis tape /exit pour revenir »), puis `coach login-garmin` (connexion Garmin, avec MFA éventuel), et revérifie tout.
 
 Options : `COACH_SOURCE` (chemin d'une wheel ou nom de paquet), `COACH_INSTALL_NO_START=1` (ne lance pas l'app), `COACH_INSTALL_OFFLINE=1` (doctor sans Claude ni Garmin, pour la CI), `--dry-run` / `-DryRun` ou `COACH_DRY_RUN=1` sous PowerShell (affiche les commandes sans les exécuter).
 
@@ -22,7 +22,7 @@ Options : `COACH_SOURCE` (chemin d'une wheel ou nom de paquet), `COACH_INSTALL_N
 
 ## Ce que vérifie `coach doctor`
 
-Python (>= 3.12), bibliothèque `garminconnect`, CLI `claude` installé, connexion Claude valide, tokens Garmin valides, dossier de données accessible en écriture, port 8765 libre. `--fix` corrige ce qui peut l'être (installation du CLI Claude, connexion, création du dossier). `--offline` saute les vérifications Claude et Garmin.
+Python (>= 3.12), bibliothèque `garminconnect`, CLI `claude` installé, connexion Claude valide, tokens Garmin valides, dossier de données accessible en écriture, port 8765 libre. `--fix` corrige ce qui peut l'être : installation du CLI Claude, connexion Claude (lance `claude` en interactif ; connecte-toi puis tape `/exit`), connexion Garmin (`coach login-garmin`), création du dossier ; puis il revérifie. En mode clé API, la connexion Claude se règle dans les réglages de l'app. `--offline` saute les vérifications Claude et Garmin.
 
 ## Mode LAN et PIN
 

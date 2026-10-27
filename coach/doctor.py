@@ -18,6 +18,7 @@ DEFAULT_PORT = 8765
 OFFLINE_DETAIL = "non vérifié (hors ligne)"
 _AUTH_SYSTEM = "Tu es un test de connexion."
 _AUTH_PROMPT = 'Réponds uniquement {"ok":true}'
+LOGIN_MESSAGE = "Connecte-toi dans Claude puis tape /exit pour revenir"
 
 _INSTALL_WINDOWS = ["powershell", "-NoProfile", "-Command", "irm https://claude.ai/install.ps1 | iex"]
 _INSTALL_POSIX = ["bash", "-c", "curl -fsSL https://claude.ai/install.sh | bash"]
@@ -61,7 +62,12 @@ def _check_claude_cli(which) -> Check:
                  fix_hint="Lance `coach doctor --fix` pour installer Claude Code", fixable=True)
 
 
-def _check_claude_auth(llm_factory) -> Check:
+def _check_claude_auth(llm_factory, *, cli_ok: bool, cli_mode: bool) -> Check:
+    """`cli_mode` : connexion via le CLI claude (corrigible par `--fix`), sinon clé API."""
+    login_hint = "Lance `coach doctor --fix` (ou `claude`) puis connecte-toi"
+    if cli_mode and not cli_ok:  # corrigé dans la même passe, après l'installation du CLI
+        return Check(name="claude_auth", ok=False, detail="CLI absent",
+                     fix_hint=login_hint, fixable=True)
     try:
         out = llm_factory().complete(_AUTH_SYSTEM, _AUTH_PROMPT)
     except LLMUsageLimit:
@@ -69,9 +75,11 @@ def _check_claude_auth(llm_factory) -> Check:
                      fix_hint="Attends le renouvellement de ta limite, puis relance")
     except LLMUnavailable as e:
         return Check(name="claude_auth", ok=False, detail=f"non connecté ({e})",
-                     fix_hint="Lance `claude` puis connecte-toi")
-    except LLMError as e:
-        return Check(name="claude_auth", ok=False, detail=f"erreur Claude : {e}")
+                     fix_hint=login_hint if cli_mode else "Vérifie ta clé API dans les réglages",
+                     fixable=cli_mode)
+    except LLMError as e:  # ex. jeton OAuth du CLI expiré : une reconnexion règle le problème
+        return Check(name="claude_auth", ok=False, detail=f"erreur Claude : {e}",
+                     fix_hint=login_hint if cli_mode else None, fixable=cli_mode)
     if "ok" in out:
         return Check(name="claude_auth", ok=True, detail="connecté")
     return Check(name="claude_auth", ok=False, detail=f"réponse inattendue : {out[:80]}")
@@ -126,13 +134,16 @@ def run_checks(*, live: bool = True, offline: bool = False, which=shutil.which,
         return Check(name=name, ok=True, detail=detail)
 
     checks = [_check_python(), _check_garminconnect()]
-    checks.append(skipped("claude_cli", OFFLINE_DETAIL) if offline else _check_claude_cli(which))
+    cli = skipped("claude_cli", OFFLINE_DETAIL) if offline else _check_claude_cli(which)
+    checks.append(cli)
     if offline:
         checks.append(skipped("claude_auth", OFFLINE_DETAIL))
         checks.append(skipped("garmin_tokens", OFFLINE_DETAIL))
     else:
         no_live = "appel réel non effectué"
-        checks.append(_check_claude_auth(llm_factory) if live else skipped("claude_auth", no_live))
+        cli_mode = load_settings().llm_mode == "cli"
+        checks.append(_check_claude_auth(llm_factory, cli_ok=cli.ok, cli_mode=cli_mode) if live
+                      else skipped("claude_auth", no_live))
         checks.append(_check_garmin_tokens(garmin_factory) if live
                       else skipped("garmin_tokens", no_live))
     checks.append(_check_data_dir())
@@ -141,8 +152,11 @@ def run_checks(*, live: bool = True, offline: bool = False, which=shutil.which,
 
 
 def fix(check: Check, *, runner=subprocess.run, data_path: Path | None = None,
-        echo=print) -> bool:
-    """Tente de corriger une vérification en échec ; renvoie True si c'est réglé."""
+        echo=print, which=shutil.which) -> bool:
+    """Tente de corriger une vérification en échec ; renvoie True si c'est réglé.
+
+    `claude_auth` lance `claude` en interactif dans le terminal courant (stdin hérité) ;
+    l'appelant revérifie ensuite la connexion."""
     if not check.fixable:
         return False
     if check.name == "data_dir":
@@ -156,6 +170,16 @@ def fix(check: Check, *, runner=subprocess.run, data_path: Path | None = None,
         echo("Installation de Claude Code : " + " ".join(cmd[-1:] if len(cmd) > 2 else cmd))
         try:
             return runner(cmd).returncode == 0
+        except OSError:
+            return False
+    if check.name == "claude_auth":
+        exe = which("claude")
+        if exe is None:
+            echo("CLI claude introuvable : installe-le d'abord")
+            return False
+        echo(LOGIN_MESSAGE)
+        try:
+            return runner([exe]).returncode == 0
         except OSError:
             return False
     if check.name == "garmin_tokens":

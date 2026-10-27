@@ -2,13 +2,20 @@
 
 import datetime as dt
 import json
+from typing import get_args
 
 from coach.analysis.zones import Zones
-from coach.llm.schemas import AdjustmentResponse, PlanResponse
+from coach.llm.schemas import AdjustmentResponse, PlanResponse, Weekday
+from coach.plan.calendar import week_of
 from coach.plan.models import Activity, Goal, Session
 
 HISTORY_WEEKS = 8
 HISTORY_MAX_LINES = 60
+_WEEKDAYS = get_args(Weekday)
+_MONTHS = (
+    "janvier", "février", "mars", "avril", "mai", "juin",
+    "juillet", "août", "septembre", "octobre", "novembre", "décembre",
+)
 
 SYSTEM_PROMPT = """Tu es un entraîneur expérimenté de course à pied sur route et de trail.
 Tu construis et ajustes des plans d'entraînement personnalisés à partir des données Garmin de l'athlète.
@@ -72,16 +79,30 @@ def _goal_text(goal: Goal) -> str:
     )
 
 
+def _today_text(goal: Goal, today: dt.date) -> str:
+    """« Aujourd'hui : mercredi 4 novembre 2026 (semaine 1). »"""
+    week = week_of(goal, today)
+    return (
+        f"Aujourd'hui : {_WEEKDAYS[today.weekday()]} {today.day} {_MONTHS[today.month - 1]} "
+        f"{today.year} (semaine {week})."
+    )
+
+
 def _schema_text(model) -> str:
     return json.dumps(model.model_json_schema(), ensure_ascii=False)
 
 
 def build_generation_prompt(
-    goal: Goal, zones: Zones, history: list[Activity], n_weeks: int, gpx_text: str | None
+    goal: Goal,
+    zones: Zones,
+    history: list[Activity],
+    n_weeks: int,
+    gpx_text: str | None,
+    today: dt.date | None = None,
 ) -> str:
-    """Prompt de génération du plan complet."""
+    """Prompt de génération du plan complet ; `today` situe le jour courant dans la semaine 1."""
     parts = [
-        _goal_text(goal),
+        _goal_text(goal) + (" " + _today_text(goal, today) if today is not None else ""),
         f"Construis un plan de {n_weeks} semaines, avec au plus {goal.sessions_per_week} séances "
         f"par semaine ({goal.sessions_per_week} séances). Aujourd'hui correspond à la semaine 1 ; "
         f"la dernière semaine se termine à la course. Numérote les semaines de 1 à {n_weeks} "

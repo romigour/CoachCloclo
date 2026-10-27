@@ -114,6 +114,19 @@ def test_refresh_snapshot_without_hr_max(repo):
         refresh_snapshot(repo, FakeGarminClient(metrics=Metrics()))
 
 
+def test_refresh_snapshot_relays_real_zone_error(repo):
+    with pytest.raises(CoachError, match="FC repos inconnue") as e:
+        refresh_snapshot(repo, FakeGarminClient(metrics=Metrics(hr_max=190)))
+    assert "FC max" not in str(e.value)
+
+
+def test_generation_prompt_gives_today(repo, fake_garmin):
+    goal = _goal(repo, fake_garmin)  # aujourd'hui : mercredi 4 novembre 2026
+    llm = FakeLLMProvider([valid_plan_json(n_weeks=14, per_week=3)])
+    generate_plan(repo, fake_garmin, llm, goal.id)
+    assert "Aujourd'hui : mercredi 4 novembre 2026 (semaine 1)" in llm.calls[0]
+
+
 def test_gpx_write_failure_keeps_previous_goal(repo, coach_home, fake_garmin, monkeypatch):
     old = _goal(repo, fake_garmin)
     todo = repo.add(make_db_session(old.id, week_index=1, order=1))

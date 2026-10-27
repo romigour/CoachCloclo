@@ -120,13 +120,13 @@ class AnthropicApiProvider:
 
         self._anthropic = anthropic
         self.model = model
-        self.client = client if client is not None else anthropic.Anthropic(api_key=api_key)
+        self.client = client if client is not None else anthropic.Anthropic(api_key=api_key, timeout=180)
 
     def complete(self, system: str, prompt: str) -> str:
         a = self._anthropic
         try:
             msg = self.client.messages.create(
-                model=self.model, max_tokens=16000, system=system,
+                model=self.model, max_tokens=32000, system=system,
                 messages=[{"role": "user", "content": prompt}],
             )
         except a.RateLimitError as e:

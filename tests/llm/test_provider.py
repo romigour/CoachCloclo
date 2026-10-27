@@ -112,10 +112,19 @@ def test_api_provider_concatenates_text_blocks():
     assert p.complete("sys", "hi") == "abcd"
     assert client.kwargs == {
         "model": "m",
-        "max_tokens": 16000,
+        "max_tokens": 32000,
         "system": "sys",
         "messages": [{"role": "user", "content": "hi"}],
     }
+
+
+def test_api_provider_client_timeout_180s(monkeypatch):
+    import anthropic
+
+    seen = {}
+    monkeypatch.setattr(anthropic, "Anthropic", lambda **kw: seen.update(kw) or object())
+    AnthropicApiProvider("k", "m")
+    assert seen == {"api_key": "k", "timeout": 180}
 
 
 def test_api_provider_maps_errors():

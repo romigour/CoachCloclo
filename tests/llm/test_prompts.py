@@ -26,6 +26,12 @@ def test_generation_prompt_contains_constraints():
     assert p.rstrip().endswith("}")
 
 
+def test_generation_prompt_states_today_with_weekday():
+    goal = make_goal(plan_start=date(2026, 11, 2))
+    p = build_generation_prompt(goal, ZONES, [], n_weeks=14, gpx_text=None, today=date(2026, 11, 4))
+    assert "Aujourd'hui : mercredi 4 novembre 2026 (semaine 1)" in p
+
+
 def test_generation_prompt_without_pace_zones_forbids_pace():
     p = build_generation_prompt(make_goal(type="route"), ZONES_NO_PACE, [], n_weeks=8, gpx_text=None)
     assert "Aucune zone d'allure" in p

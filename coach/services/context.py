@@ -23,7 +23,7 @@ def refresh_snapshot(repo: Repo, garmin: GarminPort) -> tuple[AthleteSnapshot, Z
             hr_rest=m.hr_rest,
         )
     except ValueError as exc:
-        raise CoachError("FC max inconnue : synchronise ta montre avec Garmin Connect") from exc
+        raise CoachError(f"{exc} : synchronise ta montre avec Garmin Connect") from exc
     snapshot = repo.add(
         AthleteSnapshot(
             date=garmin.today(),

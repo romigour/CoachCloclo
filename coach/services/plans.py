@@ -96,7 +96,7 @@ def generate_plan(repo: Repo, garmin: GarminPort, llm: LLMProvider, goal_id: int
         if goal.gpx_summary_json
         else None
     )
-    prompt = build_generation_prompt(goal, zones, recent_history(garmin), n, gpx_text)
+    prompt = build_generation_prompt(goal, zones, recent_history(garmin), n, gpx_text, today=garmin.today())
     pace_available = zones.pace is not None
     plan = ask_structured(
         llm,

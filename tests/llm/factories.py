@@ -36,3 +36,8 @@ def make_plan(n_weeks: int, per_week: list[int], target_kind: str = "hr") -> Pla
         for w in range(1, n_weeks + 1)
     ]
     return PlanResponse(summary="Plan de test", weeks=weeks)
+
+
+def valid_plan_json(n_weeks: int, per_week: int) -> str:
+    """JSON d'un plan valide de `n_weeks` semaines à `per_week` séances."""
+    return make_plan(n_weeks, [per_week] * n_weeks).model_dump_json()

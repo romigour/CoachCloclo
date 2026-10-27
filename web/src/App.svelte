@@ -1,0 +1,89 @@
+<script lang="ts">
+  import { onMount } from "svelte";
+  import { api, type Status } from "./lib/api";
+  import ErrorBanner from "./components/ErrorBanner.svelte";
+  import SyncButton from "./components/SyncButton.svelte";
+  import Setup from "./routes/Setup.svelte";
+  import Goal from "./routes/Goal.svelte";
+  import Plan from "./routes/Plan.svelte";
+  import Proposal from "./routes/Proposal.svelte";
+
+  const ROUTES = ["setup", "goal", "plan", "proposal"] as const;
+  type Route = (typeof ROUTES)[number];
+
+  let route = $state<Route | null>(parse());
+  let status = $state<Status | null>(null);
+  let error = $state<unknown>(null);
+  let version = $state(0);
+  let ready = $state(false);
+
+  function parse(): Route | null {
+    const name = location.hash.replace(/^#\//, "");
+    return (ROUTES as readonly string[]).includes(name) ? (name as Route) : null;
+  }
+
+  async function refresh() {
+    try {
+      status = await api.status();
+      error = null;
+    } catch (e) {
+      error = e;
+    }
+  }
+
+  async function start() {
+    await refresh();
+    ready = true;
+    if (!route && !error) {
+      location.hash = status?.garmin === "auth_required" ? "#/setup" : status?.goal ? "#/plan" : "#/goal";
+    }
+  }
+
+  onMount(() => {
+    const onhash = () => (route = parse());
+    window.addEventListener("hashchange", onhash);
+    start();
+    return () => window.removeEventListener("hashchange", onhash);
+  });
+
+  function synced() {
+    version++;
+    refresh();
+  }
+
+  function failed(e: unknown) {
+    error = e;
+  }
+</script>
+
+<header class="topbar">
+  <strong>Coach</strong>
+  <nav>
+    <a href="#/plan" class:active={route === "plan"}>Plan</a>
+    <a href="#/goal" class:active={route === "goal"}>Objectif</a>
+    <a href="#/setup" class:active={route === "setup"}>Réglages</a>
+  </nav>
+</header>
+
+<main>
+  <ErrorBanner {error} onpin={start} />
+
+  {#if status?.pending_proposal_id != null && route !== "proposal"}
+    <a class="banner info" href="#/proposal">Claude propose des changements à ton plan — voir la proposition</a>
+  {/if}
+
+  {#if ready && !(error && (error as { code?: string }).code === "pin_required")}
+    {#if route === "setup"}
+      <Setup onchanged={refresh} />
+    {:else if route === "goal"}
+      <Goal onchanged={refresh} />
+    {:else if route === "plan"}
+      <div class="sync-row">
+        <SyncButton onsynced={synced} onerror={failed} />
+      </div>
+      <Plan {version} onerror={failed} />
+    {:else if route === "proposal"}
+      <Proposal onchanged={refresh} />
+    {/if}
+  {/if}
+</main>

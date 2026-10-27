@@ -1,4 +1,5 @@
 import logging
+import threading
 from pathlib import Path
 
 import pytest
@@ -28,10 +29,13 @@ class FakeLogin:
 
     def __init__(self, mfa: bool):
         self.mfa = mfa
+        self.bad = False
         self.seen: list[tuple] = []
 
     def start_login(self, email, password, tokenstore):
         self.seen.append(("start", email, password))
+        if self.bad:
+            raise GarminAuthRequired("refusé")
         return ("needs_mfa", {"secret": "state"}) if self.mfa else ("ok", object())
 
     def finish_login(self, state, code, tokenstore):
@@ -68,9 +72,10 @@ def make_client(repo, fake_garmin):
             llm_factory=lambda: llm or FakeLLMProvider([]),
             repo=repo,
             login_client=login or FakeLogin(False),
+            extra_hosts={"testserver"},
             **kw,
         )
-        return TestClient(app)
+        return TestClient(app, headers={"X-Coach": "1"})
 
     return build
 
@@ -303,3 +308,95 @@ def test_password_not_logged(make_client, caplog):
     assert login.seen[0][2] == "S3cr3t-pw-xyz"
     assert "S3cr3t-pw-xyz" not in caplog.text
     assert all("S3cr3t-pw-xyz" not in r.getMessage() for r in caplog.records)
+
+
+def test_csrf_requires_header(make_client):
+    client = make_client()
+    r = client.post("/api/proposals/1/accept", headers={"X-Coach": ""})
+    assert r.status_code == 403 and r.json()["code"] == "csrf"
+    assert client.get("/api/status", headers={"X-Coach": ""}).status_code == 200
+
+
+def test_csrf_rejects_foreign_origin_and_fetch_site(make_client):
+    client = make_client()
+    r = client.post("/api/proposals/1/reject", headers={"Origin": "http://evil.example"})
+    assert r.status_code == 403
+    r = client.post("/api/proposals/1/reject", headers={"Sec-Fetch-Site": "cross-site"})
+    assert r.status_code == 403
+    r = client.post("/api/proposals/1/reject", headers={"Origin": "http://testserver"})
+    assert r.status_code == 422  # passe le filtre, erreur métier
+
+
+def test_host_check(make_client):
+    client = make_client()
+    assert client.get("/api/status", headers={"Host": "evil.example"}).status_code == 400
+    assert client.get("/api/status", headers={"Host": "localhost:8765"}).status_code == 200
+    assert client.get("/api/status", headers={"Host": "[::1]:8765"}).status_code == 200
+    assert client.get("/api/status", headers={"Host": "192.168.1.5:8765"}).status_code == 400
+
+
+def test_lan_host_allows_ip_literal(make_client):
+    save_settings(load_settings().model_copy(update={"pin_hash": hash_pin("1234")}))
+    client = make_client(lan=True)
+    r = client.post("/api/auth/pin", json={"pin": "1234"}, headers={"Host": "192.168.1.5:8765"})
+    assert r.status_code == 200
+    assert client.get("/api/status", headers={"Host": "evil.example"}).status_code == 400
+
+
+def test_pin_attempts_are_atomic(make_client):
+    save_settings(load_settings().model_copy(update={"pin_hash": hash_pin("1234")}))
+    client = make_client(lan=True, clock=lambda: 0.0)
+    n = 16
+    barrier = threading.Barrier(n)
+    codes: list[int] = []
+
+    def attempt():
+        barrier.wait()
+        codes.append(client.post("/api/auth/pin", json={"pin": "bad"}).status_code)
+
+    threads = [threading.Thread(target=attempt) for _ in range(n)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert codes.count(401) == 5 and codes.count(429) == n - 5
+
+
+def test_validation_error_does_not_echo_secrets(make_client):
+    client = make_client()
+    r = client.put("/api/settings", json={"llm_mode": "bogus", "anthropic_api_key": "sk-secret-123"})
+    assert r.status_code == 422 and r.json()["code"] == "invalid"
+    assert "sk-secret-123" not in r.text and "bogus" not in r.text
+    r = client.post("/api/garmin/login", json={"email": 123, "password": "S3cr3t-pw"})
+    assert r.status_code == 422 and "S3cr3t-pw" not in r.text
+    r = client.post(
+        "/api/garmin/login",
+        content='{"password": "S3cr3t-pw", ',
+        headers={"Content-Type": "application/json"},
+    )
+    assert r.status_code == 422 and "S3cr3t-pw" not in r.text
+
+
+def test_gpx_too_large(make_client):
+    big = b"x" * (10 * 1024 * 1024 + 1)
+    r = make_client().post("/api/goals", data=GOAL_FORM, files={"gpx": ("r.gpx", big, "application/gpx+xml")})
+    assert r.status_code == 413 and r.json()["code"] == "too_large"
+
+
+def test_status_garmin_unavailable(make_client):
+    from coach.garmin.port import GarminUnavailable
+
+    def boom():
+        raise GarminUnavailable("down")
+
+    client = make_client()
+    client.app.state.garmin_factory = boom
+    assert client.get("/api/status").json()["garmin"] == "unavailable"
+
+
+def test_wrong_garmin_password(make_client):
+    login = FakeLogin(False)
+    login.bad = True
+    r = make_client(login=login).post("/api/garmin/login", json={"email": "a", "password": "p"})
+    assert r.status_code == 401
+    assert r.json() == {"code": "garmin_login_failed", "detail": "Identifiants Garmin refusés"}

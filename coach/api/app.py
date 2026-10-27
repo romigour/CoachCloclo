@@ -1,13 +1,18 @@
 """Application FastAPI : routes JSON sous /api, protection par PIN en mode LAN."""
 
+import ipaddress
 import json
 import secrets
+import socket
+import threading
 import time
 from collections.abc import Callable
 from datetime import date, datetime, timezone
 from pathlib import Path
+from urllib.parse import urlparse
 from typing import Annotated, Literal
 
+from fastapi.exceptions import RequestValidationError
 from fastapi import APIRouter, Depends, FastAPI, File, Form, Request, UploadFile
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -43,6 +48,9 @@ MFA_TTL_S = 600
 PIN_MAX_FAILURES = 5
 PIN_LOCK_S = 60
 COOKIE = "coach_session"
+MAX_GPX_BYTES = 10 * 1024 * 1024
+LOCAL_HOSTS = {"127.0.0.1", "localhost", "[::1]"}
+SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
 WEB_DIST = Path(__file__).resolve().parent.parent / "web_dist"
 
 
@@ -74,7 +82,7 @@ class SettingsBody(BaseModel):
     anthropic_model: str | None = None
 
 
-def _error(status: int, code: str, detail: str) -> JSONResponse:
+def _error(status: int, code: str, detail) -> JSONResponse:
     return JSONResponse(status_code=status, content={"code": code, "detail": detail})
 
 
@@ -126,6 +134,36 @@ def _register_errors(app: FastAPI) -> None:
     add(CoachError, 422, "invalid")  # inclut GoalError et ExportError
     add(GpxError, 422, "invalid_gpx")
 
+    async def validation_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
+        # jamais d'écho de `input` : il peut contenir clé API ou mot de passe
+        detail = [{"loc": list(e["loc"]), "msg": e["msg"]} for e in exc.errors()]
+        return _error(422, "invalid", detail)
+
+    app.add_exception_handler(RequestValidationError, validation_handler)
+
+
+def _host_name(host_header: str) -> str:
+    """Nom d'hôte sans port ('[::1]:80' -> '[::1]')."""
+    host = host_header.strip().lower()
+    if host.startswith("["):
+        return host[: host.find("]") + 1]
+    return host.rsplit(":", 1)[0] if host.count(":") == 1 else host
+
+
+def _host_allowed(host_header: str, lan: bool, extra: set[str]) -> bool:
+    name = _host_name(host_header)
+    if name in LOCAL_HOSTS or name in extra:
+        return True
+    if not lan:
+        return False
+    try:
+        ipaddress.ip_address(name.strip("[]"))
+        return True
+    except ValueError:
+        pass
+    machine = socket.gethostname().lower()
+    return name in {machine, machine + ".local"}
+
 
 def create_app(
     *,
@@ -135,6 +173,7 @@ def create_app(
     repo: Repo | None = None,
     login_client=GarminClient,
     clock: Callable[[], float] = time.monotonic,
+    extra_hosts: set[str] | frozenset[str] = frozenset(),
 ) -> FastAPI:
     """`login_client` (start_login/finish_login) et `clock` sont injectables pour les tests."""
     if lan and not load_settings().pin_hash:
@@ -148,6 +187,7 @@ def create_app(
     app.state.sessions = set()
     app.state.pin_failures = 0
     app.state.pin_locked_until = 0.0
+    pin_lock = threading.Lock()
     _register_errors(app)
 
     def get_repo(request: Request) -> Repo:
@@ -167,6 +207,26 @@ def create_app(
                     return _error(401, "pin_required", "PIN requis")
             return await call_next(request)
 
+    @app.middleware("http")
+    async def csrf_guard(request: Request, call_next):
+        h = request.headers
+        if request.url.path.startswith("/api") and request.method not in SAFE_METHODS:
+            origin = h.get("origin")
+            fetch_site = h.get("sec-fetch-site")
+            if (
+                h.get("x-coach") != "1"
+                or (origin is not None and urlparse(origin).netloc != h.get("host", ""))
+                or (fetch_site is not None and fetch_site not in ("same-origin", "none"))
+            ):
+                return _error(403, "csrf", "Requête refusée")
+        return await call_next(request)
+
+    @app.middleware("http")
+    async def host_guard(request: Request, call_next):
+        if not _host_allowed(request.headers.get("host", ""), lan, set(extra_hosts)):
+            return JSONResponse(status_code=400, content={"code": "bad_host", "detail": "Hôte refusé"})
+        return await call_next(request)
+
     api = APIRouter(prefix="/api")
 
     # --- statut et authentification ---------------------------------------------------------
@@ -178,6 +238,8 @@ def create_app(
             garmin = "ok"
         except GarminAuthRequired:
             garmin = "auth_required"
+        except (GarminUnavailable, GarminRateLimited):
+            garmin = "unavailable"
         goal = repo.active_goal()
         proposal = repo.pending_proposal()
         return {
@@ -192,24 +254,31 @@ def create_app(
         stored = load_settings().pin_hash
         if not stored:
             return _error(422, "no_pin", "Aucun PIN défini")
-        if clock() < app.state.pin_locked_until:
-            return _error(429, "pin_locked", "Trop d'essais, réessaie dans une minute")
-        if not verify_pin(body.pin, stored):
-            app.state.pin_failures += 1
-            if app.state.pin_failures >= PIN_MAX_FAILURES:
-                app.state.pin_failures = 0
-                app.state.pin_locked_until = clock() + PIN_LOCK_S
-            return _error(401, "pin_invalid", "PIN incorrect")
-        app.state.pin_failures = 0
+        with pin_lock:  # verrou + vérification + compteur : pas de course entre tentatives
+            if clock() < app.state.pin_locked_until:
+                return _error(429, "pin_locked", "Trop d'essais, réessaie dans une minute")
+            if not verify_pin(body.pin, stored):
+                app.state.pin_failures += 1
+                if app.state.pin_failures >= PIN_MAX_FAILURES:
+                    app.state.pin_failures = 0
+                    app.state.pin_locked_until = clock() + PIN_LOCK_S
+                return _error(401, "pin_invalid", "PIN incorrect")
+            app.state.pin_failures = 0
         token = secrets.token_urlsafe(32)
         app.state.sessions.add(token)
         response = JSONResponse({"status": "ok"})
         response.set_cookie(COOKIE, token, httponly=True, samesite="strict")
         return response
 
+    def _login_refused() -> JSONResponse:
+        return _error(401, "garmin_login_failed", "Identifiants Garmin refusés")
+
     @api.post("/garmin/login")
     def garmin_login(body: LoginBody):
-        status_, state = login_client.start_login(body.email, body.password, tokenstore_dir())
+        try:
+            status_, state = login_client.start_login(body.email, body.password, tokenstore_dir())
+        except GarminAuthRequired:
+            return _login_refused()
         if status_ == "ok":
             return {"status": "ok"}
         now = clock()
@@ -226,7 +295,10 @@ def create_app(
         if entry is None or entry[1] <= clock():
             app.state.mfa.pop(body.login_id, None)
             return _error(422, "mfa_expired", "Connexion expirée, recommence")
-        login_client.finish_login(entry[0], body.code, tokenstore_dir())
+        try:
+            login_client.finish_login(entry[0], body.code, tokenstore_dir())
+        except GarminAuthRequired:
+            return _login_refused()
         del app.state.mfa[body.login_id]
         return {"status": "ok"}
 
@@ -243,13 +315,16 @@ def create_app(
         d_plus_m: Annotated[int, Form()] = 0,
         gpx: Annotated[UploadFile | None, File()] = None,
     ):
+        raw = gpx.file.read(MAX_GPX_BYTES + 1) if gpx is not None else None
+        if raw is not None and len(raw) > MAX_GPX_BYTES:
+            return _error(413, "too_large", "Fichier GPX trop volumineux (10 Mo maximum)")
         data = GoalInput(
             type=type,
             distance_km=distance_km,
             d_plus_m=d_plus_m,
             race_date=race_date,
             sessions_per_week=sessions_per_week,
-            gpx=gpx.file.read() if gpx is not None else None,
+            gpx=raw,
         )
         return _goal_dict(create_goal(repo, garmin, data))
 

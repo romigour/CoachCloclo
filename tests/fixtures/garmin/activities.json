@@ -1,0 +1,5 @@
+{"_comment": "synthétique — à remplacer par une capture réelle (plan tâche 10)",
+ "data": [
+  {"activityId": 20000000002, "activityName": "Sortie longue", "startTimeLocal": "2026-10-25 08:15:30", "activityType": {"typeKey": "running", "typeId": 1}, "duration": 5432.7, "distance": 16050.4, "elevationGain": 212.0, "averageHR": 148.0, "maxHR": 171.0},
+  {"activityId": 20000000001, "activityName": "Vélo", "startTimeLocal": "2026-10-23 18:00:00", "activityType": {"typeKey": "cycling", "typeId": 2}, "duration": 3600.0, "distance": 25000.0, "elevationGain": null, "averageHR": null}
+ ]}

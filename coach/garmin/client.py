@@ -1,0 +1,243 @@
+"""Client Garmin réel (python-garminconnect 0.3.x, sans garth).
+
+Seul module qui parle à Garmin Connect. Tout appel passe par `_call`, qui
+traduit les exceptions de la bibliothèque et fait une seule nouvelle tentative
+après 5 s sur un 429. Le parsing est défensif : une donnée absente vaut None.
+"""
+
+from __future__ import annotations
+
+import time
+from collections.abc import Callable
+from datetime import date
+from pathlib import Path
+from typing import Any, Literal
+
+from garminconnect import (
+    Garmin,
+    GarminConnectAuthenticationError,
+    GarminConnectConnectionError,
+    GarminConnectNotFoundError,
+    GarminConnectTooManyRequestsError,
+)
+
+from coach.garmin.port import (
+    ActivitySummary,
+    GarminAuthRequired,
+    GarminRateLimited,
+    GarminUnavailable,
+    Metrics,
+)
+
+RETRY_DELAY_S = 5
+
+
+class _NotFound(GarminUnavailable):
+    """Ressource absente (404) : une métrique non calculée vaut None."""
+
+
+def _num(v: Any) -> float | None:
+    if isinstance(v, bool) or not isinstance(v, int | float):
+        return None
+    return float(v)
+
+
+def _int(v: Any) -> int | None:
+    n = _num(v)
+    return None if n is None else round(n)
+
+
+def _first_dict(v: Any) -> dict:
+    """La bibliothèque renvoie tantôt un dict, tantôt une liste de dicts."""
+    if isinstance(v, list):
+        v = next((x for x in reversed(v) if isinstance(x, dict)), {})
+    return v if isinstance(v, dict) else {}
+
+
+def _pace_s_km(speed: Any) -> int | None:
+    """Allure (s/km) depuis la vitesse du seuil lactique.
+
+    Garmin (latestLactateThreshold) exprime cette vitesse en dizaines de m/s
+    (ex. 0.35 pour 3,5 m/s) ; toute valeur < 1 est donc multipliée par 10
+    (< 1 m/s serait de la marche, pas un seuil). À confirmer sur capture réelle.
+    """
+    s = _num(speed)
+    if s is None or s <= 0:
+        return None
+    if s < 1:
+        s *= 10
+    return round(1000 / s)
+
+
+def _running_zones(zones: Any) -> dict:
+    if not isinstance(zones, list):
+        return {}
+    entries = [z for z in zones if isinstance(z, dict)]
+    for sport in ("RUNNING", "DEFAULT"):
+        for z in entries:
+            if str(z.get("sport", "")).upper() == sport:
+                return z
+    return entries[0] if entries else {}
+
+
+def _map_login_errors(fn: Callable[[], Any]) -> Any:
+    try:
+        return fn()
+    except GarminConnectAuthenticationError as e:
+        raise GarminAuthRequired("Connexion Garmin refusée ou expirée") from e
+    except GarminConnectTooManyRequestsError as e:
+        raise GarminRateLimited("Garmin limite les connexions, réessaie plus tard") from e
+    except GarminConnectConnectionError as e:
+        raise GarminUnavailable(f"Garmin injoignable : {e}") from e
+
+
+class GarminClient:
+    def __init__(self, api: Any, *, sleep: Callable[[float], None] = time.sleep):
+        self._api = api
+        self._sleep = sleep
+
+    # --- authentification -------------------------------------------------
+
+    @classmethod
+    def from_tokens(cls, tokenstore: Path) -> GarminClient:
+        api = Garmin()
+        _map_login_errors(lambda: api.login(str(tokenstore)))
+        return cls(api)
+
+    @classmethod
+    def start_login(
+        cls, email: str, password: str, tokenstore: Path
+    ) -> tuple[Literal["ok", "needs_mfa"], GarminClient | dict]:
+        """Démarre la connexion. Le `state` MFA est à garder côté serveur."""
+        api = Garmin(email, password, return_on_mfa=True)
+        status, state = _map_login_errors(lambda: api.login(str(tokenstore)))
+        if status == "needs_mfa":
+            return "needs_mfa", state
+        # En mode return_on_mfa, la bibliothèque ne persiste pas les tokens et
+        # ne charge pas le profil : on persiste, puis on recharge proprement.
+        _map_login_errors(lambda: api.client.dump(str(tokenstore)))
+        return "ok", cls.from_tokens(tokenstore)
+
+    @classmethod
+    def finish_login(cls, state: dict, code: str, tokenstore: Path) -> GarminClient:
+        api = Garmin()
+
+        def go() -> None:
+            api.resume_login(state, code)
+            api.client.dump(str(tokenstore))
+
+        _map_login_errors(go)
+        return cls(api)
+
+    # --- appel unique avec traduction d'erreurs ---------------------------
+
+    def _call(self, fn: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+        for attempt in (1, 2):
+            try:
+                return fn(*args, **kwargs)
+            except GarminConnectTooManyRequestsError as e:
+                if attempt == 1:
+                    self._sleep(RETRY_DELAY_S)
+                    continue
+                raise GarminRateLimited("Garmin limite les requêtes, réessaie plus tard") from e
+            except GarminConnectAuthenticationError as e:
+                raise GarminAuthRequired("Connexion Garmin expirée") from e
+            except GarminConnectNotFoundError as e:
+                raise _NotFound(f"Ressource Garmin introuvable : {e}") from e
+            except GarminConnectConnectionError as e:
+                raise GarminUnavailable(f"Garmin indisponible : {e}") from e
+
+    def _optional(self, fn: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+        try:
+            return self._call(fn, *args, **kwargs)
+        except _NotFound:
+            return None
+
+    # --- lecture ----------------------------------------------------------
+
+    def today(self) -> date:
+        fn = getattr(self._api, "today", None)
+        if fn is None:
+            return date.today()
+        return date.fromisoformat(fn().isoformat())
+
+    def metrics(self) -> Metrics:
+        api = self._api
+        day = self.today().isoformat()
+        max_metrics = _first_dict(self._optional(api.get_max_metrics_latest))
+        lactate = self._optional(api.get_lactate_threshold, latest=True)
+        hr = self._optional(api.get_heart_rates, day)
+        zones = _running_zones(self._optional(api.get_heart_rate_zones_v2))
+        preds = _first_dict(self._optional(api.get_race_predictions))
+
+        lt = _first_dict(lactate.get("speed_and_heart_rate")) if isinstance(lactate, dict) else {}
+        hr = hr if isinstance(hr, dict) else {}
+        floors = [_int(zones.get(f"zone{i}Floor")) for i in range(1, 6)]
+        return Metrics(
+            vo2max=_num(_first_dict(max_metrics.get("generic")).get("vo2MaxPreciseValue")),
+            # FC max : réglage utilisateur (zones) sinon max du jour (moins fiable).
+            hr_max=_int(zones.get("maxHeartRateUsed")) or _int(hr.get("maxHeartRate")),
+            hr_rest=_int(hr.get("restingHeartRate")),
+            threshold_hr=_int(lt.get("heartRate")),
+            threshold_pace_s_km=_pace_s_km(lt.get("speed")),
+            pred_10k_s=_int(preds.get("time10K")),
+            hr_zones=floors if all(f is not None for f in floors) else None,
+        )
+
+    def activities(self, start: date, end: date) -> list[ActivitySummary]:
+        raw = self._call(self._api.get_activities_by_date, start.isoformat(), end.isoformat())
+        out: list[ActivitySummary] = []
+        for a in raw if isinstance(raw, list) else []:
+            if not isinstance(a, dict):
+                continue
+            gid = _int(a.get("activityId"))
+            try:
+                d = date.fromisoformat(str(a.get("startTimeLocal", ""))[:10])
+            except ValueError:
+                continue
+            if gid is None:
+                continue
+            atype = a.get("activityType")
+            out.append(
+                ActivitySummary(
+                    garmin_id=gid,
+                    date=d,
+                    type_key=(atype.get("typeKey") if isinstance(atype, dict) else None)
+                    or "unknown",
+                    duration_s=_int(a.get("duration")) or 0,
+                    distance_m=_int(a.get("distance")) or 0,
+                    d_plus_m=_int(a.get("elevationGain")),
+                    avg_hr=_int(a.get("averageHR")),
+                    raw=a,
+                )
+            )
+        return out
+
+    # --- écriture ---------------------------------------------------------
+
+    @staticmethod
+    def _id(resp: Any, *keys: str) -> int:
+        found = None
+        if isinstance(resp, dict):
+            found = next((_int(resp[k]) for k in keys if _int(resp.get(k))), None)
+        if found is None:
+            raise GarminUnavailable("Réponse Garmin inattendue (identifiant absent)")
+        return found
+
+    def upload_workout(self, workout: dict) -> int:
+        """Renvoie le `workoutId` de la réponse."""
+        return self._id(self._call(self._api.upload_workout, workout), "workoutId")
+
+    def schedule(self, workout_id: int, d: date) -> int:
+        """Renvoie `workoutScheduleId` (repli : `scheduledWorkoutId`, `id`)."""
+        resp = self._call(self._api.schedule_workout, workout_id, d.isoformat())
+        return self._id(resp, "workoutScheduleId", "scheduledWorkoutId", "id")
+
+    def reschedule(self, schedule_id: int, d: date) -> None:
+        self._call(self._api.reschedule_workout, schedule_id, d.isoformat())
+
+    def unschedule(self, schedule_id: int) -> None:
+        self._call(self._api.unschedule_workout, schedule_id)
+
+    def delete_workout(self, workout_id: int) -> None:
+        self._call(self._api.delete_workout, workout_id)

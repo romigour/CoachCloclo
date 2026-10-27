@@ -1,0 +1,5 @@
+{"_comment": "synthétique — à remplacer par une capture réelle (plan tâche 10)",
+ "data": [
+  {"sport": "DEFAULT", "trainingMethod": "HR_MAX", "maxHeartRateUsed": 186, "restingHeartRateUsed": 48, "lactateThresholdHeartRateUsed": null, "zone1Floor": 93, "zone2Floor": 112, "zone3Floor": 130, "zone4Floor": 149, "zone5Floor": 167},
+  {"sport": "RUNNING", "trainingMethod": "HR_RESERVE", "maxHeartRateUsed": 187, "restingHeartRateUsed": 48, "lactateThresholdHeartRateUsed": 168, "zone1Floor": 118, "zone2Floor": 132, "zone3Floor": 146, "zone4Floor": 160, "zone5Floor": 174}
+ ]}

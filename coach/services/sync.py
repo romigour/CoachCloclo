@@ -147,6 +147,7 @@ def _propose(
             counts_by_week=counts,
             pace_available=pace_available,
             week_of_session=week_of_session,
+            exported_ids={s.id for s in upcoming if s.status == "exported"},
         ),
     )
     with repo.transaction() as db:

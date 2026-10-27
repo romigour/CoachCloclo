@@ -129,8 +129,10 @@ def build_adjustment_prompt(
         "Séances à venir :\n" + ("\n".join(_session_line(s) for s in upcoming) if upcoming else "aucune"),
         "Règles de modification : seules les séances de statut `todo` ou `exported` peuvent être "
         "modifiées (op modify, avec session_id) ou supprimées (op remove) ; les séances `done`, "
-        "`missed` ou `sync_error` sont intouchables. Un ajout (op add) doit respecter le maximum de "
-        f"{goal.sessions_per_week} séances par semaine et viser la semaine {current_week} ou une suivante.",
+        "`missed` ou `sync_error` sont intouchables. Une séance `exported` reste dans sa semaine ; "
+        "chaque session_id apparaît au plus une fois. Un ajout (op add) ou une modification doit "
+        f"respecter le maximum de {goal.sessions_per_week} séances par semaine et viser la semaine "
+        f"{current_week} ou une suivante.",
         _history_text(history),
         "Schéma JSON attendu :\n" + _schema_text(AdjustmentResponse),
     ]

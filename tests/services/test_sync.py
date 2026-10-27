@@ -200,3 +200,15 @@ def test_pending_removal_excluded_from_week_counts(repo, coach_home, fake_garmin
     assert r.proposal_id is not None
     with repo.transaction() as db:
         assert db.get(Proposal, r.proposal_id).status == "pending"
+
+
+def test_exported_session_moved_to_other_week_is_retried(repo, coach_home, fake_garmin, accepted_plan):
+    target = repo.sessions(accepted_plan.id, week_index=2)[0]
+    target.status = "exported"
+    target.scheduled_date = date(2026, 11, 10)
+    repo.update(target)
+    moved = Change(op="modify", session_id=target.id, session=make_session(week_index=3), reason="r")
+    llm = FakeLLMProvider([adjustment_json([moved]), adjustment_json()])
+    r = sync(repo, fake_garmin, llm, now=NOW)
+    assert len(llm.calls) == 2 and "exportée" in llm.calls[1]
+    assert r.proposal_id is not None

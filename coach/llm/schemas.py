@@ -117,6 +117,8 @@ def validate_plan(
         orders = [s.order for s in week.sessions]
         if len(set(orders)) != len(orders):
             errors.append(f"semaine {week.week_index} : numéros d'ordre en double")
+        if any(s.week_index != week.week_index for s in week.sessions):
+            errors.append(f"semaine {week.week_index} : chaque séance doit porter le week_index de sa semaine")
         if not pace_available and any(_uses_pace(s) for s in week.sessions):
             errors.append(f"semaine {week.week_index} : cible d'allure impossible sans données d'allure")
     return errors
@@ -131,6 +133,7 @@ def validate_adjustment(
     counts_by_week: dict[int, int],
     pace_available: bool,
     week_of_session: dict[int, int] | None = None,
+    exported_ids: set[int] | None = None,
 ) -> list[str]:
     """Contrôle métier d'un ajustement ; retourne la liste des erreurs (vide si valide).
 
@@ -138,10 +141,14 @@ def validate_adjustment(
     `week_of_session` (session_id -> week_index) permet de décompter un `remove` ou un `modify`
     qui change de semaine ; s'il est absent (None) ou ne connaît pas la séance, le retrait
     n'est pas décompté.
+    `exported_ids` : séances exportées, qui ne peuvent pas changer de semaine (date Garmin fixée).
     """
     errors: list[str] = []
     counts: Counter[int] = Counter(counts_by_week)
     known = week_of_session or {}
+    ids = [ch.session_id for ch in adj.changes if ch.session_id is not None]
+    for sid in sorted({i for i in ids if ids.count(i) > 1}):
+        errors.append(f"la séance {sid} apparaît dans plusieurs changements")
     for i, ch in enumerate(adj.changes, start=1):
         label = f"changement {i} ({ch.op})"
         if ch.session_id is not None and ch.session_id not in editable_ids:
@@ -149,11 +156,18 @@ def validate_adjustment(
         if ch.session is not None:
             if not pace_available and _uses_pace(ch.session):
                 errors.append(f"{label} : cible d'allure impossible sans données d'allure")
-            if ch.op == "add" and ch.session.week_index < current_week:
+            if ch.session.week_index < current_week:
                 errors.append(
-                    f"{label} : ajout en semaine {ch.session.week_index}, avant la semaine courante {current_week}"
+                    f"{label} : semaine {ch.session.week_index}, avant la semaine courante {current_week}"
                 )
         old_week = known.get(ch.session_id) if ch.session_id is not None else None
+        if (
+            ch.op == "modify"
+            and ch.session_id in (exported_ids or set())
+            and old_week is not None
+            and ch.session.week_index != old_week
+        ):
+            errors.append(f"{label} : la séance {ch.session_id} est exportée, elle ne peut pas changer de semaine")
         if ch.op == "add":
             counts[ch.session.week_index] += 1
         elif old_week is not None:  # remove / modify : décompté seulement si la semaine d'origine est connue

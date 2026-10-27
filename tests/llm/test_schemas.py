@@ -191,3 +191,38 @@ def test_validate_adjustment_pace_without_data():
     assert validate_adjustment(
         adj, editable_ids=set(), current_week=3, sessions_per_week=4, counts_by_week={}, pace_available=False
     )
+
+
+def test_validate_plan_session_week_must_match_parent_week():
+    plan = make_plan(n_weeks=2, per_week=[1, 1])
+    plan.weeks[1].sessions[0].week_index = 1
+    errs = validate_plan(plan, n_weeks=2, sessions_per_week=3, pace_available=True)
+    assert any("semaine 2" in e and "week_index" in e for e in errs)
+
+
+_ADJ_KW = dict(current_week=3, sessions_per_week=4, counts_by_week={3: 2, 4: 1}, pace_available=True)
+
+
+def test_validate_adjustment_rejects_duplicate_session_ids():
+    adj = _adj(
+        Change(op="modify", session_id=5, session=make_session(week_index=3), reason="r"),
+        Change(op="remove", session_id=5, reason="r"),
+    )
+    errs = validate_adjustment(adj, editable_ids={5}, week_of_session={5: 3}, **_ADJ_KW)
+    assert any("5" in e and "plusieurs" in e for e in errs)
+
+
+def test_validate_adjustment_rejects_modify_into_past_week():
+    adj = _adj(Change(op="modify", session_id=5, session=make_session(week_index=2), reason="r"))
+    errs = validate_adjustment(adj, editable_ids={5}, week_of_session={5: 3}, **_ADJ_KW)
+    assert any("semaine 2" in e for e in errs)
+
+
+def test_validate_adjustment_exported_session_cannot_change_week():
+    adj = _adj(Change(op="modify", session_id=5, session=make_session(week_index=4), reason="r"))
+    kwargs = dict(editable_ids={5}, week_of_session={5: 3}, **_ADJ_KW)
+    assert validate_adjustment(adj, **kwargs) == []  # séance todo : changement de semaine permis
+    errs = validate_adjustment(adj, **kwargs, exported_ids={5})
+    assert any("exportée" in e for e in errs)
+    same_week = _adj(Change(op="modify", session_id=5, session=make_session(week_index=3), reason="r"))
+    assert validate_adjustment(same_week, **kwargs, exported_ids={5}) == []

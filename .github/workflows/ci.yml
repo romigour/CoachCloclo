@@ -36,6 +36,10 @@ jobs:
         run: uv run pytest
       - name: Build wheel
         run: uv build
+      - name: Test de Invoke-Step (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./tests/installers/check_ps_invoke.ps1
       - name: Installeur (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
@@ -64,11 +68,13 @@ jobs:
           export PATH="$HOME/.local/bin:$PATH"
           export PYTHONUTF8=1
           export COACH_HOME="$RUNNER_TEMP/coach-home"
-          coach start --no-browser --port 8799 &
+          coach start --no-browser --port 8799 >"$RUNNER_TEMP/coach.log" 2>&1 &
           pid=$!
           trap 'kill $pid 2>/dev/null || true' EXIT
           for i in $(seq 1 30); do
             if curl -fsS http://127.0.0.1:8799/ -o "$RUNNER_TEMP/index.html"; then break; fi
             sleep 1
           done
-          grep -qi "<html" "$RUNNER_TEMP/index.html"
+          if ! grep -qi "<html" "$RUNNER_TEMP/index.html"; then
+            echo "Front non servi ; journal du serveur :"; cat "$RUNNER_TEMP/coach.log"; exit 1
+          fi

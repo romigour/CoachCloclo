@@ -5,22 +5,28 @@
 param([switch]$DryRun)
 
 # Tout est dans une fonction : `exit` fermerait la fenetre de l'utilisateur sous `irm | iex`.
+# Lance une commande native sans rien capturer (sortie et terminal restent attaches a la console).
+# Le code de sortie est laisse dans $script:StepCode, jamais dans le flux de sortie de la fonction.
+function Invoke-Step {
+    param([string]$Exe, [string[]]$StepArgs)
+    $script:StepCode = 0
+    if ($script:DryRunMode) { Write-Host "[dry-run] $Exe $($StepArgs -join ' ')"; return }
+    # Start-Process : le fils herite directement de la console (aucune capture, interactivite conservee).
+    $path = (Get-Command $Exe -CommandType Application | Select-Object -First 1).Source
+    $quoted = $StepArgs | ForEach-Object { if ($_ -match '[\s"]') { '"' + ($_ -replace '"', '\"') + '"' } else { $_ } }
+    $proc = Start-Process -FilePath $path -ArgumentList $quoted -NoNewWindow -Wait -PassThru
+    $script:StepCode = [int]$proc.ExitCode
+}
+
 function Install-Coach {
     param([bool]$Dry)
+    $script:DryRunMode = $Dry
     $ErrorActionPreference = 'Stop'
     $env:PYTHONUTF8 = '1'
 
     function Update-SessionPath {
         $localBin = Join-Path $HOME '.local\bin'
         if (($env:Path -split ';') -notcontains $localBin) { $env:Path = "$localBin;$env:Path" }
-    }
-
-    # Lance une commande native (non redirigee : reste interactive) ; renvoie son code de sortie.
-    function Invoke-Step {
-        param([string]$Exe, [string[]]$StepArgs)
-        if ($Dry) { Write-Host "[dry-run] $Exe $($StepArgs -join ' ')"; return 0 }
-        & $Exe @StepArgs
-        return $LASTEXITCODE
     }
 
     $source = if ($env:COACH_SOURCE) { $env:COACH_SOURCE } else { 'coach-running' }
@@ -49,13 +55,15 @@ function Install-Coach {
     $installArgs += $source
 
     Write-Host 'Installation de Coach...'
-    $code = Invoke-Step 'uv' $installArgs
+    Invoke-Step 'uv' $installArgs
+    $code = $script:StepCode
     if ($code -ne 0) { Write-Host "uv tool install a echoue (code $code)."; return 1 }
 
     Write-Host "Verification de l'installation..."
     $doctorArgs = @('doctor', '--fix')
     if ($env:COACH_INSTALL_OFFLINE -eq '1') { $doctorArgs += '--offline' }
-    $code = Invoke-Step 'coach' $doctorArgs
+    Invoke-Step 'coach' $doctorArgs
+    $code = $script:StepCode
     if ($code -ne 0) {
         Write-Host 'Certaines verifications ont echoue (lignes x ci-dessus). Corrige-les puis relance ce script.'
         return 1
@@ -65,9 +73,11 @@ function Install-Coach {
         Write-Host 'Installation terminee (COACH_INSTALL_NO_START=1 : coach start non lance).'
         return 0
     }
-    return (Invoke-Step 'coach' @('start'))
+    Invoke-Step 'coach' @('start')
+    return $script:StepCode
 }
 
+if ($env:COACH_INSTALLER_LIB -eq '1') { return }  # chargement des fonctions seules (tests)
 $dry = $DryRun.IsPresent -or ($env:COACH_DRY_RUN -eq '1')
 try {
     $result = Install-Coach -Dry $dry

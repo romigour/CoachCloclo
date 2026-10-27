@@ -4,6 +4,9 @@ on:
   push:
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   build-test:
     strategy:
@@ -11,6 +14,9 @@ jobs:
       matrix:
         os: [windows-latest, macos-latest, ubuntu-latest]
     runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -22,6 +28,7 @@ jobs:
       - name: Front (install, tests, build)
         working-directory: web
         run: |
+          set -euo pipefail
           npm ci
           npm test
           npm run build
@@ -43,12 +50,25 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Installeur (macOS / Linux)
         if: runner.os != 'Windows'
-        shell: bash
         run: |
+          set -euo pipefail
           export COACH_SOURCE="$(ls "$PWD"/dist/coach_running-*.whl | head -n1)"
           export COACH_INSTALL_NO_START=1
           export COACH_INSTALL_OFFLINE=1
-          chmod +x install.sh
-          ./install.sh
+          bash install.sh
           export PATH="$HOME/.local/bin:$PATH"
           coach doctor --offline
+      - name: Front servi par l'application installée
+        run: |
+          set -euo pipefail
+          export PATH="$HOME/.local/bin:$PATH"
+          export PYTHONUTF8=1
+          export COACH_HOME="$RUNNER_TEMP/coach-home"
+          coach start --no-browser --port 8799 &
+          pid=$!
+          trap 'kill $pid 2>/dev/null || true' EXIT
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8799/ -o "$RUNNER_TEMP/index.html"; then break; fi
+            sleep 1
+          done
+          grep -qi "<html" "$RUNNER_TEMP/index.html"

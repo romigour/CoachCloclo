@@ -35,6 +35,7 @@ class Settings(BaseModel):
     anthropic_model: str = "claude-sonnet-5-5"
     pin_hash: str | None = None
     last_sync_at: datetime | None = None
+    proposal_due: bool = False
 
 
 def load_settings() -> Settings:

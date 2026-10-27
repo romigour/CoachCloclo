@@ -160,3 +160,27 @@ def test_first_sync_window_is_56_days(repo, coach_home, accepted_plan):
     garmin = FakeGarminClient(metrics=METRICS, activities=[old, recent], today=date(2026, 11, 4))
     r = sync(repo, garmin, FakeLLMProvider([adjustment_json()]), now=NOW)
     assert r.new_activities == 1
+
+
+def test_proposal_retried_after_llm_failure(repo, coach_home, fake_garmin, accepted_plan):
+    with pytest.raises(LLMUsageLimit):
+        sync(repo, fake_garmin, FailingLLM(LLMUsageLimit()), now=NOW)
+    assert load_settings().proposal_due is True
+    llm = FakeLLMProvider([adjustment_json()])
+    r = sync(repo, fake_garmin, llm, now=NOW + timedelta(hours=1))
+    assert r.matched == 0 and r.proposal_id is not None and len(llm.calls) == 1
+    assert load_settings().proposal_due is False
+    r3 = sync(repo, fake_garmin, llm, now=NOW + timedelta(hours=2))
+    assert r3.proposal_id is None and len(llm.calls) == 1
+
+
+def test_overlap_window_two_days(repo, coach_home, accepted_plan):
+    from coach.config import Settings, save_settings
+
+    save_settings(Settings(last_sync_at=datetime(2026, 11, 3, 8, 0)))
+    inside = run_summary(garmin_id=20, d=date(2026, 11, 1))
+    outside = run_summary(garmin_id=21, d=date(2026, 10, 31))
+    garmin = FakeGarminClient(metrics=METRICS, activities=[inside, outside], today=date(2026, 11, 4))
+    r = sync(repo, garmin, FakeLLMProvider([adjustment_json()]), now=NOW)
+    assert r.new_activities == 1
+    assert repo.activity_by_garmin_id(20) is not None and repo.activity_by_garmin_id(21) is None

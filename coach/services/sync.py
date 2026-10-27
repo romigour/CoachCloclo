@@ -90,11 +90,15 @@ def sync(repo: Repo, garmin: GarminPort, llm: LLMProvider, *, now: datetime) -> 
                 db.add(s)
 
     settings.last_sync_at = now
+    if pairs or missed_ids:
+        settings.proposal_due = True
     save_settings(settings)
 
     proposal_id = None
-    if goal is not None and goal.plan_accepted and (pairs or missed_ids):
+    if goal is not None and goal.plan_accepted and settings.proposal_due:
         proposal_id = _propose(repo, garmin, llm, goal, zones, pairs, missed_ids, today)
+        settings.proposal_due = False
+        save_settings(settings)
     return SyncResult(
         new_activities=new_activities,
         matched=len(pairs),

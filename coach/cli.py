@@ -1,10 +1,12 @@
 """Commandes `coach` : start, doctor, login-garmin, update."""
 
 import getpass
+import json
 import shutil
 import subprocess
 import sys
 import threading
+import urllib.request
 import webbrowser
 
 import typer
@@ -18,7 +20,7 @@ from coach.garmin.client import GarminClient
 from coach.garmin.port import GarminAuthRequired, GarminRateLimited, GarminUnavailable
 from coach.llm.provider import provider_from_settings
 
-app = typer.Typer(help="Coach : plans running/trail à partir de tes données Garmin.",
+app = typer.Typer(help="CoachCloclo : plans running/trail à partir de tes données Garmin.",
                   no_args_is_help=True, add_completion=False)
 
 
@@ -108,18 +110,37 @@ def login_garmin_flow() -> None:
 
 @app.command("login-garmin")
 def login_garmin():
-    """Connecte Coach à ton compte Garmin."""
+    """Connecte CoachCloclo à ton compte Garmin."""
     login_garmin_flow()
+
+
+REPO = "romigour/CoachCloclo"
+RELEASES_API = f"https://api.github.com/repos/{REPO}/releases/latest"
+
+
+def latest_wheel_url() -> str:
+    """URL de la wheel de la dernière release GitHub (le front y est déjà compilé)."""
+    with urllib.request.urlopen(RELEASES_API, timeout=30) as resp:
+        release = json.load(resp)
+    for asset in release.get("assets", []):
+        if asset.get("name", "").endswith(".whl"):
+            return asset["browser_download_url"]
+    raise RuntimeError(f"Aucune wheel dans la dernière release de {REPO}")
 
 
 @app.command()
 def update():
-    """Met à jour Coach via uv."""
+    """Met à jour CoachCloclo depuis la dernière release GitHub."""
     uv = shutil.which("uv")
     if uv is None:
         typer.echo("uv est introuvable. Installe-le (https://docs.astral.sh/uv/) "
-                   "puis lance `uv tool upgrade coach-running`.")
+                   "puis relance le script d'installation.")
         raise typer.Exit(1)
-    result = subprocess.run([uv, "tool", "upgrade", "coach-running"])
+    try:
+        url = latest_wheel_url()
+    except (OSError, RuntimeError, ValueError) as e:
+        typer.echo(f"Impossible de trouver la dernière version : {e}")
+        raise typer.Exit(1) from e
+    result = subprocess.run([uv, "tool", "install", "--force", "--python", "3.12", url])
     if result.returncode != 0:
         raise typer.Exit(result.returncode)

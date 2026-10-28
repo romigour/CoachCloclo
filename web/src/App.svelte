@@ -77,7 +77,7 @@
 </script>
 
 <header class="topbar">
-  <strong>Coach</strong>
+  <strong>CoachCloclo</strong>
   <nav>
     <a href="#/plan" class:active={route === "plan"}>Plan</a>
     <a href="#/goal" class:active={route === "goal"}>Objectif</a>

@@ -14,7 +14,7 @@ from pathlib import Path
 
 
 def _client() -> GarminClient:
-    home = Path(os.environ.get("COACH_HOME") or user_data_dir("coach"))
+    home = Path(os.environ.get("COACH_HOME") or user_data_dir("CoachCloclo"))
     return GarminClient.from_tokens(home / "garmin")
 
 
@@ -35,7 +35,7 @@ def test_read_only():
 def test_workout_roundtrip():
     c = _client()
     workout = {
-        "workoutName": "Coach test (à supprimer)",
+        "workoutName": "CoachCloclo test (à supprimer)",
         "sportType": {"sportTypeId": 1, "sportTypeKey": "running"},
         "workoutSegments": [
             {

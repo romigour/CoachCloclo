@@ -1,24 +1,24 @@
-# Coach
+# CoachCloclo
 
 Application locale qui génère tes plans d'entraînement running/trail à partir de tes données Garmin, avec Claude. Tout tourne sur ta machine ; tes données ne quittent pas ton ordinateur (hormis les appels à Garmin et à Claude).
 
 ## Installation (une commande)
 
-Remplace `<URL>` par l'adresse brute des scripts d'installation du dépôt.
+- **Windows (PowerShell)** : `irm https://raw.githubusercontent.com/romigour/CoachCloclo/master/install.ps1 | iex`
+- **macOS / Linux** : `curl -LsSf https://raw.githubusercontent.com/romigour/CoachCloclo/master/install.sh | bash`
 
-- **Windows (PowerShell)** : `irm <URL>/install.ps1 | iex`
-- **macOS / Linux** : `curl -LsSf <URL>/install.sh | bash`
+Le script installe `uv` si besoin, installe CoachCloclo à partir de la wheel de la [dernière release GitHub](https://github.com/romigour/CoachCloclo/releases/latest) (front déjà compilé), lance `coach doctor --fix`, puis `coach start` si tout est vert. Il ne te demande jamais d'identifiant lui-même : `doctor --fix` ouvre `claude` dans ton terminal (« Connecte-toi dans Claude puis tape /exit pour revenir »), puis `coach login-garmin` (connexion Garmin, avec MFA éventuel), et revérifie tout.
 
-Le script installe `uv` si besoin, installe Coach (`uv tool install --python 3.12 coach-running`), lance `coach doctor --fix`, puis `coach start` si tout est vert. Il ne te demande jamais d'identifiant lui-même : `doctor --fix` ouvre `claude` dans ton terminal (« Connecte-toi dans Claude puis tape /exit pour revenir »), puis `coach login-garmin` (connexion Garmin, avec MFA éventuel), et revérifie tout.
-
-Options : `COACH_SOURCE` (chemin d'une wheel ou nom de paquet), `COACH_INSTALL_NO_START=1` (ne lance pas l'app), `COACH_INSTALL_OFFLINE=1` (doctor sans Claude ni Garmin, pour la CI), `--dry-run` / `-DryRun` ou `COACH_DRY_RUN=1` sous PowerShell (affiche les commandes sans les exécuter).
+Options : `COACH_SOURCE` (chemin ou URL d'une wheel, à la place de la dernière release), `COACH_INSTALL_NO_START=1` (ne lance pas l'app), `COACH_INSTALL_OFFLINE=1` (doctor sans Claude ni Garmin, pour la CI), `--dry-run` / `-DryRun` ou `COACH_DRY_RUN=1` sous PowerShell (affiche les commandes sans les exécuter).
 
 ## Commandes
 
 - `coach start [--lan] [--port N] [--no-browser]` : lance l'application sur http://127.0.0.1:8765.
 - `coach doctor [--fix] [--offline]` : vérifie l'installation.
 - `coach login-garmin` : (re)connexion à Garmin.
-- `coach update` : met à jour via `uv tool upgrade coach-running`.
+- `coach update` : réinstalle la wheel de la dernière release GitHub.
+
+La commande `coachcloclo` est un alias de `coach`.
 
 ## Ce que vérifie `coach doctor`
 
@@ -34,9 +34,9 @@ Note : depuis un téléphone, via `http://<ip>:8765` en http simple (`--lan`), l
 
 Dossier de données (surchargeable avec `COACH_HOME`) :
 
-- Windows : `%LOCALAPPDATA%\coach\coach`
-- macOS : `~/Library/Application Support/coach`
-- Linux : `~/.local/share/coach`
+- Windows : `%LOCALAPPDATA%\CoachCloclo\CoachCloclo`
+- macOS : `~/Library/Application Support/CoachCloclo`
+- Linux : `~/.local/share/CoachCloclo`
 
 Il contient `coach.db` (base SQLite), `settings.json` (réglages, hash du PIN) et `garmin/` (tokens Garmin). Les tokens ne sont jamais envoyés ailleurs que chez Garmin ; ne partage pas ce dossier.
 
@@ -61,3 +61,14 @@ cd web && npm ci && npm test && npm run build   # produit coach/web_dist/
 uv run pytest
 uv build                                        # la wheel embarque coach/web_dist/
 ```
+
+## Publier une version
+
+Les installeurs récupèrent la wheel de la dernière release GitHub. Pour en publier une, mets à jour `version` dans `pyproject.toml`, puis pousse un tag :
+
+```bash
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+Le workflow `release.yml` compile le front, construit la wheel et l'attache à la release.

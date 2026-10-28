@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Installe Coach (macOS / Linux). Usage : curl -LsSf <URL>/install.sh | bash   ou   ./install.sh [--dry-run]
+# Installe CoachCloclo (macOS / Linux). Usage : curl -LsSf https://raw.githubusercontent.com/romigour/CoachCloclo/master/install.sh | bash   ou   ./install.sh [--dry-run]
 # Variables : COACH_SOURCE (wheel ou nom de paquet), COACH_INSTALL_NO_START=1 (ne lance pas coach start),
 # COACH_INSTALL_OFFLINE=1 (doctor sans Claude ni Garmin, pour la CI).
 if [ -z "${BASH_VERSION:-}" ]; then
@@ -38,7 +38,22 @@ run_interactive() {
   fi
 }
 
-SOURCE="${COACH_SOURCE:-coach-running}"
+# Source par défaut : la wheel de la dernière release GitHub (front déjà compilé).
+latest_wheel() {
+  curl -fsSL https://api.github.com/repos/romigour/CoachCloclo/releases/latest \
+    | grep -o '"browser_download_url": *"[^"]*\.whl"' | head -n 1 | sed 's/.*"\(https[^"]*\)"$/\1/'
+}
+if [ -n "${COACH_SOURCE:-}" ]; then
+  SOURCE="$COACH_SOURCE"
+elif [ "$DRY_RUN" = "1" ]; then
+  SOURCE="<wheel de la dernière release GitHub>"
+else
+  SOURCE="$(latest_wheel || true)"
+  if [ -z "$SOURCE" ]; then
+    echo "Aucune release publiée sur https://github.com/romigour/CoachCloclo/releases (ou GitHub injoignable)." >&2
+    exit 1
+  fi
+fi
 export PATH="$HOME/.local/bin:$PATH"
 
 if ! command -v uv >/dev/null 2>&1; then
@@ -55,11 +70,11 @@ FORCE=()
 if [ "$DRY_RUN" = "0" ]; then
   TOOLS="$(uv tool list 2>/dev/null || true)"
   case "$TOOLS" in
-    coach-running*|*$'\n'coach-running*) FORCE=(--force) ;;
+    coachcloclo*|*$'\n'coachcloclo*) FORCE=(--force) ;;
   esac
 fi
 
-echo "Installation de Coach…"
+echo "Installation de CoachCloclo…"
 run uv tool install --python 3.12 ${FORCE[@]+"${FORCE[@]}"} "$SOURCE"
 
 echo "Vérification de l'installation…"

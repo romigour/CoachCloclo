@@ -44,7 +44,7 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          $wheel = (Get-ChildItem dist/coach_running-*.whl | Select-Object -First 1).FullName
+          $wheel = (Get-ChildItem dist/coachcloclo-*.whl | Select-Object -First 1).FullName
           $env:COACH_SOURCE = $wheel
           $env:COACH_INSTALL_NO_START = '1'
           $env:COACH_INSTALL_OFFLINE = '1'
@@ -56,7 +56,7 @@ jobs:
         if: runner.os != 'Windows'
         run: |
           set -euo pipefail
-          export COACH_SOURCE="$(ls "$PWD"/dist/coach_running-*.whl | head -n1)"
+          export COACH_SOURCE="$(ls "$PWD"/dist/coachcloclo-*.whl | head -n1)"
           export COACH_INSTALL_NO_START=1
           export COACH_INSTALL_OFFLINE=1
           bash install.sh

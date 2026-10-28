@@ -51,7 +51,7 @@ def _check_garminconnect() -> Check:
     ok = importlib.util.find_spec("garminconnect") is not None
     return Check(name="garminconnect", ok=ok,
                  detail="installé" if ok else "module absent",
-                 fix_hint=None if ok else "Réinstalle Coach : `uv tool install coach-running`")
+                 fix_hint=None if ok else "Réinstalle CoachCloclo avec le script d'installation (voir README)")
 
 
 def _check_claude_cli(which) -> Check:

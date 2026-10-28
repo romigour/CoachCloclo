@@ -287,7 +287,7 @@ wheels = [
 ]
 
 [[package]]
-name = "coach-running"
+name = "coachcloclo"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [

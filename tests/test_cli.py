@@ -90,7 +90,32 @@ def test_update_without_uv(monkeypatch):
 def test_update_runs_uv(monkeypatch):
     seen = []
     monkeypatch.setattr(cli.shutil, "which", lambda n: "/uv")
+    monkeypatch.setattr(cli, "latest_wheel_url", lambda: "https://x/coachcloclo-0.1.0-py3-none-any.whl")
     monkeypatch.setattr(cli.subprocess, "run",
                         lambda args, **kw: seen.append(args) or type("R", (), {"returncode": 0})())
     assert runner.invoke(cli.app, ["update"]).exit_code == 0
-    assert seen == [["/uv", "tool", "upgrade", "coach-running"]]
+    assert seen == [["/uv", "tool", "install", "--force", "--python", "3.12",
+                     "https://x/coachcloclo-0.1.0-py3-none-any.whl"]]
+
+
+def test_update_without_release(monkeypatch):
+    monkeypatch.setattr(cli.shutil, "which", lambda n: "/uv")
+
+    def no_release():
+        raise RuntimeError("Aucune wheel")
+    monkeypatch.setattr(cli, "latest_wheel_url", no_release)
+    r = runner.invoke(cli.app, ["update"])
+    assert r.exit_code == 1 and "Aucune wheel" in r.output
+
+
+def test_latest_wheel_url_picks_wheel(monkeypatch):
+    import io
+    body = {"assets": [{"name": "notes.txt", "browser_download_url": "https://x/notes.txt"},
+                       {"name": "coachcloclo-0.1.0-py3-none-any.whl",
+                        "browser_download_url": "https://x/coachcloclo-0.1.0-py3-none-any.whl"}]}
+
+    class Resp(io.StringIO):
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+    monkeypatch.setattr(cli.urllib.request, "urlopen", lambda url, timeout: Resp(__import__("json").dumps(body)))
+    assert cli.latest_wheel_url() == "https://x/coachcloclo-0.1.0-py3-none-any.whl"

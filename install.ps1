@@ -1,5 +1,5 @@
-# Installe Coach (Windows). Usage : irm <URL>/install.ps1 | iex   ou   .\install.ps1 [-DryRun]
-# Variables : COACH_SOURCE (wheel ou nom de paquet), COACH_INSTALL_NO_START=1 (ne lance pas coach start),
+# Installe CoachCloclo (Windows). Usage : irm https://raw.githubusercontent.com/romigour/CoachCloclo/master/install.ps1 | iex   ou   .\install.ps1 [-DryRun]
+# Variables : COACH_SOURCE (wheel ; par defaut la wheel de la derniere release GitHub), COACH_INSTALL_NO_START=1 (ne lance pas coach start),
 # COACH_INSTALL_OFFLINE=1 (doctor sans Claude ni Garmin, pour la CI).
 # Sous `irm | iex`, DryRun n'est pas disponible : definir $env:COACH_DRY_RUN = '1'.
 param([switch]$DryRun)
@@ -29,7 +29,19 @@ function Install-Coach {
         if (($env:Path -split ';') -notcontains $localBin) { $env:Path = "$localBin;$env:Path" }
     }
 
-    $source = if ($env:COACH_SOURCE) { $env:COACH_SOURCE } else { 'coach-running' }
+    if ($env:COACH_SOURCE) {
+        $source = $env:COACH_SOURCE
+    } elseif ($Dry) {
+        $source = '<wheel de la derniere release GitHub>'
+    } else {
+        # Wheel de la derniere release GitHub (front deja compile).
+        $release = Invoke-RestMethod 'https://api.github.com/repos/romigour/CoachCloclo/releases/latest'
+        $source = ($release.assets | Where-Object { $_.name -like '*.whl' } | Select-Object -First 1).browser_download_url
+        if (-not $source) {
+            Write-Host 'Aucune release publiee sur https://github.com/romigour/CoachCloclo/releases.'
+            return 1
+        }
+    }
     Update-SessionPath
 
     if (-not (Get-Command uv -ErrorAction SilentlyContinue)) {
@@ -50,11 +62,11 @@ function Install-Coach {
             $listed = (& uv tool list 2>$null) -join "`n"
         } catch { $listed = '' }
         $ErrorActionPreference = 'Stop'
-        if ($listed -match '(?m)^coach-running') { $installArgs += '--force' }
+        if ($listed -match '(?m)^coachcloclo') { $installArgs += '--force' }
     }
     $installArgs += $source
 
-    Write-Host 'Installation de Coach...'
+    Write-Host 'Installation de CoachCloclo...'
     Invoke-Step 'uv' $installArgs
     $code = $script:StepCode
     if ($code -ne 0) { Write-Host "uv tool install a echoue (code $code)."; return 1 }

@@ -184,7 +184,7 @@ def create_app(
     if lan and not load_settings().pin_hash:
         raise ValueError("Le mode LAN exige un PIN : lance `coach start --lan` pour en définir un")
 
-    app = FastAPI(title="Coach")
+    app = FastAPI(title="CoachCloclo")
     app.state.garmin_factory = garmin_factory
     app.state.llm_factory = llm_factory
     app.state.repo = repo or Repo(make_engine(db_path()))

@@ -1,4 +1,4 @@
-"""Tables SQLModel de Coach (section 4 de la spec)."""
+"""Tables SQLModel de CoachCloclo (section 4 de la spec)."""
 
 import datetime as dt
 

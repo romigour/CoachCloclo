@@ -132,7 +132,7 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
   try {
     res = await fetch(`/api${path}`, { method, headers, body: payload, credentials: "same-origin" });
   } catch {
-    throw new ApiError("network", "Impossible de joindre le serveur Coach", 0);
+    throw new ApiError("network", "Impossible de joindre le serveur CoachCloclo", 0);
   }
   const text = await res.text();
   let data: unknown = null;

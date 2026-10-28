@@ -1,4 +1,4 @@
-"""Chemins de données et réglages persistants de Coach."""
+"""Chemins de données et réglages persistants de CoachCloclo."""
 
 import os
 from datetime import datetime
@@ -12,7 +12,7 @@ from pydantic import BaseModel
 def data_dir() -> Path:
     """Dossier de données ; surchargé par COACH_HOME. Créé à la demande."""
     override = os.environ.get("COACH_HOME")
-    path = Path(override) if override else Path(user_data_dir("coach"))
+    path = Path(override) if override else Path(user_data_dir("CoachCloclo"))
     path.mkdir(parents=True, exist_ok=True)
     return path
 

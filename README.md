@@ -2,6 +2,8 @@
 
 Application locale qui génère tes plans d'entraînement running/trail à partir de tes données Garmin, avec Claude. Tout tourne sur ta machine ; tes données ne quittent pas ton ordinateur (hormis les appels à Garmin et à Claude).
 
+Prochaines idées d'amélioration : voir [ROADMAP.md](ROADMAP.md).
+
 ## Installation (une commande)
 
 - **Windows (PowerShell)** : `irm https://raw.githubusercontent.com/romigour/CoachCloclo/master/install.ps1 | iex`

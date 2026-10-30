@@ -19,6 +19,7 @@ from coach.plan.models import Activity, Goal, Proposal, Session
 from coach.plan.repo import Repo
 from coach.services.activities import store_summaries
 from coach.services.context import recent_history, refresh_snapshot
+from coach.services.history import refresh_records
 
 FIRST_SYNC_DAYS = 56
 OVERLAP_DAYS = 2
@@ -42,6 +43,7 @@ def sync(repo: Repo, garmin: GarminPort, llm: LLMProvider, *, now: datetime) -> 
         since = today - timedelta(days=FIRST_SYNC_DAYS)
 
     new_activities = store_summaries(repo, garmin.activities(since, today))
+    refresh_records(repo, garmin)
 
     goal = repo.active_goal()
     pairs: list[tuple[int, int]] = []

@@ -212,3 +212,16 @@ def test_exported_session_moved_to_other_week_is_retried(repo, coach_home, fake_
     r = sync(repo, fake_garmin, llm, now=NOW)
     assert len(llm.calls) == 2 and "exportée" in llm.calls[1]
     assert r.proposal_id is not None
+
+
+def test_sync_refreshes_personal_records(repo, coach_home):
+    from coach.garmin.port import PersonalRecordSummary
+
+    garmin = FakeGarminClient(
+        metrics=METRICS,
+        activities=[run_summary()],
+        today=date(2026, 11, 4),
+        personal_records=[PersonalRecordSummary(kind="5k", value=1200.0)],
+    )
+    sync(repo, garmin, FakeLLMProvider([]), now=NOW)
+    assert [r.kind for r in repo.records()] == ["5k"]

@@ -11,6 +11,13 @@
   --warn-text: #6b4a00;
   --info-bg: #e3efff;
   --ok: #1b7f3b;
+  --fam-run: #e8590c;
+  --fam-trail: #a0522d;
+  --fam-bike: #1f6feb;
+  --fam-swim: #0a9fb8;
+  --fam-strength: #7e3ff2;
+  --fam-walk: #2f9e44;
+  --fam-other: #6b7585;
   color-scheme: light dark;
 }
 
@@ -28,6 +35,13 @@
     --warn-text: #ffd98a;
     --info-bg: #1b2a44;
     --ok: #6fd58a;
+    --fam-run: #ff8a4c;
+    --fam-trail: #d99a6c;
+    --fam-bike: #4c8dff;
+    --fam-swim: #3cc9de;
+    --fam-strength: #a97bff;
+    --fam-walk: #5ccf75;
+    --fam-other: #98a2b3;
   }
 }
 

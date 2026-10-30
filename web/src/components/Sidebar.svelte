@@ -38,6 +38,9 @@
     <a href="#/plan" class:active={route === "plan"} aria-current={route === "plan" ? "page" : undefined}>
       <Icon name="calendar" /> Programme
     </a>
+    <a href="#/stats" class:active={route === "stats"} aria-current={route === "stats" ? "page" : undefined}>
+      <Icon name="chart" /> Statistiques
+    </a>
     <a href="#/proposal" class:active={route === "proposal"} aria-current={route === "proposal" ? "page" : undefined}>
       <Icon name="chat" /> Propositions
       {#if status?.pending_proposal_id != null}

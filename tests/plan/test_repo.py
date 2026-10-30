@@ -101,3 +101,45 @@ def test_transaction_rolls_back(repo):
             db.flush()
             raise RuntimeError("boom")
     assert repo.pending_proposal() is None
+
+
+def test_upsert_race_creates_then_updates(repo):
+    from coach.plan.models import Race
+
+    repo.upsert_race(5, {"official_time_s": 3000})
+    repo.upsert_race(5, {"official_time_s": 2950})
+    races = repo.races()
+    assert len(races) == 1 and isinstance(races[0], Race)
+    assert races[0].official_time_s == 2950
+
+
+def test_exclude_race_keeps_fields(repo):
+    repo.upsert_race(5, {"name": "10 km de Rennes"})
+    repo.exclude_race(5)
+    race = repo.races()[0]
+    assert race.excluded is True and race.name == "10 km de Rennes"
+    assert repo.upsert_race(5, {"official_time_s": 3000}).excluded is False
+    assert repo.races()[0].name == "10 km de Rennes"
+
+
+def test_exclude_race_creates_when_absent(repo):
+    repo.exclude_race(9)
+    assert repo.races()[0].excluded is True
+
+
+def test_replace_records_replaces_all(repo):
+    from coach.plan.models import PersonalRecord
+
+    repo.replace_records([PersonalRecord(kind="5k", value=1500.0), PersonalRecord(kind="10k", value=3100.0)])
+    repo.replace_records([PersonalRecord(kind="half", value=7000.0)])
+    assert [r.kind for r in repo.records()] == ["half"]
+
+
+def test_has_activities(repo):
+    assert repo.has_activities() is False
+    repo.add(Activity(garmin_activity_id=1, date=date(2026, 1, 1), type_key="running"))
+    assert repo.has_activities() is True
+    assert len(repo.all_activities()) == 1
+    assert repo.activity(repo.all_activities()[0].id).garmin_activity_id == 1
+    with pytest.raises(KeyError):
+        repo.activity(999)

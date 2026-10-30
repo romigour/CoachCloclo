@@ -16,7 +16,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi import APIRouter, Depends, FastAPI, File, Form, Request, UploadFile
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, Field, ValidationError, model_validator
 from sqlmodel import select
 
 from coach.analysis.gpx import GpxError
@@ -43,7 +43,9 @@ from coach.plan.repo import Repo, make_engine
 from coach.services import CoachError
 from coach.services import garmin_export as export
 from coach.services.plans import GoalInput, accept_plan, create_goal, generate_plan
+from coach.services.history import HistoryRunner, load_state, recover_orphan
 from coach.services.sync import sync
+from coach.stats.normalize import stat_row
 
 MFA_TTL_S = 600
 PIN_MAX_FAILURES = 5
@@ -83,13 +85,36 @@ class SettingsBody(BaseModel):
     anthropic_model: str | None = None
 
 
+class RaceBody(BaseModel):
+    name: str | None = Field(None, max_length=120)
+    official_time_s: int | None = Field(None, gt=0)
+    overall_rank: int | None = Field(None, ge=1)
+    overall_total: int | None = Field(None, ge=1)
+    category: str | None = Field(None, max_length=40)
+    category_rank: int | None = Field(None, ge=1)
+    category_total: int | None = Field(None, ge=1)
+
+    @model_validator(mode="after")
+    def _rank_within_total(self):
+        for rank, total in (
+            (self.overall_rank, self.overall_total),
+            (self.category_rank, self.category_total),
+        ):
+            if rank is not None and total is not None and rank > total:
+                raise ValueError("Le classement dépasse le nombre de participants")
+        return self
+
+
 def _error(status: int, code: str, detail) -> JSONResponse:
     return JSONResponse(status_code=status, content={"code": code, "detail": detail})
 
 
 def _invalid(errors: list[dict], prefix: tuple = ()) -> JSONResponse:
     # jamais d'écho de `input` : il peut contenir clé API ou mot de passe
-    return _error(422, "invalid", [{"loc": [*prefix, *e["loc"]], "msg": e["msg"]} for e in errors])
+    # pydantic préfixe les ValueError des validateurs par « Value error, »
+    return _error(422, "invalid", [
+        {"loc": [*prefix, *e["loc"]], "msg": e["msg"].removeprefix("Value error, ")} for e in errors
+    ])
 
 
 def _goal_dict(goal: Goal) -> dict:
@@ -193,6 +218,8 @@ def create_app(
     app.state.pin_failures = 0
     app.state.pin_locked_until = 0.0
     pin_lock = threading.Lock()
+    recover_orphan()  # un import resté « en cours » a été interrompu par l'arrêt précédent
+    app.state.history = HistoryRunner(app.state.repo, garmin_factory)
     _register_errors(app)
 
     def get_repo(request: Request) -> Repo:
@@ -247,11 +274,20 @@ def create_app(
             garmin = "unavailable"
         goal = repo.active_goal()
         proposal = repo.pending_proposal()
+        history = load_state()
+        # le thread peut ne pas avoir encore écrit son état : le runner fait foi
+        history_status = "running" if app.state.history.running else history.status
         return {
             "garmin": garmin,
             "llm_mode": load_settings().llm_mode,
             "pending_proposal_id": proposal.id if proposal else None,
             "goal": _goal_dict(goal) if goal else None,
+            "has_activities": repo.has_activities(),
+            "history": {
+                "status": history_status,
+                "imported": history.imported,
+                "error": history.error,
+            },
         }
 
     @api.post("/auth/pin")
@@ -453,7 +489,10 @@ def create_app(
 
     @api.post("/sync")
     def post_sync(repo: RepoDep, garmin: GarminDep, llm: LLMDep):
-        return sync(repo, garmin, llm, now=datetime.now(timezone.utc))
+        result = sync(repo, garmin, llm, now=datetime.now(timezone.utc))
+        if load_state().status == "idle":  # premier lancement : import de l'historique complet
+            app.state.history.start()
+        return result
 
     @api.get("/proposals/pending")
     def get_pending(repo: RepoDep):
@@ -499,6 +538,57 @@ def create_app(
             s.anthropic_model = body.anthropic_model
         save_settings(s)
         return _settings_view(s)
+
+    # --- statistiques -----------------------------------------------------------------------
+
+    @api.get("/stats/activities")
+    def get_stats_activities(repo: RepoDep):
+        races = {r.activity_id: r for r in repo.races()}
+        rows = [stat_row(a, races.get(a.id)) for a in repo.all_activities()]
+        rows.sort(key=lambda r: (r["date"], r["id"]))
+        return {"activities": rows}
+
+    @api.get("/stats/records")
+    def get_stats_records(repo: RepoDep):
+        return {
+            "records": [
+                {
+                    "kind": r.kind,
+                    "value": r.value,
+                    "garmin_activity_id": r.garmin_activity_id,
+                    "date": r.date.isoformat() if r.date else None,
+                }
+                for r in repo.records()
+            ]
+        }
+
+    def _race_row(repo: Repo, activity_id: int) -> dict:
+        race = next((r for r in repo.races() if r.activity_id == activity_id), None)
+        return stat_row(repo.activity(activity_id), race)
+
+    @api.put("/races/{activity_id}")
+    def put_race(activity_id: int, body: RaceBody, repo: RepoDep):
+        try:
+            repo.activity(activity_id)
+        except KeyError:
+            return _error(404, "not_found", "Activité introuvable")
+        repo.upsert_race(activity_id, body.model_dump())
+        return _race_row(repo, activity_id)
+
+    @api.delete("/races/{activity_id}")
+    def delete_race(activity_id: int, repo: RepoDep):
+        try:
+            repo.activity(activity_id)
+        except KeyError:
+            return _error(404, "not_found", "Activité introuvable")
+        repo.exclude_race(activity_id)
+        return {"status": "ok"}
+
+    @api.post("/history/import")
+    def post_history_import():
+        if not app.state.history.start():
+            return _error(409, "history_running", "Un import est déjà en cours")
+        return {"status": "started"}
 
     app.include_router(api)
     if WEB_DIST.is_dir():

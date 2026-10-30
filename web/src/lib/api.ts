@@ -76,6 +76,52 @@ export type Activity = {
   match_source: string | null;
 };
 
+/** Famille de sport normalisée côté serveur. */
+export type Family = "run" | "trail" | "bike" | "swim" | "strength" | "walk" | "other";
+
+/** Résultat de course rattaché à une activité (tous les champs sont optionnels côté saisie). */
+export type RaceInfo = {
+  name: string | null;
+  official_time_s: number | null;
+  overall_rank: number | null;
+  overall_total: number | null;
+  category: string | null;
+  category_rank: number | null;
+  category_total: number | null;
+};
+
+/** Ligne de /api/stats/activities. */
+export type StatActivity = {
+  id: number;
+  garmin_id: number;
+  date: string;
+  start: string | null;
+  name: string | null;
+  family: Family;
+  type_key: string;
+  duration_s: number | null;
+  distance_m: number | null;
+  d_plus_m: number | null;
+  avg_hr: number | null;
+  max_hr: number | null;
+  vo2max: number | null;
+  hr_zones_s: number[] | null;
+  race: RaceInfo | null;
+};
+
+export type PersonalRecord = {
+  kind: "1k" | "1mile" | "5k" | "10k" | "half" | "marathon" | "longest_run";
+  value: number;
+  garmin_activity_id: number | null;
+  date: string | null;
+};
+
+export type HistoryState = {
+  status: "idle" | "running" | "done" | "error";
+  imported: number;
+  error: string | null;
+};
+
 export type Week = { week_index: number; week_monday: string; sessions: Session[] };
 export type Plan = { goal: Goal | null; weeks: Week[] };
 
@@ -84,6 +130,8 @@ export type Status = {
   llm_mode: "cli" | "api";
   pending_proposal_id: number | null;
   goal: Goal | null;
+  has_activities: boolean;
+  history: HistoryState;
 };
 
 export type SettingsView = { llm_mode: "cli" | "api"; anthropic_model: string | null; has_api_key: boolean };
@@ -151,6 +199,7 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
 }
 
 const get = <T>(p: string) => request<T>("GET", p);
+const del = <T>(p: string) => request<T>("DELETE", p);
 const post = <T>(p: string, b?: unknown) => request<T>("POST", p, b ?? {});
 
 export const api = {
@@ -188,4 +237,9 @@ export const api = {
   pendingProposal: () => get<Proposal | null>("/proposals/pending"),
   acceptProposal: (id: number) => post<{ sync_error_ids: number[] }>(`/proposals/${id}/accept`),
   rejectProposal: (id: number) => post<{ status: string }>(`/proposals/${id}/reject`),
+  statsActivities: () => get<{ activities: StatActivity[] }>("/stats/activities"),
+  statsRecords: () => get<{ records: PersonalRecord[] }>("/stats/records"),
+  saveRace: (activityId: number, race: Partial<RaceInfo>) => request<StatActivity>("PUT", `/races/${activityId}`, race),
+  removeRace: (activityId: number) => del<{ status: string }>(`/races/${activityId}`),
+  importHistory: () => post<{ status: string }>("/history/import"),
 };

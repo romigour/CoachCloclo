@@ -2,8 +2,9 @@
   import { onMount } from "svelte";
   import { api, ApiError, type SettingsView, type Status } from "../lib/api";
   import ErrorBanner from "../components/ErrorBanner.svelte";
+  import Icon from "../components/Icon.svelte";
 
-  let { onchanged }: { onchanged?: () => void } = $props();
+  let { onchanged, onconnected }: { onchanged?: () => void; onconnected?: () => void } = $props();
 
   let status = $state<Status | null>(null);
   let settings = $state<SettingsView | null>(null);
@@ -81,8 +82,21 @@
 
   async function connected() {
     await load();
+    // L'app synchronise et choisit la page ; sans elle, on retombe sur objectif / plan.
+    if (onconnected) return onconnected();
     onchanged?.();
     location.hash = status?.goal ? "#/plan" : "#/goal";
+  }
+
+  async function reimport() {
+    error = null;
+    try {
+      await api.importHistory();
+    } catch (err) {
+      if (!(err instanceof ApiError && err.code === "history_running")) error = err;
+    }
+    await load();
+    onchanged?.();
   }
 
   async function saveSettings(e: Event) {
@@ -150,6 +164,26 @@
     </form>
   {/if}
   {#if loginMessage}<p class="error" role="alert">{loginMessage}</p>{/if}
+</section>
+
+<section class="card stack">
+  <h2>Historique Garmin</h2>
+  {#if status}
+    {#if status.history.status === "running"}
+      <p class="busy" role="status">Import en cours… ({status.history.imported} activités)</p>
+    {:else if status.history.status === "error"}
+      <p class="error">Import interrompu : {status.history.error ?? "erreur inconnue"}</p>
+    {:else}
+      <p>{status.history.imported} activités importées</p>
+    {/if}
+    <div class="row">
+      <button type="button" onclick={reimport} disabled={status.history.status === "running" || status.garmin !== "ok"}>
+        <Icon name="sync" size={15} /> Réimporter l'historique
+      </button>
+    </div>
+  {:else}
+    <p>Chargement…</p>
+  {/if}
 </section>
 
 <section class="card stack">

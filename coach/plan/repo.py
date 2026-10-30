@@ -7,9 +7,9 @@ from pathlib import Path
 
 from sqlalchemy.engine import Engine
 from sqlmodel import Session as DbSession
-from sqlmodel import SQLModel, create_engine, select
+from sqlmodel import SQLModel, create_engine, delete, select
 
-from coach.plan.models import Activity, AthleteSnapshot, Goal, Proposal, Session
+from coach.plan.models import Activity, AthleteSnapshot, Goal, PersonalRecord, Proposal, Race, Session
 
 
 def make_engine(path: Path) -> Engine:
@@ -90,3 +90,54 @@ class Repo:
         stmt = select(AthleteSnapshot).order_by(AthleteSnapshot.date.desc(), AthleteSnapshot.id.desc())
         with self._open() as db:
             return db.exec(stmt).first()
+
+    def all_activities(self) -> list[Activity]:
+        stmt = select(Activity).order_by(Activity.date, Activity.id)
+        with self._open() as db:
+            return list(db.exec(stmt))
+
+    def has_activities(self) -> bool:
+        with self._open() as db:
+            return db.exec(select(Activity.id).limit(1)).first() is not None
+
+    def activity(self, id: int) -> Activity:
+        with self._open() as db:
+            obj = db.get(Activity, id)
+        if obj is None:
+            raise KeyError(f"activité {id} introuvable")
+        return obj
+
+    def races(self) -> list[Race]:
+        with self._open() as db:
+            return list(db.exec(select(Race).order_by(Race.id)))
+
+    def _save_race(self, activity_id: int, fields: dict) -> Race:
+        with self.transaction() as db:
+            race = db.exec(select(Race).where(Race.activity_id == activity_id)).first()
+            if race is None:
+                race = Race(activity_id=activity_id)
+            for key, value in fields.items():
+                setattr(race, key, value)
+            db.add(race)
+            db.flush()
+            db.refresh(race)
+            return race
+
+    def upsert_race(self, activity_id: int, fields: dict) -> Race:
+        """Crée ou met à jour la course de l'activité ; la ré-inclut (`excluded=False`)."""
+        return self._save_race(activity_id, {**fields, "excluded": False})
+
+    def exclude_race(self, activity_id: int) -> None:
+        """Marque l'activité comme non-course, en conservant les autres champs."""
+        self._save_race(activity_id, {"excluded": True})
+
+    def records(self) -> list[PersonalRecord]:
+        with self._open() as db:
+            return list(db.exec(select(PersonalRecord).order_by(PersonalRecord.id)))
+
+    def replace_records(self, records: list[PersonalRecord]) -> None:
+        """Remplace tous les records en une transaction."""
+        with self.transaction() as db:
+            db.exec(delete(PersonalRecord))
+            for r in records:
+                db.add(r)

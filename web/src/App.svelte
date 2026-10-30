@@ -68,13 +68,16 @@
     return () => window.removeEventListener("hashchange", onhash);
   });
 
-  async function autoSync() {
+  /** Renvoie `false` si la synchro a échoué (l'erreur est alors affichée). */
+  async function autoSync(): Promise<boolean> {
     syncing = true;
     try {
       await api.sync();
       await synced();
+      return true;
     } catch (e) {
       failed(e);
+      return false;
     } finally {
       syncing = false;
     }
@@ -96,7 +99,8 @@
       return;
     }
     // Premier lancement : la synchro ramène les activités récentes et lance l'import de l'historique.
-    if (!syncing) await autoSync();
+    // En cas d'échec on reste sur les Réglages : changer de page effacerait le message d'erreur.
+    if (!syncing && !(await autoSync())) return;
     location.hash = status?.has_activities ? "#/stats" : status?.goal ? "#/plan" : "#/goal";
   }
 

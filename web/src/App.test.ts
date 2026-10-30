@@ -157,6 +157,22 @@ test("first Garmin login without any activity after sync goes to the goal", asyn
   await waitFor(() => expect(location.hash).toBe("#/goal"));
 });
 
+test("a failed sync after the first Garmin login stays on settings with its error", async () => {
+  syncInstant = true;
+  syncFails = true;
+  statusBody = { ...statusBody, garmin: "auth_required", goal: null };
+  location.hash = "#/setup";
+  await new Promise((r) => setTimeout(r, 0)); // laisse passer le hashchange initial (il efface l'erreur)
+  render(App);
+  statusBody = { ...statusBody, garmin: "ok" };
+  await loginToGarmin();
+  await waitFor(() => expect(syncs()).toBe(1));
+  await screen.findByText("Garmin est indisponible pour le moment, réessaie plus tard.");
+  await new Promise((r) => setTimeout(r, 0)); // un éventuel hashchange effacerait l'erreur
+  expect(screen.getByText("Garmin est indisponible pour le moment, réessaie plus tard.")).toBeTruthy();
+  expect(location.hash).toBe("#/setup");
+});
+
 test("status polling keeps the error banner", async () => {
   syncInstant = true;
   syncFails = true;

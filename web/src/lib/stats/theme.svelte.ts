@@ -6,6 +6,7 @@ const FAMILIES: Family[] = ["run", "trail", "bike", "swim", "strength", "walk", 
 
 export interface ThemeColors {
   text: string;
+  card: string;
   muted: string;
   border: string;
   accent: string;
@@ -32,6 +33,7 @@ export function themeColors(): ThemeColors {
   for (const f of FAMILIES) families[f] = get(`--fam-${f}`);
   return {
     text: get("--text"),
+    card: get("--card"),
     muted: get("--muted"),
     border: get("--border"),
     accent: get("--accent"),

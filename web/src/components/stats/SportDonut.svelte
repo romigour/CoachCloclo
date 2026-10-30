@@ -4,6 +4,7 @@
   import { themeColors } from "../../lib/stats/echarts";
   import { fmtNumber } from "../../lib/stats/format";
   import { FAMILY_LABEL } from "../../lib/labels";
+  import { tooltipTheme } from "../../lib/stats/color";
 
   let { share }: { share: { family: Family; hours: number }[] } = $props();
 
@@ -14,6 +15,7 @@
     const c = themeColors();
     return {
       tooltip: {
+        ...tooltipTheme(c),
         trigger: "item",
         formatter: (p: { name: string; value: number; percent: number; marker: string }) =>
           `${p.marker}${p.name}<br/><b>${fmtNumber(p.value, 1)} h</b> · ${Math.round(p.percent)} %`,

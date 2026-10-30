@@ -42,7 +42,11 @@ export function volumeSeries(
     byFamily.set(a.family, values);
   }
 
-  const series = FAMILIES.filter((f) => byFamily.has(f)).map((family) => ({ family, values: byFamily.get(family)! }));
+  // Une famille sans volume pour la métrique (ex. renfo en km) n'a rien à tracer.
+  const series = FAMILIES.filter((f) => byFamily.get(f)?.some((v) => v > 0)).map((family) => ({
+    family,
+    values: byFamily.get(family)!,
+  }));
   const totals = labels.map((_, i) => series.reduce((s, x) => s + x.values[i], 0));
   const movingAvg = totals.map((_, i) => (i < 3 ? null : (totals[i - 3] + totals[i - 2] + totals[i - 1] + totals[i]) / 4));
   return { labels, series, movingAvg };

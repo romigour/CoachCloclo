@@ -61,3 +61,13 @@ describe("sportShare", () => {
     expect(r).toEqual([{ family: "bike", hours: 2 }, { family: "run", hours: 1 }]);
   });
 });
+
+describe("volumeSeries sans volume", () => {
+  it("écarte les familles dont le total vaut 0 pour la métrique", () => {
+    const p = { from: "2026-10-01", to: "2026-10-30" };
+    const acts = [act("2026-10-05", { family: "strength", distance_m: null }), act("2026-10-06", { family: "run" })];
+    expect(volumeSeries(acts, p, "km").series.map((s) => s.family)).toEqual(["run"]);
+    expect(volumeSeries([acts[0]], p, "km").series).toEqual([]);
+    expect(volumeSeries([acts[0]], p, "hours").series.map((s) => s.family)).toEqual(["strength"]);
+  });
+});

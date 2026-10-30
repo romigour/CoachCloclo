@@ -18,6 +18,7 @@
   --fam-strength: #7e3ff2;
   --fam-walk: #2f9e44;
   --fam-other: #6b7585;
+  --topbar-h: 2.75rem; /* hauteur de la barre du haut, hors encoche */
   color-scheme: light dark;
 }
 
@@ -73,7 +74,8 @@ ul.steps { margin: 0.4rem 0; padding-left: 1.2rem; }
 .topbar {
   position: sticky; top: 0; z-index: 5;
   display: flex; align-items: center; justify-content: space-between;
-  padding: 0.6rem 1rem; padding-top: calc(0.6rem + env(safe-area-inset-top));
+  height: calc(var(--topbar-h) + env(safe-area-inset-top));
+  padding: 0 1rem; padding-top: env(safe-area-inset-top);
   background: var(--card); border-bottom: 1px solid var(--border);
 }
 .topbar nav { display: flex; gap: 0.9rem; }

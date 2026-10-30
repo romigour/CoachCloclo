@@ -89,7 +89,7 @@
 <style>
   .filters {
     position: sticky;
-    top: calc(2.75rem + env(safe-area-inset-top));
+    top: calc(var(--topbar-h) + env(safe-area-inset-top));
     z-index: 4;
     background: var(--bg);
     padding: 0.5rem 0 0.6rem;

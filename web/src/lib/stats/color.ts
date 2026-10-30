@@ -6,3 +6,8 @@ export function withAlpha(color: string, alpha: number): string {
   const n = parseInt(hex, 16);
   return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${alpha})`;
 }
+
+/** Infobulles ECharts aux couleurs du thème (fond de carte, bordure, texte). */
+export function tooltipTheme(c: { card: string; border: string; text: string }) {
+  return { backgroundColor: c.card, borderColor: c.border, textStyle: { color: c.text } };
+}

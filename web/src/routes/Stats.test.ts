@@ -97,3 +97,37 @@ test("filters are remembered in localStorage", async () => {
   await fireEvent.click(screen.getByRole("button", { name: "Réinitialiser" }));
   expect(JSON.parse(localStorage.getItem("coach.stats.filters")!)).toEqual({ choice: { kind: "12m" }, sport: "all", metric: "hours" });
 });
+
+const chartClick = (label: RegExp, detail: { dataIndex: number; data?: unknown }) =>
+  screen.getByRole("img", { name: label }).dispatchEvent(new CustomEvent("echartclick", { detail: { name: "", ...detail } }));
+
+test("clicking a month bar, then a week bar, narrows the period", async () => {
+  render(Stats, { history: null, onimport: () => {} });
+  await kpi("Séances");
+  // 12 derniers mois → barres mensuelles depuis 2025-10 ; index 8 = juin 2026
+  chartClick(/^Volume par mois/, { dataIndex: 8 });
+  expect(await screen.findByText(/Du 1 juin 2026 au 30 juin 2026/)).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Personnalisée" })).toHaveAttribute("aria-pressed", "true");
+  expect((await kpi("Séances")).getByText("1")).toBeInTheDocument();
+  // 30 jours → barres hebdomadaires depuis le lundi 1er juin ; index 2 = semaine du 15 juin
+  chartClick(/^Volume par semaine/, { dataIndex: 2 });
+  expect(await screen.findByText(/Du 15 juin 2026 au 21 juin 2026/)).toBeInTheDocument();
+});
+
+test("clicking a calendar day narrows the period to that day", async () => {
+  render(Stats, { history: null, onimport: () => {} });
+  await kpi("Séances");
+  chartClick(/^Calendrier des séances/, { dataIndex: 0, data: ["2026-10-01", 50] });
+  expect(await screen.findByText(/Le 1 oct\. 2026/)).toBeInTheDocument();
+  expect((await kpi("Séances")).getByText("1")).toBeInTheDocument();
+});
+
+test("volume shows the empty state when the metric has no data", async () => {
+  activities = [{ ...ACTS[2], family: "strength", distance_m: null }];
+  render(Stats, { history: null, onimport: () => {} });
+  await kpi("Séances");
+  expect(screen.getByRole("img", { name: /^Volume par/ })).toBeInTheDocument();
+  await fireEvent.click(screen.getByRole("button", { name: "Km" }));
+  expect(screen.queryByRole("img", { name: /^Volume par/ })).toBeNull();
+  expect(screen.getAllByText("Pas assez de données sur cette période")).toHaveLength(1);
+});

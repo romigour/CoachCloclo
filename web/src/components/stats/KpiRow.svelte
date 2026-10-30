@@ -11,10 +11,12 @@
     d_plus: { label: "D+", unit: "m", decimals: 0 },
   };
 
-  function delta(d: number | null): { text: string; dir: "up" | "down" | "none" } {
+  // Arrondi d'abord : une variation qui s'arrondit à 0 s'affiche « = 0 % », sans flèche.
+  function delta(d: number | null): { text: string; dir: "up" | "down" | "flat" | "none" } {
     if (d === null) return { text: "—", dir: "none" };
     const pct = Math.round(d * 100);
-    return pct < 0 ? { text: `▼ −${Math.abs(pct)} %`, dir: "down" } : { text: `▲ +${pct} %`, dir: "up" };
+    if (pct === 0) return { text: "= 0 %", dir: "flat" };
+    return pct < 0 ? { text: `▼ −${-pct} %`, dir: "down" } : { text: `▲ +${pct} %`, dir: "up" };
   }
 </script>
 
@@ -57,5 +59,6 @@
   .delta { font-size: 0.85rem; font-variant-numeric: tabular-nums; }
   .delta.up { color: var(--ok); }
   .delta.down { color: var(--warn-text); }
-  .delta.none { color: var(--muted); }
+  .delta.none,
+  .delta.flat { color: var(--muted); }
 </style>

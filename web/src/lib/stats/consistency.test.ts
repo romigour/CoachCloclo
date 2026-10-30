@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { StatActivity } from "../api";
-import { dailyMinutes, weekStats } from "./consistency";
+import { calendarRanges, dailyMinutes, weekStats } from "./consistency";
 
 function act(date: string, over: Partial<StatActivity> = {}): StatActivity {
   return {
@@ -53,5 +53,24 @@ describe("weekStats", () => {
     const s = weekStats([act("2026-10-25", { start: "2026-10-25T23:30:00" })], { from: "2026-10-19", to: "2026-10-25" }, "2026-10-25");
     expect(s.totalWeeks).toBe(1);
     expect(s.activeWeeks).toBe(1);
+  });
+});
+
+describe("calendarRanges", () => {
+  it("une seule rangée bornée à la période jusqu'à 53 semaines", () => {
+    expect(calendarRanges({ from: "2025-10-31", to: "2026-10-30" })).toEqual([
+      { from: "2025-10-31", to: "2026-10-30", weeks: 53 },
+    ]);
+    expect(calendarRanges({ from: "2026-06-15", to: "2026-06-15" })).toEqual([
+      { from: "2026-06-15", to: "2026-06-15", weeks: 1 },
+    ]);
+  });
+
+  it("au-delà, une rangée par année bornée à la période", () => {
+    expect(calendarRanges({ from: "2024-05-01", to: "2026-10-30" })).toEqual([
+      { from: "2024-05-01", to: "2024-12-31", weeks: 36 },
+      { from: "2025-01-01", to: "2025-12-31", weeks: 53 },
+      { from: "2026-01-01", to: "2026-10-30", weeks: 44 },
+    ]);
   });
 });

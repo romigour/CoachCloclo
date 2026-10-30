@@ -6,6 +6,7 @@
   import { themeColors } from "../../lib/stats/echarts";
   import { fmtDay, fmtMonth, fmtNumber, MONTHS_SHORT } from "../../lib/stats/format";
   import { FAMILY_LABEL } from "../../lib/labels";
+  import { tooltipTheme } from "../../lib/stats/color";
 
   type Metric = "hours" | "km";
 
@@ -43,6 +44,7 @@
     return {
       grid: { top: 16, left: 4, right: 8, bottom: 4, containLabel: true },
       tooltip: {
+        ...tooltipTheme(c),
         trigger: "axis",
         axisPointer: { type: "shadow" },
         formatter: (items: { dataIndex: number; seriesName: string; value: number | null; marker: string }[]) => {

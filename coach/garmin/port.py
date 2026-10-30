@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import itertools
+import datetime as dt
 from datetime import date
-from typing import Protocol
+from typing import Literal, Protocol
 
 from pydantic import BaseModel
 
@@ -42,10 +43,19 @@ class ActivitySummary(BaseModel):
     raw: dict
 
 
+class PersonalRecordSummary(BaseModel):
+    kind: Literal["1k", "1mile", "5k", "10k", "half", "marathon", "longest_run"]
+    value: float  # secondes, ou mètres pour `longest_run`
+    garmin_activity_id: int | None = None
+    date: dt.date | None = None
+
+
 class GarminPort(Protocol):
     def today(self) -> date: ...
     def metrics(self) -> Metrics: ...
     def activities(self, start: date, end: date) -> list[ActivitySummary]: ...
+    def activities_page(self, offset: int, limit: int) -> list[ActivitySummary]: ...
+    def personal_records(self) -> list[PersonalRecordSummary]: ...
     def upload_workout(self, workout: dict) -> int: ...
     def schedule(self, workout_id: int, d: date) -> int: ...
     def reschedule(self, schedule_id: int, d: date) -> None: ...
@@ -61,11 +71,13 @@ class FakeGarminClient:
         metrics: Metrics | None = None,
         activities: list[ActivitySummary] | None = None,
         today: date = date(2026, 11, 4),
+        personal_records: list[PersonalRecordSummary] | None = None,
         fail_on: set[str] | None = None,
     ):
         self._metrics = metrics or Metrics()
         self._activities = list(activities or [])
         self._today = today
+        self._personal_records = list(personal_records or [])
         self.fail_on: set[str] = set(fail_on or ())
         self.workouts: dict[int, dict] = {}
         self.calendar: dict[date, list[int]] = {}  # jour -> ids planifiés
@@ -90,6 +102,15 @@ class FakeGarminClient:
     def activities(self, start: date, end: date) -> list[ActivitySummary]:
         self._check("activities")
         return [a for a in self._activities if start <= a.date <= end]
+
+    def activities_page(self, offset: int, limit: int) -> list[ActivitySummary]:
+        self._check("activities_page")
+        ordered = sorted(self._activities, key=lambda a: (a.date, a.garmin_id), reverse=True)
+        return ordered[offset : offset + limit]
+
+    def personal_records(self) -> list[PersonalRecordSummary]:
+        self._check("personal_records")
+        return list(self._personal_records)
 
     def upload_workout(self, workout: dict) -> int:
         self._check("upload_workout", write=True)

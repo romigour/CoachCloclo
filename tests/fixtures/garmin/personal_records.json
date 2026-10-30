@@ -1,0 +1,8 @@
+{"_comment": "synthétique — à remplacer par une capture réelle (plan tâche 10)",
+ "data": [
+  {"typeId": 1, "value": 228.4, "activityId": 20000000010, "prStartTimeGmtFormatted": "2025-05-04T08:12:00.0"},
+  {"typeId": 3, "value": 1385.0, "prStartTimeGmtFormatted": "2025-05-04T08:12:00.0"},
+  {"typeId": 4, "value": 2890.5, "activityId": 20000000011, "prStartTimeGmtFormatted": "2025-05-04T08:12:00.0"},
+  {"typeId": 7, "value": 21500.0, "activityId": 20000000012, "prStartTimeGmtFormatted": "2025-05-04T08:12:00.0"},
+  {"typeId": 12, "value": 99.0, "activityId": 20000000013, "prStartTimeGmtFormatted": "2025-05-04T08:12:00.0"}
+ ]}

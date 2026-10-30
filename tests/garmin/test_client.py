@@ -345,3 +345,45 @@ def test_write_other_errors_still_mapped(method):
         getattr(GarminClient(FakeLib(error=GarminConnectConnectionError("500"))), method)(1)
     with pytest.raises(GarminAuthRequired):
         getattr(GarminClient(FakeLib(error=GarminConnectAuthenticationError("401"))), method)(1)
+
+
+def test_activities_page_parses_like_activities():
+    lib = FakeLib({"get_activities": load("activities"), "get_activities_by_date": load("activities")})
+    client = GarminClient(lib)
+    page = client.activities_page(0, 100)
+    assert len(page) == 2
+    assert page == client.activities(date(2026, 10, 1), date(2026, 10, 31))
+    assert ("get_activities", (0, 100), {}) in lib.seen
+
+
+def test_activities_page_empty_end():
+    assert GarminClient(FakeLib({"get_activities": []})).activities_page(500, 100) == []
+
+
+def test_personal_records_maps_known_types():
+    lib = FakeLib({"get_personal_record": load("personal_records")})
+    records = GarminClient(lib).personal_records()
+    assert [r.kind for r in records] == ["1k", "5k", "10k", "longest_run"]
+    assert all(r.date == date(2025, 5, 4) for r in records)
+    by_kind = {r.kind: r for r in records}
+    assert by_kind["5k"].garmin_activity_id is None
+    assert by_kind["1k"].garmin_activity_id == 20000000010
+    assert by_kind["longest_run"].value == 21500.0
+
+
+def test_fake_activities_page_paginates_newest_first():
+    def act(gid, d):
+        return ActivitySummary(
+            garmin_id=gid, date=d, type_key="running", duration_s=1, distance_m=1, raw={}
+        )
+
+    fake = FakeGarminClient(
+        activities=[
+            act(1, date(2026, 10, 1)),
+            act(3, date(2026, 10, 3)),
+            act(2, date(2026, 10, 2)),
+        ]
+    )
+    assert [a.garmin_id for a in fake.activities_page(0, 2)] == [3, 2]
+    assert [a.garmin_id for a in fake.activities_page(2, 2)] == [1]
+    assert fake.activities_page(4, 2) == []

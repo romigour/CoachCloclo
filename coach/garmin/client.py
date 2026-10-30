@@ -27,10 +27,21 @@ from coach.garmin.port import (
     GarminRateLimited,
     GarminUnavailable,
     Metrics,
+    PersonalRecordSummary,
 )
 
 RETRY_DELAY_S = 5
 PACE_MIN_S_KM, PACE_MAX_S_KM = 150, 600
+# typeId Garmin des records personnels de course -> `PersonalRecordSummary.kind`
+PR_KINDS: dict[int, str] = {
+    1: "1k",
+    2: "1mile",
+    3: "5k",
+    4: "10k",
+    5: "half",
+    6: "marathon",
+    7: "longest_run",
+}
 
 
 class _NotFound(GarminUnavailable):
@@ -81,6 +92,30 @@ def _running_zones(zones: Any) -> dict:
             if str(z.get("sport", "")).upper() == sport:
                 return z
     return entries[0] if entries else {}
+
+
+def _summary(a: Any) -> ActivitySummary | None:
+    """Convertit une activité Garmin brute ; None si elle est inexploitable."""
+    if not isinstance(a, dict):
+        return None
+    gid = _int(a.get("activityId"))
+    try:
+        d = date.fromisoformat(str(a.get("startTimeLocal", ""))[:10])
+    except ValueError:
+        return None
+    if gid is None:
+        return None
+    atype = a.get("activityType")
+    return ActivitySummary(
+        garmin_id=gid,
+        date=d,
+        type_key=(atype.get("typeKey") if isinstance(atype, dict) else None) or "unknown",
+        duration_s=_int(a.get("duration")) or 0,
+        distance_m=_int(a.get("distance")) or 0,
+        d_plus_m=_int(a.get("elevationGain")),
+        avg_hr=_int(a.get("averageHR")),
+        raw=a,
+    )
 
 
 def _map_login_errors(fn: Callable[[], Any]) -> Any:
@@ -189,29 +224,37 @@ class GarminClient:
 
     def activities(self, start: date, end: date) -> list[ActivitySummary]:
         raw = self._call(self._api.get_activities_by_date, start.isoformat(), end.isoformat())
-        out: list[ActivitySummary] = []
-        for a in raw if isinstance(raw, list) else []:
-            if not isinstance(a, dict):
+        return [x for x in map(_summary, raw if isinstance(raw, list) else []) if x]
+
+    def activities_page(self, offset: int, limit: int) -> list[ActivitySummary]:
+        """Historique paginé, du plus récent au plus ancien ([] en fin d'historique)."""
+        raw = self._call(self._api.get_activities, offset, limit)
+        return [x for x in map(_summary, raw if isinstance(raw, list) else []) if x]
+
+    def personal_records(self) -> list[PersonalRecordSummary]:
+        """Records personnels de course ; les types inconnus sont ignorés."""
+        raw = self._call(self._api.get_personal_record)
+        out: list[PersonalRecordSummary] = []
+        for r in raw if isinstance(raw, list) else []:
+            if not isinstance(r, dict):
                 continue
-            gid = _int(a.get("activityId"))
-            try:
-                d = date.fromisoformat(str(a.get("startTimeLocal", ""))[:10])
-            except ValueError:
+            kind = PR_KINDS.get(_int(r.get("typeId")))
+            value = _num(r.get("value"))
+            if kind is None or value is None:
                 continue
-            if gid is None:
-                continue
-            atype = a.get("activityType")
+            d = None
+            for key in ("prStartTimeGmtFormatted", "actStartDateTimeInGMTFormatted"):
+                try:
+                    d = date.fromisoformat(str(r.get(key, ""))[:10])
+                    break
+                except ValueError:
+                    continue
             out.append(
-                ActivitySummary(
-                    garmin_id=gid,
+                PersonalRecordSummary(
+                    kind=kind,
+                    value=value,
+                    garmin_activity_id=_int(r.get("activityId")),
                     date=d,
-                    type_key=(atype.get("typeKey") if isinstance(atype, dict) else None)
-                    or "unknown",
-                    duration_s=_int(a.get("duration")) or 0,
-                    distance_m=_int(a.get("distance")) or 0,
-                    d_plus_m=_int(a.get("elevationGain")),
-                    avg_hr=_int(a.get("averageHR")),
-                    raw=a,
                 )
             )
         return out

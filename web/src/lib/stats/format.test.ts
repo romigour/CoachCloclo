@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { fmtClock, fmtPace, parseClock } from "./format";
+import { fmtClock, fmtMonthShort, fmtMonthTick, fmtPace, parseClock } from "./format";
 
 describe("fmtClock", () => {
   it("m:ss sous l'heure, h:mm:ss au-delà", () => {
@@ -29,7 +29,10 @@ describe("parseClock", () => {
     expect(parseClock("1:75:00")).toBeNaN();
     expect(parseClock("0:41:7")).toBeNaN();
     expect(parseClock("abc")).toBeNaN();
-    expect(parseClock("0:00:00")).toBeNaN();
+  });
+  it("durée nulle → 0 (message distinct côté formulaire)", () => {
+    expect(parseClock("0:00:00")).toBe(0);
+    expect(parseClock("0:00")).toBe(0);
   });
 });
 
@@ -38,5 +41,15 @@ describe("fmtPace", () => {
     expect(fmtPace(246.8)).toBe("4:07 /km");
     expect(fmtPace(300)).toBe("5:00 /km");
     expect(fmtPace(359.6)).toBe("6:00 /km");
+  });
+});
+
+describe("étiquettes de mois courtes", () => {
+  it("« janv. 26 » depuis « 2026-01 »", () => {
+    expect(fmtMonthShort("2026-01")).toBe("janv. 26");
+    expect(fmtMonthShort("2025-12")).toBe("déc. 25");
+  });
+  it("« mai 26 » depuis un horodatage local (axe temporel ECharts)", () => {
+    expect(fmtMonthTick(new Date(2026, 4, 10).getTime())).toBe("mai 26");
   });
 });

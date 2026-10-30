@@ -13,7 +13,7 @@
     zoneShares,
   } from "../../lib/stats/running";
   import { themeColors } from "../../lib/stats/echarts";
-  import { fmtDay, fmtMinutes, fmtMonth, fmtNumber, MONTHS_SHORT } from "../../lib/stats/format";
+  import { fmtDay, fmtMinutes, fmtMonth, fmtMonthShort, fmtMonthTick, fmtNumber } from "../../lib/stats/format";
   import { tooltipTheme, withAlpha } from "../../lib/stats/color";
 
   /** Activités déjà filtrées (période + sport). */
@@ -30,24 +30,13 @@
     efficiency.points.length === 0 && vo2.length === 0 && longest.length === 0 && zones === null && trail === null,
   );
 
-  /** Libellé court d'un axe temporel (timestamp ECharts) : « janv. 26 ». */
-  function monthTick(v: number): string {
-    const d = new Date(v);
-    return `${MONTHS_SHORT[d.getMonth()]} ${String(d.getFullYear()).slice(2)}`;
-  }
-
-  function monthLabel(ym: string): string {
-    const [y, m] = ym.split("-").map(Number);
-    return `${MONTHS_SHORT[m - 1]} ${String(y).slice(2)}`;
-  }
-
   /** Axes communs aux graphiques temporels. */
   function timeAxes(c: ReturnType<typeof themeColors>, yFormat: (v: number) => string) {
     return {
       grid: { top: 12, left: 4, right: 12, bottom: 4, containLabel: true },
       xAxis: {
         type: "time",
-        axisLabel: { color: c.muted, formatter: monthTick, hideOverlap: true },
+        axisLabel: { color: c.muted, formatter: fmtMonthTick, hideOverlap: true },
         axisLine: { lineStyle: { color: c.border } },
         axisTick: { show: false },
         splitLine: { show: false },
@@ -140,7 +129,7 @@
       xAxis: {
         type: "category",
         data: longest.map((m) => m.month),
-        axisLabel: { color: c.muted, formatter: monthLabel, hideOverlap: true },
+        axisLabel: { color: c.muted, formatter: fmtMonthShort, hideOverlap: true },
         axisLine: { lineStyle: { color: c.border } },
         axisTick: { show: false },
       },

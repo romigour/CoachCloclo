@@ -3,14 +3,17 @@
   import { recordRows } from "../../lib/stats/records";
   import { fmtClock, fmtDay, fmtNumber, fmtPace } from "../../lib/stats/format";
 
-  let { records }: { records: PersonalRecord[] } = $props();
+  /** null pendant le chargement ; [] si la liste est vide ou la requête a échoué. */
+  let { records }: { records: PersonalRecord[] | null } = $props();
 
-  const rows = $derived(recordRows(records));
+  const rows = $derived(records ? recordRows(records) : []);
 </script>
 
 <p class="meta note">Records absolus, non filtrés par période</p>
 
-{#if rows.length === 0}
+{#if records === null}
+  <p class="meta loading">Chargement des records…</p>
+{:else if rows.length === 0}
   <p class="empty">Records indisponibles</p>
 {:else}
   <div class="scroll">
@@ -49,6 +52,7 @@
 {/if}
 
 <style>
+  .loading { text-align: center; padding: 1.5rem 0.5rem; margin: 0; }
   .note { margin: -0.3rem 0 0.5rem; font-size: 0.8rem; }
   .scroll { overflow-x: auto; }
   table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }

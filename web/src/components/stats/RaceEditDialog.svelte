@@ -45,6 +45,10 @@
       error = new Error("Temps officiel : format h:mm:ss attendu (par exemple 0:41:30)");
       return;
     }
+    if (official === 0) {
+      error = new Error("Temps officiel : le temps doit être supérieur à 0");
+      return;
+    }
     busy = true;
     error = null;
     try {
@@ -129,7 +133,10 @@
       <div class="row">
         <button type="submit" class="primary" disabled={busy}>Enregistrer</button>
         <button type="button" onclick={onclose} disabled={busy}>Annuler</button>
-        <button type="button" class="danger" onclick={remove} disabled={busy}>Ce n'est pas une compétition</button>
+        {#if race}
+          <!-- seulement pour une compétition existante (saisie ou détectée par Garmin) -->
+          <button type="button" class="danger" onclick={remove} disabled={busy}>Ce n'est pas une compétition</button>
+        {/if}
       </div>
     </form>
   </div>

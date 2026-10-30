@@ -20,6 +20,18 @@ export function fmtMonth(ym: string): string {
   return `${MONTHS_SHORT[m - 1]} ${y}`;
 }
 
+/** « janv. 26 » à partir de « 2026-01 » (étiquette d'axe courte). */
+export function fmtMonthShort(ym: string): string {
+  const [y, m] = ym.split("-").map(Number);
+  return `${MONTHS_SHORT[m - 1]} ${String(y).slice(2)}`;
+}
+
+/** « janv. 26 » à partir d'un horodatage (axe temporel ECharts, heure locale). */
+export function fmtMonthTick(ms: number): string {
+  const d = new Date(ms);
+  return `${MONTHS_SHORT[d.getMonth()]} ${String(d.getFullYear()).slice(2)}`;
+}
+
 /** Durée en minutes → « 1 h 05 » ou « 45 min ». */
 export function fmtMinutes(min: number): string {
   if (min < 60) return `${min} min`;
@@ -41,7 +53,7 @@ export function fmtClock(seconds: number): string {
 
 /**
  * Saisie « h:mm:ss » (ou « m:ss ») → secondes. Vide → null (champ non renseigné) ;
- * format invalide ou durée nulle → NaN.
+ * format invalide → NaN ; « 0:00:00 » → 0 (à refuser par l'appelant avec son propre message).
  */
 export function parseClock(text: string): number | null {
   const t = text.trim();
@@ -50,8 +62,7 @@ export function parseClock(text: string): number | null {
   if (!m) return NaN;
   const [h, min, s] = [Number(m[1] ?? 0), Number(m[2]), Number(m[3])];
   if (s > 59 || (m[1] !== undefined && min > 59)) return NaN;
-  const total = h * 3600 + min * 60 + s;
-  return total > 0 ? total : NaN;
+  return h * 3600 + min * 60 + s;
 }
 
 /** Allure en secondes par km → « 4:07 /km ». */

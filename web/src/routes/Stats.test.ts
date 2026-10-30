@@ -180,7 +180,48 @@ test("records table formats times and links to Garmin", async () => {
 
 test("records unavailable when the list is empty", async () => {
   render(Stats, { history: null, onimport: () => {} });
-  expect((await section(/^Records/)).getByText("Records indisponibles")).toBeInTheDocument();
+  expect(await (await section(/^Records/)).findByText("Records indisponibles")).toBeInTheDocument();
+});
+
+test("records unavailable when the request fails, not while loading", async () => {
+  let fail: (r: Response) => void = () => {};
+  const base = vi.mocked(fetch).getMockImplementation()!;
+  vi.mocked(fetch).mockImplementation(async (url, init) =>
+    url === "/api/stats/records" ? new Promise<Response>((res) => (fail = res)) : base(url, init),
+  );
+  render(Stats, { history: null, onimport: () => {} });
+  const rec = await section(/^Records/);
+  expect(rec.queryByText("Records indisponibles")).toBeNull();
+  expect(rec.getByText("Chargement des records…")).toBeInTheDocument();
+  fail(new Response("{}", { status: 500 }));
+  expect(await rec.findByText("Records indisponibles")).toBeInTheDocument();
+});
+
+test("races block hidden when sport is bike, shown regardless of run/trail sub-filter", async () => {
+  activities = [...ACTS, RACE, act(5, "2026-08-01", "trail", 7200, 15000)]; // un trail pour proposer le filtre « Trail »
+  render(Stats, { history: null, onimport: () => {} });
+  expect((await section(/^Compétitions/)).getByText("10 km de Rennes")).toBeInTheDocument();
+  // la course est sur route : le filtre « Trail » la garde quand même (filtre par période seulement)
+  await fireEvent.change(screen.getByLabelText("Sport"), { target: { value: "trail" } });
+  expect((await section(/^Compétitions/)).getByText("10 km de Rennes")).toBeInTheDocument();
+  await fireEvent.change(screen.getByLabelText("Sport"), { target: { value: "bike" } });
+  expect(screen.queryByRole("heading", { name: /^Compétitions/ })).toBeNull();
+});
+
+test("a new race cannot be unmarked", async () => {
+  render(Stats, { history: null, onimport: () => {} });
+  const races = await section(/^Compétitions/);
+  await fireEvent.click(races.getByRole("button", { name: "Ajouter une compétition" }));
+  await fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: /Séance 3/ }));
+  const dialog = within(screen.getByRole("dialog"));
+  expect(dialog.queryByRole("button", { name: "Ce n'est pas une compétition" })).toBeNull();
+});
+
+test("a zero official time gets its own message", async () => {
+  const dialog = await openRaceEditor();
+  await fireEvent.input(dialog.getByLabelText(/Temps officiel/), { target: { value: "0:00:00" } });
+  await fireEvent.click(dialog.getByRole("button", { name: "Enregistrer" }));
+  expect(await dialog.findByText(/supérieur à 0/)).toBeInTheDocument();
 });
 
 test("race edit saves official time", async () => {

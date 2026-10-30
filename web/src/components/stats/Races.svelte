@@ -4,7 +4,7 @@
   import type { StatActivity } from "../../lib/api";
   import { raceCandidates, type DistanceCategory, type RaceRow } from "../../lib/stats/races";
   import { themeColors } from "../../lib/stats/echarts";
-  import { fmtClock, fmtDay, fmtNumber, fmtPace, MONTHS_SHORT } from "../../lib/stats/format";
+  import { fmtClock, fmtDay, fmtMonthTick, fmtNumber, fmtPace } from "../../lib/stats/format";
   import { tooltipTheme, withAlpha } from "../../lib/stats/color";
   import { CATEGORY_LABEL, FAMILY_LABEL } from "../../lib/labels";
 
@@ -70,10 +70,7 @@
           axisLabel: {
             color: c.muted,
             hideOverlap: true,
-            formatter: (v: number) => {
-              const d = new Date(v);
-              return `${MONTHS_SHORT[d.getMonth()]} ${String(d.getFullYear()).slice(2)}`;
-            },
+            formatter: fmtMonthTick,
           },
           axisLine: { lineStyle: { color: c.border } },
           axisTick: { show: false },

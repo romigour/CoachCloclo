@@ -75,7 +75,7 @@
   let metric = $state<Metric>(saved.metric);
   let activities = $state<StatActivity[] | null>(null);
   // Records absolus (non filtrés) : chargement indépendant, un échec affiche « Records indisponibles ».
-  let records = $state<PersonalRecord[]>([]);
+  let records = $state<PersonalRecord[] | null>(null);
   let loadError = $state<string | null>(null);
   const today = localToday();
 
@@ -107,8 +107,10 @@
   const share = $derived(sportShare(current));
   const options = $derived(sportOptions(all));
   const showRunning = $derived(includesRunning(sport));
-  const races = $derived(raceRows(current));
-  const progression = $derived(raceProgression(current));
+  // Compétitions : filtrées par période seulement (une course route reste visible avec le filtre « Trail »).
+  const periodActs = $derived(filterActivities(all, period, "all"));
+  const races = $derived(raceRows(periodActs));
+  const progression = $derived(raceProgression(periodActs));
   const years = $derived([...new Set(all.map((a) => Number(a.date.slice(0, 4))))].sort((a, b) => b - a));
 
   const periodText = $derived(
@@ -184,10 +186,12 @@
         </section>
       {/if}
 
-      <section class="card" aria-labelledby="races-title">
-        <h2 id="races-title">Compétitions <small>mes courses officielles</small></h2>
-        <Races acts={all} rows={races} {progression} onchanged={replaceActivity} />
-      </section>
+      {#if showRunning}
+        <section class="card" aria-labelledby="races-title">
+          <h2 id="races-title">Compétitions <small>mes courses officielles</small></h2>
+          <Races acts={all} rows={races} {progression} onchanged={replaceActivity} />
+        </section>
+      {/if}
 
       <section class="card" aria-labelledby="rec-title">
         <h2 id="rec-title">Records <small>mes meilleurs temps</small></h2>

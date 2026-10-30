@@ -4,7 +4,7 @@
   import { addDays, type Period } from "../../lib/stats/filter";
   import type { Bucket } from "../../lib/stats/volume";
   import { themeColors } from "../../lib/stats/echarts";
-  import { fmtDay, fmtMonth, fmtNumber, MONTHS_SHORT } from "../../lib/stats/format";
+  import { fmtDay, fmtMonth, fmtMonthShort, fmtNumber } from "../../lib/stats/format";
   import { FAMILY_LABEL } from "../../lib/labels";
   import { tooltipTheme } from "../../lib/stats/color";
 
@@ -30,8 +30,7 @@
 
   function axisLabel(label: string): string {
     if (bucket === "week") return fmtDay(label, false);
-    const [y, m] = label.split("-").map(Number);
-    return `${MONTHS_SHORT[m - 1]} ${String(y).slice(2)}`;
+    return fmtMonthShort(label);
   }
 
   function title(label: string): string {

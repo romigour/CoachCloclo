@@ -109,12 +109,13 @@ Ajouts à `GarminPort` (et à `FakeGarminClient`) :
 
 - `import_history(repo, garmin, on_progress)` : pagine par 100, enregistre les activités absentes
   (même conversion que `_import_activities` de `sync.py`, factorisée dans une fonction commune),
-  s'arrête à la première page vide. Pause de 1 s entre les pages, en plus du réessai existant
+  s'arrête à la première page incomplète (moins de 100 activités). Pause de 1 s entre les pages, en plus du réessai existant
   sur 429. Rafraîchit ensuite les records personnels.
 - Lancé dans un thread (un seul à la fois, verrou en mémoire) :
   - automatiquement à la fin d'une synchro réussie si `history.status` vaut `idle` ;
   - à la demande via `POST /api/history/import` (relance aussi après `error` ou `done`).
-- État dans `Settings.history` : `status` (`idle` | `running` | `done` | `error`), `imported`
+- État dans un fichier dédié `history.json` du dossier de données (pas dans `settings.json`,
+  que `sync` réécrit en entier et écraserait en parallèle) : `status` (`idle` | `running` | `done` | `error`), `imported`
   (nombre d'activités ajoutées), `error` (message ou `null`), `finished_at`. Au démarrage du
   serveur, un état `running` orphelin repasse à `error` (« Import interrompu »).
 - Idempotent : relancer reprend simplement, les activités déjà en base sont ignorées.

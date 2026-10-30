@@ -28,7 +28,7 @@
           avoidLabelOverlap: true,
           label: { show: false },
           labelLine: { show: false },
-          itemStyle: { borderColor: "transparent", borderWidth: 2, borderRadius: 4 },
+          itemStyle: { borderColor: c.surface, borderWidth: 2, borderRadius: 4 },
           emphasis: { scale: true, scaleSize: 4 },
           data: share.map((s) => ({ name: FAMILY_LABEL[s.family], value: s.hours, itemStyle: { color: c.families[s.family] } })),
         },
@@ -50,7 +50,7 @@
   <ul class="list">
     {#each share as s (s.family)}
       <li>
-        <span class="dot" style:background="var(--fam-{s.family})"></span>
+        <span class="swatch" style:background="var(--fam-{s.family})"></span>
         <span class="name">{FAMILY_LABEL[s.family]}</span>
         <span class="hours">{fmtNumber(s.hours, 1)} h</span>
         <span class="pct">{pct(s.hours)} %</span>
@@ -71,9 +71,9 @@
     justify-content: center;
     pointer-events: none;
   }
-  .center strong { font-size: 1.5rem; line-height: 1.1; font-variant-numeric: tabular-nums; }
-  .center span { color: var(--muted); font-size: 0.8rem; }
-  .list { list-style: none; padding: 0; margin: 0.5rem 0 0; font-size: 0.9rem; }
+  .center strong { font-family: var(--font-display); font-size: 24px; font-weight: 800; line-height: 1.1; font-variant-numeric: tabular-nums; }
+  .center span { color: var(--muted); font-size: 12px; }
+  .list { list-style: none; padding: 0; margin: 0; font-size: 13px; }
   .list li {
     display: grid;
     grid-template-columns: 12px minmax(0, 1fr) auto 3rem;
@@ -83,10 +83,10 @@
     row-gap: 0.2rem;
     padding: 0.3rem 0;
   }
-  .dot { grid-area: dot; width: 10px; height: 10px; border-radius: 3px; }
+  .swatch { grid-area: dot; width: 10px; height: 10px; border-radius: 3px; }
   .name { grid-area: name; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .hours { grid-area: hours; font-variant-numeric: tabular-nums; }
   .pct { grid-area: pct; text-align: right; color: var(--muted); font-variant-numeric: tabular-nums; }
-  .track { grid-area: track; height: 4px; border-radius: 2px; background: var(--border); overflow: hidden; }
+  .track { grid-area: track; height: 4px; border-radius: 2px; background: var(--sunken); overflow: hidden; }
   .track span { display: block; height: 100%; border-radius: 2px; }
 </style>

@@ -23,7 +23,9 @@
   // Init unique au montage ; le thème est porté par l'option (recalculée par le parent
   // via themeColors(), réactif), donc pas de ré-init.
   onMount(() => {
-    chart = echarts.init(el, undefined, { renderer: "svg" });
+    // Police de l'app pour tous les textes du graphique (axes, légendes, infobulles).
+    const font = getComputedStyle(document.documentElement).getPropertyValue("--font-text").trim();
+    chart = echarts.init(el, font ? { textStyle: { fontFamily: font } } : undefined, { renderer: "svg" });
     chart.on("click", (p: unknown) => onclick?.(p as ClickParams));
     const ro = typeof ResizeObserver !== "undefined" ? new ResizeObserver(() => chart?.resize()) : null;
     ro?.observe(el);

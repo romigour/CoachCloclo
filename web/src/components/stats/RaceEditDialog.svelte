@@ -146,7 +146,7 @@
   .modal { max-height: 92vh; overflow-y: auto; }
   h3 { margin: 0; }
   .facts { margin: 0.2rem 0 0.4rem; }
-  .hint { font-size: 0.75rem; }
+  .hint { font-size: 12px; }
   .pair { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 0.75rem; }
-  .danger { color: var(--error); margin-left: auto; }
+  .danger { color: var(--danger); margin-left: auto; }
 </style>

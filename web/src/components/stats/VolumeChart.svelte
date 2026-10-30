@@ -73,7 +73,7 @@
           stack: "volume",
           name: FAMILY_LABEL[s.family],
           data: s.values.map(round1),
-          itemStyle: { color: c.families[s.family] },
+          itemStyle: { color: c.families[s.family], borderColor: c.surface, borderWidth: 1 },
           barMaxWidth: 28,
           emphasis: { focus: "series" },
         })),
@@ -116,7 +116,7 @@
   <EChart {option} height="300px" onclick={click} label="Volume par {bucket === 'week' ? 'semaine' : 'mois'} et par sport, en {metric === 'hours' ? 'heures' : 'kilomètres'}" />
   <ul class="legend">
     {#each data.series as s (s.family)}
-      <li><span class="dot" style:background="var(--fam-{s.family})"></span>{FAMILY_LABEL[s.family]}</li>
+      <li><span class="swatch" style:background="var(--fam-{s.family})"></span>{FAMILY_LABEL[s.family]}</li>
     {/each}
     <li><span class="dash"></span>{avgLabel}</li>
   </ul>
@@ -128,38 +128,40 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 0.5rem;
-    margin-bottom: 0.4rem;
+    gap: 8px;
   }
+  /* même rendu que le sélecteur segmenté de la refonte (.segmented) */
   .metric {
     display: inline-flex;
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: 2px;
+    background: var(--sunken);
+    border-radius: 10px;
+    padding: 3px;
     gap: 2px;
   }
   .metric button {
-    min-height: 34px;
-    padding: 0.2rem 0.8rem;
+    min-height: 32px;
+    padding: 0 12px;
     border: none;
-    border-radius: 6px;
+    border-radius: 8px;
     background: transparent;
-    color: var(--muted);
-    font-size: 0.85rem;
+    color: var(--text-2);
+    font-size: 13px;
+    font-weight: 500;
   }
-  .metric button.on { background: var(--accent); color: var(--accent-text); font-weight: 600; }
+  .metric button:hover:not(.on) { background: transparent; color: var(--text); }
+  .metric button.on { background: var(--surface); color: var(--text); font-weight: 700; box-shadow: 0 1px 2px rgb(0 0 0 / 0.08); }
   .legend {
     display: flex;
     flex-wrap: wrap;
-    gap: 0.3rem 0.9rem;
+    gap: 4px 14px;
     list-style: none;
     padding: 0;
-    margin: 0.4rem 0 0;
-    font-size: 0.8rem;
-    color: var(--muted);
+    margin: 0;
+    font-size: 12px;
+    color: var(--text-2);
   }
-  .legend li { display: inline-flex; align-items: center; gap: 0.35rem; }
-  .dot { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
+  .legend li { display: inline-flex; align-items: center; gap: 6px; }
+  .swatch { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
   .dash { width: 14px; border-top: 2px dashed var(--text); display: inline-block; }
-  .hint { color: var(--muted); font-size: 0.8rem; margin: 0.3rem 0 0; }
+  .hint { color: var(--muted); font-size: 12px; }
 </style>

@@ -102,7 +102,7 @@
 <svelte:window onkeydown={pickerKey} />
 
 <div class="head">
-  <button type="button" onclick={() => (picking = true)}>Ajouter une compétition</button>
+  <button type="button" class="small" onclick={() => (picking = true)}>Ajouter une compétition</button>
 </div>
 
 {#if rows.length === 0}
@@ -115,7 +115,7 @@
         <div class="top">
           <span class="date">{fmtDay(r.activity.date)}</span>
           <strong class="name">{raceName(r.activity)}</strong>
-          <button type="button" class="link" onclick={() => (editing = r.activity)} aria-label="Modifier {raceName(r.activity)}">Modifier</button>
+          <button type="button" class="small" onclick={() => (editing = r.activity)} aria-label="Modifier {raceName(r.activity)}">Modifier</button>
         </div>
         <div class="facts">
           {#if r.timeS !== null}
@@ -200,41 +200,41 @@
 {/if}
 
 <style>
-  .head { display: flex; justify-content: flex-end; margin-bottom: 0.4rem; }
+  .head { display: flex; justify-content: flex-end; margin-top: -4px; }
   .races { list-style: none; margin: 0; padding: 0; }
-  .races li { padding: 0.6rem 0; border-bottom: 1px solid var(--border); }
+  .races li { padding: 12px 0; border-bottom: 1px solid var(--divider); }
   .races li:last-child { border-bottom: none; }
   .top { display: flex; align-items: baseline; gap: 0.5rem; min-width: 0; }
-  .date { color: var(--muted); font-size: 0.8rem; white-space: nowrap; }
+  .date { color: var(--muted); font-size: 12px; white-space: nowrap; }
   .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .top :global(button.link) { flex: none; }
+  .top :global(button.small) { flex: none; }
   .facts { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.2rem 0.8rem; margin-top: 0.2rem; }
-  .time { font-size: 1.25rem; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .time { font-family: var(--font-display); font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums; }
   .watch {
     margin-left: -0.5rem;
-    font-size: 0.7rem;
+    font-size: 11px;
     color: var(--muted);
     border: 1px solid var(--border);
     border-radius: 4px;
     padding: 0 0.3rem;
   }
-  .ranks { display: flex; flex-wrap: wrap; gap: 0.2rem 1rem; margin-top: 0.2rem; font-size: 0.85rem; }
+  .ranks { display: flex; flex-wrap: wrap; gap: 0.2rem 1rem; margin-top: 0.2rem; font-size: 13px; }
   .top-pct {
     margin-left: 0.3rem;
     padding: 0.05rem 0.4rem;
     border-radius: 999px;
-    background: var(--info-bg);
-    color: var(--accent);
+    background: var(--accent-soft);
+    color: var(--accent-strong);
     font-weight: 600;
-    font-size: 0.75rem;
+    font-size: 12px;
     white-space: nowrap;
   }
-  h3 { margin: 1rem 0 0.3rem; font-size: 1rem; }
+  h3 { margin-top: 4px; font-size: 15px; }
   .picker h3 { margin-top: 0; }
   .charts { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 0.8rem; }
   .chart { min-width: 0; }
-  .cat { font-size: 0.8rem; color: var(--muted); font-weight: 600; }
-  .hint { color: var(--muted); font-size: 0.8rem; margin: 0.3rem 0 0; }
+  .cat { font-size: 12px; color: var(--muted); font-weight: 600; }
+  .hint { color: var(--muted); font-size: 12px; margin: 0.3rem 0 0; }
   .picker { display: flex; flex-direction: column; max-height: 85vh; }
   .candidates { list-style: none; margin: 0; padding: 0; overflow-y: auto; min-height: 0; }
   .candidates button {
@@ -245,10 +245,10 @@
     gap: 0.1rem;
     text-align: left;
     border: none;
-    border-bottom: 1px solid var(--border);
+    border-bottom: 1px solid var(--divider);
     border-radius: 0;
     background: transparent;
   }
-  .candidates button:hover { background: var(--bg); }
+  .candidates button:hover { background: var(--sunken); }
   .c-name { font-weight: 600; }
 </style>

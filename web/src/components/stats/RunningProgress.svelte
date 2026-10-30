@@ -88,7 +88,8 @@
   const vo2Option = $derived.by(() => {
     const c = themeColors();
     return {
-      ...timeAxes(c, (v) => fmtNumber(v)),
+      // Demi-points affichés tels quels : arrondis, ils doublaient les graduations (52, 53, 53…).
+      ...timeAxes(c, (v) => fmtNumber(v, Number.isInteger(v) ? 0 : 1)),
       tooltip: {
         ...tooltipTheme(c),
         trigger: "item",
@@ -154,14 +155,8 @@
     const c = themeColors();
     const z = zones ?? [];
     const shares = zoneShares(z).map((x) => Math.round(x * 100));
-    // Zones faciles (1-2) dans la couleur d'accent, zones soutenues (3-5) dans la couleur course.
-    const colors = [
-      withAlpha(c.accent, 0.55),
-      c.accent,
-      withAlpha(c.families.run, 0.55),
-      withAlpha(c.families.run, 0.8),
-      c.families.run,
-    ];
+    // Rampe d'intensité de l'app (--z1 … --z5), la même que les profils de séance.
+    const colors = c.zones;
     return {
       grid: { top: 18, left: 4, right: 8, bottom: 4, containLabel: true },
       tooltip: {
@@ -271,13 +266,13 @@
     .panels { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   }
   .panel { min-width: 0; }
-  h3 { margin: 0; font-size: 1rem; }
-  .sub { margin: 0.1rem 0 0.3rem; color: var(--muted); font-size: 0.8rem; }
-  .figure-line { margin: 0.2rem 0; font-size: 0.9rem; }
+  h3 { font-size: 15px; }
+  .sub { margin: 0.1rem 0 0.3rem; color: var(--muted); font-size: 12px; }
+  .figure-line { margin: 0.2rem 0; font-size: 13px; }
   .figure-line strong { font-variant-numeric: tabular-nums; }
-  .up { color: var(--ok); }
-  .down { color: var(--error); }
-  .hint { color: var(--muted); font-size: 0.8rem; margin: 0.3rem 0 0; }
+  .up { color: var(--accent); }
+  .down { color: var(--todo); }
+  .hint { color: var(--muted); font-size: 12px; margin: 0.3rem 0 0; }
   .trail {
     margin-top: 1rem;
     padding-top: 0.8rem;
@@ -285,7 +280,7 @@
   }
   .figures { display: flex; flex-wrap: wrap; gap: 0.5rem 2rem; margin-top: 0.3rem; }
   .figures div { display: flex; flex-direction: column; }
-  .figures .label { color: var(--muted); font-size: 0.8rem; }
-  .figures strong { font-size: 1.4rem; font-variant-numeric: tabular-nums; }
-  .figures .unit { color: var(--muted); font-size: 0.85rem; }
+  .figures .label { color: var(--muted); font-size: 12px; }
+  .figures strong { font-family: var(--font-display); font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .figures .unit { color: var(--muted); font-size: 13px; }
 </style>

@@ -22,6 +22,14 @@
   --z3: #5e9f8d;
   --z4: #2f7564;
   --z5: #17473d;
+  /* familles de sport (page Stats) : teintes sourdes, ordre fixe, validées daltonisme */
+  --fam-run: #00846b;
+  --fam-trail: #b8742a;
+  --fam-bike: #4560c4;
+  --fam-swim: #1a9cc2;
+  --fam-strength: #a8467a;
+  --fam-walk: #6f9128;
+  --fam-other: #8a8f8b;
 
   --font-display: "Manrope Variable", "Segoe UI Variable Display", "Segoe UI", system-ui, sans-serif;
   --font-text: "Inter Variable", "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
@@ -51,6 +59,13 @@
     --z3: #5e9f8d;
     --z4: #8cc4b4;
     --z5: #c4e3da;
+    --fam-run: #22987c;
+    --fam-trail: #c88034;
+    --fam-bike: #6c72e6;
+    --fam-swim: #1aa0c4;
+    --fam-strength: #c75b80;
+    --fam-walk: #7ea12f;
+    --fam-other: #7d8480;
   }
 }
 
@@ -328,3 +343,4 @@ details summary { cursor: pointer; }
 .settings-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 20px; align-items: start; }
 .settings-grid ul.plain { display: flex; flex-direction: column; gap: 6px; }
 label.inline { flex-direction: row; align-items: center; gap: 10px; font-weight: 500; }
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }

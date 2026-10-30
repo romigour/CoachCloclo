@@ -53,11 +53,11 @@
 
 <style>
   .loading { text-align: center; padding: 1.5rem 0.5rem; margin: 0; }
-  .note { margin: -0.3rem 0 0.5rem; font-size: 0.8rem; }
+  .note { font-size: 12px; }
   .scroll { overflow-x: auto; }
-  table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
-  th, td { padding: 0.45rem 0.4rem; text-align: left; white-space: nowrap; border-bottom: 1px solid var(--border); }
-  thead th { color: var(--muted); font-weight: 500; font-size: 0.8rem; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { padding: 0.45rem 0.4rem; text-align: left; white-space: nowrap; border-bottom: 1px solid var(--divider); }
+  thead th { color: var(--muted); font-weight: 500; font-size: 12px; }
   tbody tr:last-child th, tbody tr:last-child td { border-bottom: none; }
   tbody th { font-weight: 600; }
   .num { text-align: right; font-variant-numeric: tabular-nums; }

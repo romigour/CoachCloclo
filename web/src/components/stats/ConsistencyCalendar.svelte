@@ -4,7 +4,7 @@
   import { calendarRanges, type WeekStats } from "../../lib/stats/consistency";
   import { themeColors } from "../../lib/stats/echarts";
   import { fmtDay, fmtMinutes, MONTHS_SHORT } from "../../lib/stats/format";
-  import { tooltipTheme, withAlpha } from "../../lib/stats/color";
+  import { tooltipTheme } from "../../lib/stats/color";
 
   let {
     days,
@@ -50,13 +50,14 @@
     if (wrap) wrap.scrollLeft = wrap.scrollWidth;
   });
 
+  // Rampe d'intensité de l'app (--z2 … --z5) : la même que les profils de séance.
   const pieces = $derived.by(() => {
-    const c = themeColors();
+    const z = themeColors().zones;
     return [
-      { min: 0, max: 29, label: "< 30 min", color: withAlpha(c.accent, 0.3) },
-      { min: 30, max: 59, label: "30 à 59 min", color: withAlpha(c.accent, 0.55) },
-      { min: 60, max: 89, label: "1 h à 1 h 30", color: withAlpha(c.accent, 0.8) },
-      { min: 90, label: "≥ 1 h 30", color: c.accent },
+      { min: 0, max: 29, label: "< 30 min", color: z[1] },
+      { min: 30, max: 59, label: "30 à 59 min", color: z[2] },
+      { min: 60, max: 89, label: "1 h à 1 h 30", color: z[3] },
+      { min: 90, label: "≥ 1 h 30", color: z[4] },
     ];
   });
 
@@ -74,11 +75,11 @@
         left,
         cellSize: [cell, cell],
         range: [r.from, r.to],
-        splitLine: { lineStyle: { color: c.muted, width: 1, opacity: 0.5 } },
-        itemStyle: { color: "transparent", borderColor: withAlpha(c.border, 0.8), borderWidth: 1 },
-        yearLabel: { show: ranges.length > 1, position: "left", margin: 26, color: c.text, fontSize: 12 },
-        monthLabel: { nameMap: MONTHS_SHORT, color: c.muted, fontSize: 10, margin: 4 },
-        dayLabel: { firstDay: 1, nameMap: ["D", "L", "M", "M", "J", "V", "S"], color: c.muted, fontSize: 9, margin: 4 },
+        splitLine: { lineStyle: { color: c.border, width: 1 } },
+        itemStyle: { color: "transparent", borderColor: c.surface, borderWidth: 2 },
+        yearLabel: { show: ranges.length > 1, position: "left", margin: 26, color: c.text, fontSize: 12, fontFamily: c.font },
+        monthLabel: { nameMap: MONTHS_SHORT, color: c.muted, fontSize: 11, margin: 4, fontFamily: c.font },
+        dayLabel: { firstDay: 1, nameMap: ["D", "L", "M", "M", "J", "V", "S"], color: c.muted, fontSize: 10, margin: 4, fontFamily: c.font },
       })),
       series: ranges.map((r, i) => ({
         type: "heatmap",
@@ -127,7 +128,7 @@
     {/each}
   </ul>
   <p class="hint">
-    Un clic sur un jour limite la période à ce jour.{#if scrolls} Faites défiler vers la gauche pour les semaines précédentes.{/if}
+    Un clic sur un jour limite la période à ce jour.{#if scrolls}{" "}Faites défiler vers la gauche pour les semaines précédentes.{/if}
   </p>
 {/if}
 
@@ -135,20 +136,19 @@
   .weeks {
     display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 0.5rem;
-    margin-bottom: 0.6rem;
+    gap: 10px;
   }
   .tile {
     display: flex;
     flex-direction: column;
-    gap: 0.1rem;
-    padding: 0.5rem 0.6rem;
-    border-radius: 10px;
+    gap: 2px;
+    padding: 10px 12px;
+    border-radius: 12px;
     background: var(--bg);
     min-width: 0;
   }
-  .label { color: var(--muted); font-size: 0.8rem; }
-  strong { font-size: 1.4rem; font-variant-numeric: tabular-nums; }
+  .label { color: var(--muted); font-size: 12px; font-weight: 500; }
+  strong { font-family: var(--font-display); font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums; }
   .bar {
     display: block;
     height: 5px;
@@ -157,7 +157,7 @@
     overflow: hidden;
     margin-top: 0.2rem;
   }
-  .bar span { display: block; height: 100%; background: var(--accent); border-radius: 3px; }
+  .bar span { display: block; height: 100%; background: var(--z4); border-radius: 3px; }
   .cal { width: 100%; min-width: 0; overflow-x: auto; overscroll-behavior-x: contain; }
   .scale {
     display: flex;
@@ -165,11 +165,11 @@
     gap: 0.3rem 0.9rem;
     list-style: none;
     padding: 0;
-    margin: 0.3rem 0 0;
-    font-size: 0.8rem;
+    margin: 0;
+    font-size: 12px;
     color: var(--muted);
   }
   .scale li { display: inline-flex; align-items: center; gap: 0.35rem; }
   .swatch { width: 12px; height: 12px; border-radius: 3px; display: inline-block; }
-  .hint { color: var(--muted); font-size: 0.8rem; margin: 0.2rem 0 0; }
+  .hint { color: var(--muted); font-size: 12px; }
 </style>

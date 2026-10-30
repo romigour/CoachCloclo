@@ -36,7 +36,7 @@
   .kpis {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 0.6rem;
+    gap: 12px;
   }
   @media (min-width: 640px) {
     .kpis { grid-template-columns: repeat(4, minmax(0, 1fr)); }
@@ -44,21 +44,27 @@
   .kpi {
     display: flex;
     flex-direction: column;
-    gap: 0.15rem;
-    background: var(--card);
+    gap: 4px;
+    background: var(--surface);
     border: 1px solid var(--border);
-    border-top: 3px solid var(--accent);
-    border-radius: 12px;
-    padding: 0.7rem 0.85rem;
+    border-radius: 16px;
+    padding: 16px 18px;
     min-width: 0;
   }
-  .label { color: var(--muted); font-size: 0.85rem; }
-  .figure { display: flex; align-items: baseline; gap: 0.25rem; }
-  strong { font-size: 1.7rem; line-height: 1.1; font-variant-numeric: tabular-nums; }
-  .unit { color: var(--muted); font-size: 0.95rem; }
-  .delta { font-size: 0.85rem; font-variant-numeric: tabular-nums; }
-  .delta.up { color: var(--ok); }
-  .delta.down { color: var(--warn-text); }
+  .label { color: var(--muted); font-size: 13px; font-weight: 500; }
+  .figure { display: flex; align-items: baseline; gap: 4px; }
+  strong {
+    font-family: var(--font-display);
+    font-size: 28px;
+    font-weight: 800;
+    letter-spacing: -0.02em;
+    line-height: 1.1;
+    font-variant-numeric: tabular-nums;
+  }
+  .unit { color: var(--muted); font-size: 14px; font-weight: 500; }
+  .delta { align-self: flex-start; font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums; padding: 1px 8px; border-radius: 999px; }
+  .delta.up { color: var(--accent-strong); background: var(--accent-soft); }
+  .delta.down { color: var(--todo); background: var(--todo-soft); }
   .delta.none,
-  .delta.flat { color: var(--muted); }
+  .delta.flat { color: var(--muted); background: var(--sunken); }
 </style>

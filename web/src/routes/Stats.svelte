@@ -154,30 +154,36 @@
   }
 </script>
 
-<div class="stats">
-  <h1>Statistiques</h1>
+<div class="stats-page">
+  <header class="page-head">
+    <div>
+      <p class="eyebrow">Historique Garmin</p>
+      <h1>Statistiques</h1>
+    </div>
+  </header>
 
   {#if history?.status === "running"}
-    <p class="banner info" role="status">Import de l'historique : {history.imported} activités…</p>
+    <p class="banner info busy" role="status">Import de l'historique : {history.imported} activités…</p>
   {:else if history?.status === "error"}
     <div class="banner warning import-error" role="alert">
       <span>Import de l'historique interrompu : {history.error ?? "erreur inconnue"}</span>
-      <button type="button" onclick={onimport}>Reprendre</button>
+      <button type="button" class="small" onclick={onimport}>Reprendre</button>
     </div>
   {/if}
 
   {#if loadError}
     <p class="banner error" role="alert">{loadError}</p>
   {:else if activities === null}
-    <p class="meta">Chargement des statistiques…</p>
+    <p class="busy">Chargement des statistiques…</p>
   {:else if activities.length === 0 && history?.status === "idle"}
-    <section class="card first-import">
-      <p>Aucune activité pour l'instant : importe ton historique Garmin pour voir tes statistiques.</p>
-      <button type="button" class="primary" onclick={onimport}>Importer mon historique Garmin</button>
+    <section class="card lg stack first-import">
+      <h2>Aucune activité pour l'instant</h2>
+      <p class="meta">Importe ton historique Garmin pour voir tes statistiques.</p>
+      <div class="row"><button type="button" class="primary" onclick={onimport}>Importer mon historique Garmin</button></div>
     </section>
   {:else}
     <Filters {choice} {sport} {options} {years} {period} onchange={change} onreset={reset} />
-    <p class="meta period">{periodText} · {current.length} séance{current.length > 1 ? "s" : ""}</p>
+    <p class="meta">{periodText} · {current.length} séance{current.length > 1 ? "s" : ""}</p>
 
     <div class="grid">
       <section class="span" aria-labelledby="kpi-title">
@@ -185,37 +191,37 @@
         <KpiRow {kpis} />
       </section>
 
-      <section class="card span" aria-labelledby="reg-title">
-        <h2 id="reg-title">Régularité <small>suis-je constant ?</small></h2>
+      <section class="card stack span" aria-labelledby="reg-title">
+        <div><h2 id="reg-title">Régularité</h2><p class="meta">Suis-je constant ?</p></div>
         <ConsistencyCalendar {days} {period} stats={weeks} onpick={pick} />
       </section>
 
-      <section class="card" aria-labelledby="vol-title">
-        <h2 id="vol-title">Volume <small>comment évolue ma charge ?</small></h2>
+      <section class="card stack" aria-labelledby="vol-title">
+        <div><h2 id="vol-title">Volume</h2><p class="meta">Comment évolue ma charge ?</p></div>
         <VolumeChart data={volume} {metric} {bucket} onmetric={(m) => (metric = m)} onpick={pick} />
       </section>
 
-      <section class="card" aria-labelledby="share-title">
-        <h2 id="share-title">Répartition <small>en heures</small></h2>
+      <section class="card stack" aria-labelledby="share-title">
+        <div><h2 id="share-title">Répartition</h2><p class="meta">En heures, par sport</p></div>
         <SportDonut {share} />
       </section>
 
       {#if showRunning}
-        <section class="card span" aria-labelledby="run-title">
-          <h2 id="run-title">Course à pied <small>est-ce que je progresse ?</small></h2>
+        <section class="card stack span" aria-labelledby="run-title">
+          <div><h2 id="run-title">Course à pied</h2><p class="meta">Est-ce que je progresse ?</p></div>
           <RunningProgress acts={current} />
         </section>
       {/if}
 
       {#if showRunning}
-        <section class="card" aria-labelledby="races-title">
-          <h2 id="races-title">Compétitions <small>mes courses officielles</small></h2>
+        <section class="card stack" aria-labelledby="races-title">
+          <div><h2 id="races-title">Compétitions</h2><p class="meta">Mes courses officielles</p></div>
           <Races acts={all} rows={races} {progression} onchanged={replaceActivity} />
         </section>
       {/if}
 
-      <section class="card" aria-labelledby="rec-title">
-        <h2 id="rec-title">Records <small>mes meilleurs temps</small></h2>
+      <section class="card stack" aria-labelledby="rec-title">
+        <div><h2 id="rec-title">Records</h2><p class="meta">Mes meilleurs temps</p></div>
         <Records {records} />
       </section>
     </div>
@@ -223,41 +229,28 @@
 </div>
 
 <style>
-  .stats :global(.empty) {
+  .stats-page { display: flex; flex-direction: column; gap: 16px; }
+  .stats-page :global(.empty) {
     color: var(--muted);
-    font-style: italic;
     text-align: center;
-    padding: 1.5rem 0.5rem;
-    margin: 0;
+    padding: 24px 8px;
   }
-  .stats h2 { margin-top: 0; }
-  .period { margin: 0.5rem 0 0.2rem; }
   .import-error {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
     justify-content: space-between;
-    gap: 0.5rem;
-    padding: 0.6rem 0.75rem;
-    margin: 0.6rem 0;
+    gap: 8px;
   }
-  .first-import { margin: 0.6rem 0; text-align: center; }
+  .first-import { align-items: flex-start; }
   .grid {
     display: grid;
     grid-template-columns: minmax(0, 1fr);
-    gap: 0 1rem;
+    gap: 16px;
   }
-  .grid > section { min-width: 0; margin: 0.6rem 0; }
+  .grid > section { min-width: 0; }
   @media (min-width: 900px) {
-    .grid { grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); }
+    .grid { grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 20px; }
     .span { grid-column: 1 / -1; }
-  }
-  .sr-only {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    overflow: hidden;
-    clip: rect(0 0 0 0);
-    white-space: nowrap;
   }
 </style>

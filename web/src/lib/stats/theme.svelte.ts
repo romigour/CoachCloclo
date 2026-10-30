@@ -6,10 +6,13 @@ const FAMILIES: Family[] = ["run", "trail", "bike", "swim", "strength", "walk", 
 
 export interface ThemeColors {
   text: string;
-  card: string;
+  surface: string;
   muted: string;
   border: string;
   accent: string;
+  font: string;
+  /** Rampe d'intensité --z1 … --z5 (du plus léger au plus marqué dans chaque thème). */
+  zones: string[];
   families: Record<Family, string>;
 }
 
@@ -33,10 +36,12 @@ export function themeColors(): ThemeColors {
   for (const f of FAMILIES) families[f] = get(`--fam-${f}`);
   return {
     text: get("--text"),
-    card: get("--card"),
+    surface: get("--surface"),
     muted: get("--muted"),
     border: get("--border"),
     accent: get("--accent"),
+    font: get("--font-text"),
+    zones: [1, 2, 3, 4, 5].map((i) => get(`--z${i}`)),
     families,
   };
 }

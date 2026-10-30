@@ -89,62 +89,64 @@
 <style>
   .filters {
     position: sticky;
-    top: calc(var(--topbar-h) + env(safe-area-inset-top));
+    top: 0;
     z-index: 4;
     background: var(--bg);
-    padding: 0.5rem 0 0.6rem;
+    padding: 8px 0 12px;
+    margin-top: -8px;
     border-bottom: 1px solid var(--border);
-  }
-  .periods {
-    display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-    background: var(--card);
-    border: 1px solid var(--border);
-    border-radius: 10px;
-    padding: 3px;
-    gap: 3px;
-  }
-  .periods button {
-    min-height: 38px;
-    padding: 0.35rem 0.25rem;
-    border: none;
-    border-radius: 8px;
-    background: transparent;
-    color: var(--muted);
-    font-size: 0.85rem;
-    line-height: 1.15;
-  }
-  .periods button.on {
-    background: var(--accent);
-    color: var(--accent-text);
-    font-weight: 600;
-  }
-  .line {
     display: flex;
     flex-wrap: wrap;
     align-items: flex-end;
-    gap: 0.5rem;
-    margin-top: 0.5rem;
+    gap: 12px 16px;
+  }
+  /* même rendu que le sélecteur segmenté de la refonte (.segmented) */
+  .periods {
+    display: inline-grid;
+    grid-template-columns: repeat(4, auto);
+    background: var(--sunken);
+    border-radius: 12px;
+    padding: 4px;
+    gap: 2px;
+  }
+  .periods button {
+    min-height: 38px;
+    padding: 0 12px;
+    border: none;
+    border-radius: 9px;
+    background: transparent;
+    color: var(--text-2);
+    font-weight: 500;
+    line-height: 1.15;
+  }
+  .periods button:hover:not(.on) { background: transparent; color: var(--text); }
+  .periods button.on {
+    background: var(--surface);
+    color: var(--text);
+    font-weight: 700;
+    box-shadow: 0 1px 2px rgb(0 0 0 / 0.08);
+  }
+  .line {
+    flex: 1 1 320px;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    gap: 10px;
   }
   .field {
-    margin: 0;
-    flex: 1 1 9rem;
+    flex: 1 1 140px;
+    max-width: 240px;
     min-width: 0;
-    font-size: 0.8rem;
+    gap: 4px;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--muted);
   }
   .field select,
-  .field input {
-    margin-top: 0.15rem;
-    padding: 0.45rem 0.6rem;
-    background: var(--card);
-    min-height: 40px;
-  }
-  .reset {
-    min-height: 40px;
-    padding: 0.4rem 0.8rem;
-    font-size: 0.85rem;
-  }
-  @media (min-width: 640px) {
-    .periods button { font-size: 0.95rem; }
+  .field input { min-height: 40px; }
+  .reset { min-height: 40px; font-weight: 500; }
+  @media (max-width: 640px) {
+    .periods { display: grid; width: 100%; grid-template-columns: repeat(4, minmax(0, 1fr)); }
+    .periods button { padding: 0 4px; font-size: 13px; }
   }
 </style>

@@ -7,7 +7,12 @@ export function withAlpha(color: string, alpha: number): string {
   return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${alpha})`;
 }
 
-/** Infobulles ECharts aux couleurs du thème (fond de carte, bordure, texte). */
-export function tooltipTheme(c: { card: string; border: string; text: string }) {
-  return { backgroundColor: c.card, borderColor: c.border, textStyle: { color: c.text } };
+/** Infobulles ECharts aux couleurs du thème (fond de carte, bordure, texte, police). */
+export function tooltipTheme(c: { surface: string; border: string; text: string; font?: string }) {
+  return {
+    backgroundColor: c.surface,
+    borderColor: c.border,
+    borderRadius: 10,
+    textStyle: { color: c.text, fontFamily: c.font || undefined, fontSize: 13 },
+  };
 }

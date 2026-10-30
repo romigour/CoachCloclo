@@ -1,0 +1,5 @@
+{"_comment": "synthétique — à remplacer par une capture réelle (plan tâche 10)",
+ "activityId": 20000000003, "activityName": "Semi de Nantes", "startTimeLocal": "2026-10-18 09:00:00",
+ "activityType": {"typeKey": "running", "typeId": 1}, "eventType": {"typeKey": "race", "typeId": 1},
+ "duration": 5400.0, "distance": 21097.0, "elevationGain": 80.0, "averageHR": 165.0, "maxHR": 182.0, "vO2MaxValue": 52.0,
+ "hrTimeInZone_1": 60.0, "hrTimeInZone_2": 300.0, "hrTimeInZone_3": 900.0, "hrTimeInZone_4": 3000.0, "hrTimeInZone_5": 1140.0}

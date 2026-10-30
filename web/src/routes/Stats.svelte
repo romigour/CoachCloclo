@@ -25,7 +25,8 @@
   import Records from "../components/stats/Records.svelte";
   import Races from "../components/stats/Races.svelte";
 
-  let { history, onimport }: { history: HistoryState | null; onimport: () => void } = $props();
+  let { history, onimport, version = 0 }: { history: HistoryState | null; onimport: () => void; version?: number } =
+    $props();
 
   type Metric = "hours" | "km";
   type Saved = { choice: PeriodChoice; sport: SportFilter; metric: Metric };
@@ -81,7 +82,7 @@
 
   $effect(() => save({ choice, sport, metric }));
 
-  onMount(async () => {
+  async function loadAll() {
     api.statsRecords().then(
       (r) => (records = r.records),
       () => (records = []),
@@ -91,6 +92,21 @@
     } catch (e) {
       loadError = e instanceof Error ? e.message : "Impossible de charger les activités";
     }
+  }
+
+  onMount(loadAll);
+
+  // Synchro ou import terminé (la version change) : on recharge activités et records.
+  let loadedVersion: number | null = null;
+  $effect(() => {
+    const v = version;
+    if (loadedVersion === null || v === loadedVersion) {
+      loadedVersion = v;
+      return;
+    }
+    loadedVersion = v;
+    loadError = null;
+    loadAll();
   });
 
   const all = $derived(activities ?? []);

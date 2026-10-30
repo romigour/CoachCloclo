@@ -85,6 +85,17 @@
     location.hash = status?.goal ? "#/plan" : "#/goal";
   }
 
+  async function reimport() {
+    error = null;
+    try {
+      await api.importHistory();
+    } catch (err) {
+      if (!(err instanceof ApiError && err.code === "history_running")) error = err;
+    }
+    await load();
+    onchanged?.();
+  }
+
   async function saveSettings(e: Event) {
     e.preventDefault();
     saved = false;
@@ -143,6 +154,26 @@
     </form>
   {/if}
   {#if loginMessage}<p class="error" role="alert">{loginMessage}</p>{/if}
+</section>
+
+<section class="card">
+  <h2>Historique Garmin</h2>
+  {#if status}
+    <p>
+      {#if status.history.status === "running"}
+        Import en cours… ({status.history.imported} activités)
+      {:else if status.history.status === "error"}
+        <span class="error">Import interrompu : {status.history.error ?? "erreur inconnue"}</span>
+      {:else}
+        {status.history.imported} activités importées
+      {/if}
+    </p>
+    <button type="button" onclick={reimport} disabled={status.history.status === "running" || status.garmin !== "ok"}>
+      Réimporter l'historique
+    </button>
+  {:else}
+    <p>Chargement…</p>
+  {/if}
 </section>
 
 <section class="card">

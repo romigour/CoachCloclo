@@ -2,6 +2,8 @@
 
 Application locale qui génère tes plans d'entraînement running/trail à partir de tes données Garmin, avec Claude. Tout tourne sur ta machine ; tes données ne quittent pas ton ordinateur (hormis les appels à Garmin et à Claude).
 
+La page **Stats** (page d'accueil dès que des activités sont importées) donne une vue d'ensemble de toutes tes activités Garmin : chiffres clés, régularité, volume, progression en course, records et compétitions, avec des filtres par période et par sport. Elle ne demande pas d'objectif : la synchronisation importe tes activités dès que Garmin est connecté, puis l'historique complet est importé en arrière-plan (reprise possible après une interruption, et « Réimporter l'historique » dans les Réglages).
+
 Prochaines idées d'amélioration : voir [ROADMAP.md](ROADMAP.md).
 
 ## Installation (une commande)

@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { api, type Status } from "./lib/api";
+  import { api, ApiError, type Status } from "./lib/api";
   import ErrorBanner from "./components/ErrorBanner.svelte";
   import Setup from "./routes/Setup.svelte";
   import Goal from "./routes/Goal.svelte";
@@ -26,7 +26,10 @@
 
   async function refresh() {
     try {
-      status = await api.status();
+      const next = await api.status();
+      // Fin d'import observée via le sondage : les statistiques doivent être rechargées.
+      if (status?.history.status === "running" && next.history.status === "done") version++;
+      status = next;
       error = null;
     } catch (e) {
       error = e;
@@ -36,14 +39,22 @@
   async function start() {
     await refresh();
     ready = true;
-    if (!autoSyncStarted && !error && status?.garmin === "ok" && status.goal) {
+    if (!autoSyncStarted && !error && status?.garmin === "ok") {
       autoSyncStarted = true;
       autoSync();
     }
     if (!route && !error) {
-      location.hash = status?.garmin === "auth_required" ? "#/setup" : status?.goal ? "#/plan" : "#/goal";
+      location.hash = status?.garmin === "auth_required" ? "#/setup" : status?.has_activities ? "#/stats" : status?.goal ? "#/plan" : "#/goal";
     }
   }
+
+  // Pendant l'import de l'historique, on relit l'état toutes les 5 s ; l'intervalle s'arrête dès que l'état change.
+  const importRunning = $derived(status?.history.status === "running");
+  $effect(() => {
+    if (!importRunning) return;
+    const timer = setInterval(refresh, 5000);
+    return () => clearInterval(timer);
+  });
 
   onMount(() => {
     const onhash = () => {
@@ -81,7 +92,9 @@
       await api.importHistory();
       refresh();
     } catch (e) {
-      failed(e);
+      // Un import est déjà en cours : on se contente de relire l'état.
+      if (e instanceof ApiError && e.code === "history_running") refresh();
+      else failed(e);
     }
   }
 </script>
@@ -100,7 +113,9 @@
   <ErrorBanner {error} onpin={start} />
 
   {#if syncing}
-    <p class="card busy" role="status">Analyse de ta séance par Claude…</p>
+    <p class="card busy" role="status">
+      {status?.goal ? "Analyse de ta séance par Claude…" : "Synchronisation Garmin…"}
+    </p>
   {/if}
 
   {#if status?.pending_proposal_id != null && route !== "proposal"}
@@ -109,7 +124,7 @@
 
   {#if ready && !(error && (error as { code?: string }).code === "pin_required")}
     {#if route === "stats"}
-      <Stats history={status?.history ?? null} onimport={importHistory} />
+      <Stats {version} history={status?.history ?? null} onimport={importHistory} />
     {:else if route === "setup"}
       <Setup onchanged={refresh} />
     {:else if route === "goal"}

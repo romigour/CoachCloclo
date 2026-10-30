@@ -1,5 +1,6 @@
 import type { Family, SessionStatus } from "./api";
 import type { SportFilter } from "./stats/filter";
+import type { DistanceCategory } from "./stats/races";
 
 export const STATUS_LABEL: Record<SessionStatus, string> = {
   todo: "À exporter",
@@ -34,4 +35,12 @@ export const SPORT_LABEL: Record<SportFilter, string> = {
   all: "Tous",
   running: "Course à pied",
   ...FAMILY_LABEL,
+};
+
+/** Catégories de distance des compétitions (progression). */
+export const CATEGORY_LABEL: Record<DistanceCategory, string> = {
+  "5k": "5 km",
+  "10k": "10 km",
+  half: "Semi",
+  marathon: "Marathon",
 };

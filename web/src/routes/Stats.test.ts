@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, within } from "@testing-library/svelte";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
-import type { StatActivity } from "../lib/api";
+import type { PersonalRecord, RaceInfo, StatActivity } from "../lib/api";
 
 vi.mock("../components/stats/EChart.svelte", () => import("../test/EChartStub.svelte"));
 
@@ -21,15 +21,22 @@ const ACTS = [
 ];
 
 let activities: StatActivity[] = ACTS;
+let records: PersonalRecord[] = [];
+/** Réponse des appels d'écriture (PUT / DELETE /api/races/…) ; par défaut 200 {}. */
+let write: (method: string, url: string, body: unknown) => Response = () => new Response("{}", { status: 200 });
 
 beforeEach(() => {
   vi.setSystemTime(new Date(2026, 9, 30));
   activities = ACTS;
+  records = [];
+  write = () => new Response("{}", { status: 200 });
   localStorage.clear();
-  vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+  vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+    const method = init?.method ?? "GET";
+    if (method !== "GET") return write(method, url, init?.body ? JSON.parse(String(init.body)) : null);
     let body: unknown = {};
     if (url === "/api/stats/activities") body = { activities };
-    else if (url === "/api/stats/records") body = { records: [], updated_at: null };
+    else if (url === "/api/stats/records") body = { records, updated_at: null };
     return new Response(JSON.stringify(body), { status: 200 });
   }));
 });
@@ -130,4 +137,106 @@ test("volume shows the empty state when the metric has no data", async () => {
   await fireEvent.click(screen.getByRole("button", { name: "Km" }));
   expect(screen.queryByRole("img", { name: /^Volume par/ })).toBeNull();
   expect(screen.getAllByText("Pas assez de données sur cette période")).toHaveLength(1);
+});
+
+// ---- Course à pied, records, compétitions ----
+
+const NO_RACE: RaceInfo = {
+  name: null, official_time_s: null, overall_rank: null, overall_total: null,
+  category: null, category_rank: null, category_total: null,
+};
+const RACE: StatActivity = { ...act(4, "2026-09-20", "run", 2520, 10000), name: "10 km de Rennes", race: { ...NO_RACE } };
+
+const section = async (title: RegExp) =>
+  within((await screen.findByRole("heading", { name: title })).closest("section") as HTMLElement);
+
+async function openRaceEditor() {
+  activities = [...ACTS, RACE];
+  render(Stats, { history: null, onimport: () => {} });
+  const races = await section(/^Compétitions/);
+  expect(races.getByText("42:00")).toBeInTheDocument(); // temps montre avant saisie
+  await fireEvent.click(races.getByRole("button", { name: /Modifier/ }));
+  return within(screen.getByRole("dialog"));
+}
+
+test("running block hidden when sport is bike", async () => {
+  render(Stats, { history: null, onimport: () => {} });
+  expect(await screen.findByRole("heading", { name: /^Course à pied/ })).toBeInTheDocument();
+  await fireEvent.change(screen.getByLabelText("Sport"), { target: { value: "bike" } });
+  expect(screen.queryByRole("heading", { name: /^Course à pied/ })).toBeNull();
+});
+
+test("records table formats times and links to Garmin", async () => {
+  records = [{ kind: "5k", value: 1234, garmin_activity_id: 987654, date: "2025-04-12" }];
+  render(Stats, { history: null, onimport: () => {} });
+  const rec = await section(/^Records/);
+  expect(await rec.findByText("20:34")).toBeInTheDocument();
+  expect(rec.getByText("4:07 /km")).toBeInTheDocument();
+  const link = rec.getByRole("link", { name: /5 km/ });
+  expect(link.getAttribute("href")).toContain("987654");
+  expect(link).toHaveAttribute("target", "_blank");
+  expect(link).toHaveAttribute("rel", "noopener");
+});
+
+test("records unavailable when the list is empty", async () => {
+  render(Stats, { history: null, onimport: () => {} });
+  expect((await section(/^Records/)).getByText("Records indisponibles")).toBeInTheDocument();
+});
+
+test("race edit saves official time", async () => {
+  const calls: { method: string; url: string; body: unknown }[] = [];
+  write = (method, url, body) => {
+    calls.push({ method, url, body });
+    return new Response(JSON.stringify({ ...RACE, race: { ...NO_RACE, ...(body as object) } }), { status: 200 });
+  };
+  const dialog = await openRaceEditor();
+  await fireEvent.input(dialog.getByLabelText(/Temps officiel/), { target: { value: "0:41:30" } });
+  await fireEvent.click(dialog.getByRole("button", { name: "Enregistrer" }));
+  const races = await section(/^Compétitions/);
+  expect(await races.findByText("41:30")).toBeInTheDocument();
+  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(calls).toHaveLength(1);
+  expect(calls[0].method).toBe("PUT");
+  expect(calls[0].url).toBe("/api/races/4");
+  expect(calls[0].body).toMatchObject({ official_time_s: 2490 });
+});
+
+test("unmarking a race removes it from the list", async () => {
+  const calls: string[] = [];
+  write = (method, url) => {
+    calls.push(`${method} ${url}`);
+    return new Response(JSON.stringify({ status: "ok" }), { status: 200 });
+  };
+  const dialog = await openRaceEditor();
+  await fireEvent.click(dialog.getByRole("button", { name: "Ce n'est pas une compétition" }));
+  const races = await section(/^Compétitions/);
+  await vi.waitFor(() => expect(races.queryByText("10 km de Rennes")).toBeNull());
+  expect(calls).toEqual(["DELETE /api/races/4"]);
+});
+
+test("rank above total shows the API error", async () => {
+  write = () =>
+    new Response(
+      JSON.stringify({ code: "invalid", detail: [{ loc: ["body"], msg: "Value error, Le classement dépasse le nombre de participants" }] }),
+      { status: 422 },
+    );
+  const dialog = await openRaceEditor();
+  await fireEvent.input(dialog.getByLabelText("Classement général"), { target: { value: "500" } });
+  await fireEvent.input(dialog.getByLabelText("Participants"), { target: { value: "100" } });
+  await fireEvent.click(dialog.getByRole("button", { name: "Enregistrer" }));
+  expect(await dialog.findByText(/Le classement dépasse le nombre de participants/)).toBeInTheDocument();
+  expect(screen.getByRole("dialog")).toBeInTheDocument();
+});
+
+test("adding a race lists run and trail activities, searchable", async () => {
+  render(Stats, { history: null, onimport: () => {} });
+  const races = await section(/^Compétitions/);
+  await fireEvent.click(races.getByRole("button", { name: "Ajouter une compétition" }));
+  const picker = within(screen.getByRole("dialog", { name: "Ajouter une compétition" }));
+  expect(picker.getAllByRole("button", { name: /Séance [13]/ })).toHaveLength(2);
+  expect(picker.queryByRole("button", { name: /Séance 2/ })).toBeNull(); // vélo
+  await fireEvent.input(picker.getByLabelText("Rechercher"), { target: { value: "2024" } });
+  expect(picker.getAllByRole("button", { name: /Séance/ })).toHaveLength(1);
+  await fireEvent.click(picker.getByRole("button", { name: /Séance 1/ }));
+  expect(screen.getByRole("dialog", { name: /Compétition/ })).toBeInTheDocument();
 });

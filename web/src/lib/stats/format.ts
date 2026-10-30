@@ -27,3 +27,34 @@ export function fmtMinutes(min: number): string {
 }
 
 export { MONTHS_SHORT };
+
+const pad2 = (n: number) => String(n).padStart(2, "0");
+
+/** Durée en secondes → « 41:30 » sous l'heure, « 1:23:45 » au-delà (arrondi à la seconde). */
+export function fmtClock(seconds: number): string {
+  const total = Math.round(seconds);
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = total % 60;
+  return h > 0 ? `${h}:${pad2(m)}:${pad2(s)}` : `${m}:${pad2(s)}`;
+}
+
+/**
+ * Saisie « h:mm:ss » (ou « m:ss ») → secondes. Vide → null (champ non renseigné) ;
+ * format invalide ou durée nulle → NaN.
+ */
+export function parseClock(text: string): number | null {
+  const t = text.trim();
+  if (!t) return null;
+  const m = /^(?:(\d+):)?(\d{1,2}):(\d{2})$/.exec(t);
+  if (!m) return NaN;
+  const [h, min, s] = [Number(m[1] ?? 0), Number(m[2]), Number(m[3])];
+  if (s > 59 || (m[1] !== undefined && min > 59)) return NaN;
+  const total = h * 3600 + min * 60 + s;
+  return total > 0 ? total : NaN;
+}
+
+/** Allure en secondes par km → « 4:07 /km ». */
+export function fmtPace(secondsPerKm: number): string {
+  return `${fmtClock(secondsPerKm)} /km`;
+}

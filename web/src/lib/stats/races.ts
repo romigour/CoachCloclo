@@ -1,5 +1,6 @@
 /** Compétitions : catégories de distance, classements et progression par distance. */
 import type { Family, StatActivity } from "../api";
+import { fmtDay } from "./format";
 
 export type DistanceCategory = "5k" | "10k" | "half" | "marathon";
 
@@ -73,4 +74,20 @@ export function raceProgression(
       category,
       points: byCat.get(category)!.sort((a, b) => a.date.localeCompare(b.date)),
     }));
+}
+
+const fold = (s: string) => s.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
+
+/** Texte de recherche d'une activité : nom, date ISO, « jj/mm/aaaa » et « 3 mai 2026 ». */
+function searchText(a: StatActivity): string {
+  const [y, m, d] = a.date.split("-");
+  return fold(`${a.name ?? ""} ${a.date} ${d}/${m}/${y} ${fmtDay(a.date)}`);
+}
+
+/** Activités pouvant être marquées comme compétition : course et trail, plus récentes d'abord, filtrées par la recherche. */
+export function raceCandidates(acts: StatActivity[], query: string): StatActivity[] {
+  const q = fold(query.trim());
+  return acts
+    .filter((a) => (a.family === "run" || a.family === "trail") && (!q || searchText(a).includes(q)))
+    .sort((x, y) => (y.start ?? y.date).localeCompare(x.start ?? x.date));
 }

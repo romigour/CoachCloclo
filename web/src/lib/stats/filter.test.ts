@@ -1,6 +1,6 @@
 import { expect, test } from "vitest";
 import type { Family, StatActivity } from "../api";
-import { addDays, daysBetween, filterActivities, mondayOf, previousPeriod, resolvePeriod, sportOptions } from "./filter";
+import { addDays, daysBetween, filterActivities, includesRunning, mondayOf, previousPeriod, resolvePeriod, sportOptions } from "./filter";
 
 function act(date: string, family: Family, id = 1): StatActivity {
   return {
@@ -54,4 +54,9 @@ test("utilitaires ISO", () => {
   expect(addDays("2026-02-28", 1)).toBe("2026-03-01");
   expect(daysBetween("2026-10-26", "2026-11-01")).toBe(6);
   expect(daysBetween("2026-03-28", "2026-03-30")).toBe(2);
+});
+
+test("includesRunning : le filtre sport contient-il la course ou le trail ?", () => {
+  expect((["all", "running", "run", "trail"] as const).every(includesRunning)).toBe(true);
+  expect((["bike", "swim", "strength", "walk", "other"] as const).some(includesRunning)).toBe(false);
 });

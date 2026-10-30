@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { RaceInfo, StatActivity } from "../api";
-import { distanceCategory, raceProgression, raceRows, topPercent } from "./races";
+import { distanceCategory, raceCandidates, raceProgression, raceRows, topPercent } from "./races";
 
 function race(over: Partial<RaceInfo> = {}): RaceInfo {
   return {
@@ -67,5 +67,26 @@ describe("raceProgression", () => {
     expect(r).toEqual([{ category: "10k", points: [
       { date: "2026-01-01", timeS: 3000 }, { date: "2026-03-01", timeS: 2900 },
     ] }]);
+  });
+});
+
+describe("raceCandidates", () => {
+  const acts = [
+    act("2026-03-01", { id: 1, name: "Footing", race: null }),
+    act("2026-05-10", { id: 2, name: "Trail des Monts", family: "trail", race: null }),
+    act("2026-04-02", { id: 3, name: "Sortie vélo", family: "bike", race: null }),
+    act("2025-11-11", { id: 4, name: null, race: null }),
+  ];
+  it("course et trail, plus récentes d'abord", () => {
+    expect(raceCandidates(acts, "").map((a) => a.id)).toEqual([2, 1, 4]);
+  });
+  it("recherche sur le nom, sans accents ni casse", () => {
+    expect(raceCandidates(acts, "monts").map((a) => a.id)).toEqual([2]);
+    expect(raceCandidates(acts, "FOOT").map((a) => a.id)).toEqual([1]);
+  });
+  it("recherche sur la date ISO ou française", () => {
+    expect(raceCandidates(acts, "2025").map((a) => a.id)).toEqual([4]);
+    expect(raceCandidates(acts, "11/11/2025").map((a) => a.id)).toEqual([4]);
+    expect(raceCandidates(acts, "mai").map((a) => a.id)).toEqual([2]);
   });
 });

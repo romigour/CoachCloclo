@@ -87,3 +87,8 @@ export function sportOptions(acts: StatActivity[]): SportFilter[] {
   for (const f of FAMILIES) if (present.has(f)) out.push(f);
   return out;
 }
+
+/** Le filtre sport inclut-il la course sur route ou le trail ? */
+export function includesRunning(sport: SportFilter): boolean {
+  return sport === "all" || sport === "running" || sport === "run" || sport === "trail";
+}

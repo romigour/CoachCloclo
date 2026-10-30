@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { StatActivity } from "../api";
 import {
   MAX_DPLUS_PER_KM, MIN_DURATION_S, MIN_TREND_POINTS, MIN_ZONE_COVERAGE,
-  aerobicEfficiency, longestRunByMonth, trailSummary, vo2maxSeries, zoneDistribution,
+  aerobicEfficiency, easyShare, longestRunByMonth, trailSummary, trendLine, vo2maxSeries, zoneDistribution, zoneShares,
 } from "./running";
 
 function act(date: string, over: Partial<StatActivity> = {}): StatActivity {
@@ -116,5 +116,40 @@ describe("trailSummary", () => {
   it("ratio 0 si aucune distance", () => {
     expect(trailSummary([act("2026-01-01", { family: "trail", d_plus_m: 300, distance_m: null })]))
       .toEqual({ dPlusM: 300, dPlusPerKm: 0 });
+  });
+});
+
+describe("easyShare", () => {
+  it("part des zones 1-2", () => {
+    expect(easyShare([600, 1200, 300, 200, 100])).toBeCloseTo(0.75);
+  });
+  it("null si aucun temps", () => {
+    expect(easyShare([0, 0, 0, 0, 0])).toBeNull();
+  });
+});
+
+describe("trendLine", () => {
+  const points = [
+    { date: "2026-01-01", value: 1.5 },
+    { date: "2026-01-11", value: 1.6 },
+  ];
+  it("extrémités de la droite et variation relative", () => {
+    const t = trendLine(points, { slope: 0.01, intercept: 1.5 })!;
+    expect(t.start).toEqual({ date: "2026-01-01", value: 1.5 });
+    expect(t.end.date).toBe("2026-01-11");
+    expect(t.end.value).toBeCloseTo(1.6);
+    expect(t.changePct).toBeCloseTo(6.667, 2);
+  });
+  it("null sans tendance", () => {
+    expect(trendLine(points, null)).toBeNull();
+  });
+});
+
+describe("zoneShares", () => {
+  it("part de chaque zone", () => {
+    expect(zoneShares([600, 1200, 300, 200, 100])).toEqual([0.25, 0.5, 0.125, 200 / 2400, 100 / 2400]);
+  });
+  it("zéros si aucun temps", () => {
+    expect(zoneShares([0, 0, 0, 0, 0])).toEqual([0, 0, 0, 0, 0]);
   });
 });

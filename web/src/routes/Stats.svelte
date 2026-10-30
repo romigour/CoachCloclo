@@ -3,6 +3,7 @@
   import { api, type HistoryState, type PersonalRecord, type StatActivity } from "../lib/api";
   import {
     filterActivities,
+    includesRunning,
     previousPeriod,
     resolvePeriod,
     sportOptions,
@@ -13,12 +14,16 @@
   import { computeKpis } from "../lib/stats/kpis";
   import { dailyMinutes, weekStats } from "../lib/stats/consistency";
   import { bucketFor, sportShare, volumeSeries } from "../lib/stats/volume";
+  import { raceProgression, raceRows } from "../lib/stats/races";
   import { fmtDay } from "../lib/stats/format";
   import Filters from "../components/stats/Filters.svelte";
   import KpiRow from "../components/stats/KpiRow.svelte";
   import ConsistencyCalendar from "../components/stats/ConsistencyCalendar.svelte";
   import VolumeChart from "../components/stats/VolumeChart.svelte";
   import SportDonut from "../components/stats/SportDonut.svelte";
+  import RunningProgress from "../components/stats/RunningProgress.svelte";
+  import Records from "../components/stats/Records.svelte";
+  import Races from "../components/stats/Races.svelte";
 
   let { history, onimport }: { history: HistoryState | null; onimport: () => void } = $props();
 
@@ -69,7 +74,7 @@
   let sport = $state<SportFilter>(saved.sport);
   let metric = $state<Metric>(saved.metric);
   let activities = $state<StatActivity[] | null>(null);
-  // Records : chargés ici, affichés par le bloc Records (tâche suivante).
+  // Records absolus (non filtrés) : chargement indépendant, un échec affiche « Records indisponibles ».
   let records = $state<PersonalRecord[]>([]);
   let loadError = $state<string | null>(null);
   const today = localToday();
@@ -101,6 +106,9 @@
   const volume = $derived(volumeSeries(current, period, metric));
   const share = $derived(sportShare(current));
   const options = $derived(sportOptions(all));
+  const showRunning = $derived(includesRunning(sport));
+  const races = $derived(raceRows(current));
+  const progression = $derived(raceProgression(current));
   const years = $derived([...new Set(all.map((a) => Number(a.date.slice(0, 4))))].sort((a, b) => b - a));
 
   const periodText = $derived(
@@ -114,6 +122,11 @@
 
   function pick(p: Period) {
     choice = { kind: "custom", from: p.from, to: p.to };
+  }
+
+  /** Compétition enregistrée ou dé-marquée : remplace la ligne sans recharger la liste. */
+  function replaceActivity(row: StatActivity) {
+    if (activities) activities = activities.map((a) => (a.id === row.id ? row : a));
   }
 
   function reset() {
@@ -162,6 +175,23 @@
       <section class="card" aria-labelledby="share-title">
         <h2 id="share-title">Répartition <small>en heures</small></h2>
         <SportDonut {share} />
+      </section>
+
+      {#if showRunning}
+        <section class="card span" aria-labelledby="run-title">
+          <h2 id="run-title">Course à pied <small>est-ce que je progresse ?</small></h2>
+          <RunningProgress acts={current} />
+        </section>
+      {/if}
+
+      <section class="card" aria-labelledby="races-title">
+        <h2 id="races-title">Compétitions <small>mes courses officielles</small></h2>
+        <Races acts={all} rows={races} {progression} onchanged={replaceActivity} />
+      </section>
+
+      <section class="card" aria-labelledby="rec-title">
+        <h2 id="rec-title">Records <small>mes meilleurs temps</small></h2>
+        <Records {records} />
       </section>
     </div>
   {/if}

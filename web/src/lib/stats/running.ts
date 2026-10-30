@@ -86,3 +86,29 @@ export function trailSummary(acts: StatActivity[]): { dPlusM: number; dPlusPerKm
   const dPlusForRatio = withDist.reduce((s, a) => s + (a.d_plus_m ?? 0), 0);
   return { dPlusM, dPlusPerKm: km > 0 ? dPlusForRatio / km : 0 };
 }
+
+/** Part du temps passé en zones 1-2 (0..1) ; null si aucun temps. */
+export function easyShare(zones: number[]): number | null {
+  const total = zones.reduce((s, x) => s + x, 0);
+  return total > 0 ? (zones[0] + zones[1]) / total : null;
+}
+
+/** Extrémités de la droite de tendance (premier → dernier point) et variation relative en %. */
+export function trendLine(
+  points: { date: string; value: number }[],
+  trend: { slope: number; intercept: number } | null,
+): { start: { date: string; value: number }; end: { date: string; value: number }; changePct: number } | null {
+  if (!trend || points.length < 2) return null;
+  const first = points[0].date;
+  const last = points[points.length - 1].date;
+  const at = (date: string) => trend.intercept + trend.slope * daysBetween(first, date);
+  const start = { date: first, value: at(first) };
+  const end = { date: last, value: at(last) };
+  return { start, end, changePct: start.value !== 0 ? ((end.value - start.value) / start.value) * 100 : 0 };
+}
+
+/** Part de chaque zone dans le temps total (0..1) ; zéros si aucun temps. */
+export function zoneShares(zones: number[]): number[] {
+  const total = zones.reduce((s, x) => s + x, 0);
+  return zones.map((s) => (total > 0 ? s / total : 0));
+}

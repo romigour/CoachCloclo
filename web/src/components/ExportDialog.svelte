@@ -66,8 +66,9 @@
 </script>
 
 <div class="modal-backdrop">
-  <div class="modal card" role="dialog" aria-label={mode === "move" ? "Déplacer la séance" : "Exporter la séance"}>
-    <h3>{mode === "move" ? "Déplacer" : "Exporter"} « {session.title} »</h3>
+  <div class="modal card" role="dialog" aria-label={mode === "move" ? "Changer le jour de la séance" : "Envoyer la séance sur la montre"}>
+    <h2>{mode === "move" ? "Changer de jour" : "Envoyer sur la montre"}</h2>
+    <p class="meta">{session.title}</p>
     {#if days.length}
       <label>
         Jour
@@ -83,8 +84,8 @@
     {#each warnings as w}
       <p class="warning" role="status">{w}</p>
     {/each}
-    <div class="row">
-      <button class="primary" onclick={submit} disabled={busy || !days.length}>{mode === "move" ? "Déplacer" : "Exporter"}</button>
+    <div class="row end">
+      <button class="primary" onclick={submit} disabled={busy || !days.length}>{mode === "move" ? "Déplacer" : "Envoyer"}</button>
       <button onclick={() => onclose?.()}>Annuler</button>
     </div>
   </div>

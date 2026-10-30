@@ -42,7 +42,7 @@ test("auto-sync runs once per load, shows the Claude message, and survives navig
   await screen.findByText("Objectif", { selector: "h1" });
   location.hash = "#/plan";
   window.dispatchEvent(new HashChangeEvent("hashchange"));
-  await screen.findByText("Plan", { selector: "h1" });
+  await screen.findByText("Programme", { selector: "h1" });
   await new Promise((r) => setTimeout(r, 50));
   expect(syncs()).toBe(1);
 });

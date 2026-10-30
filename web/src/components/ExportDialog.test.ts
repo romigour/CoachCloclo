@@ -25,7 +25,7 @@ test("ExportDialog shows warning but keeps button enabled", async () => {
   mockApi({ "export-check": { warnings: ["Séance dure à moins de 48 h"] } });
   render(ExportDialog, { session, weekMonday: "2026-11-09", today: "2026-11-04" });
   expect(await screen.findByText(/48 h/)).toBeVisible();
-  expect(screen.getByRole("button", { name: "Exporter" })).toBeEnabled();
+  expect(screen.getByRole("button", { name: "Envoyer" })).toBeEnabled();
 });
 
 test("ExportDialog offers only the 7 days of the week, suggested day preselected", async () => {
@@ -45,7 +45,7 @@ test("ExportDialog re-checks on change then exports with CSRF header", async () 
   render(ExportDialog, { session, weekMonday: "2026-11-09", today: "2026-11-04", ondone });
   await fireEvent.change(screen.getByRole("combobox"), { target: { value: "2026-11-14" } });
   await waitFor(() => expect(calls.some((c) => c.url.includes("date=2026-11-14"))).toBe(true));
-  await fireEvent.click(screen.getByRole("button", { name: "Exporter" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Envoyer" }));
   await waitFor(() => expect(ondone).toHaveBeenCalled());
   const post = calls.find((c) => c.method === "POST")!;
   expect(post.url).toBe("/api/sessions/7/export");

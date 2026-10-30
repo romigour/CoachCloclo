@@ -103,10 +103,17 @@
   }
 </script>
 
-<h1>Configuration</h1>
+<header class="page-head">
+  <div>
+    <p class="eyebrow">Connexions Garmin et Claude</p>
+    <h1>Réglages</h1>
+  </div>
+</header>
 <ErrorBanner {error} onpin={load} />
 
-<section class="card">
+<div class="settings-grid">
+
+<section class="card stack">
   <h2>État</h2>
   {#if status}
     <ul class="plain">
@@ -119,18 +126,18 @@
   {/if}
 </section>
 
-<section class="card">
+<section class="card stack">
   <h2>Connexion Garmin</h2>
   {#if loginId}
-    <form onsubmit={sendMfa}>
+    <form class="stack" onsubmit={sendMfa}>
       <label>
         Code de vérification (MFA)
         <input bind:value={code} inputmode="numeric" autocomplete="one-time-code" required />
       </label>
-      <button class="primary" disabled={busy}>Valider le code</button>
+      <div class="row"><button class="primary" disabled={busy}>Valider le code</button></div>
     </form>
   {:else}
-    <form onsubmit={login}>
+    <form class="stack" onsubmit={login}>
       <label>
         E-mail Garmin
         <input type="email" bind:value={email} autocomplete="username" required />
@@ -139,15 +146,15 @@
         Mot de passe
         <input type="password" bind:value={password} autocomplete="current-password" required />
       </label>
-      <button class="primary" disabled={busy}>Se connecter</button>
+      <div class="row"><button class="primary" disabled={busy}>Se connecter</button></div>
     </form>
   {/if}
   {#if loginMessage}<p class="error" role="alert">{loginMessage}</p>{/if}
 </section>
 
-<section class="card">
+<section class="card stack">
   <h2>Mode Claude</h2>
-  <form onsubmit={saveSettings}>
+  <form class="stack" onsubmit={saveSettings}>
     <label class="inline"><input type="radio" bind:group={mode} value="cli" /> Claude Code (CLI)</label>
     <label class="inline"><input type="radio" bind:group={mode} value="api" /> Clé API Anthropic</label>
     {#if mode === "api"}
@@ -160,7 +167,10 @@
         <input bind:value={model} />
       </label>
     {/if}
-    <button class="primary">Enregistrer</button>
-    {#if saved}<span class="ok">Enregistré</span>{/if}
+    <div class="row">
+      <button class="primary">Enregistrer</button>
+      {#if saved}<span class="ok">Enregistré</span>{/if}
+    </div>
   </form>
 </section>
+</div>

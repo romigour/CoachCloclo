@@ -1,7 +1,7 @@
 import type { SessionStatus } from "./api";
 
 export const STATUS_LABEL: Record<SessionStatus, string> = {
-  todo: "À exporter",
+  todo: "À envoyer",
   exported: "Dans Garmin",
   done: "Réalisée",
   missed: "Manquée",

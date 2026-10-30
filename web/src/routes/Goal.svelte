@@ -1,10 +1,20 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { api, type Goal, type Plan } from "../lib/api";
+  import { formatDate, todayIso } from "../lib/dates";
+  import { daysUntil } from "../lib/week";
   import ErrorBanner from "../components/ErrorBanner.svelte";
-  import WeekView from "../components/WeekView.svelte";
+  import Calendar from "../components/Calendar.svelte";
+  import SessionCard from "../components/SessionCard.svelte";
+  import Icon from "../components/Icon.svelte";
 
-  let { onchanged }: { onchanged?: () => void } = $props();
+  let { onchanged, today = todayIso() }: { onchanged?: () => void; today?: string } = $props();
+
+  const PRESETS = [
+    { km: 10, label: "10 km" },
+    { km: 21.1, label: "Semi · 21,1 km" },
+    { km: 42.2, label: "Marathon · 42,2 km" },
+  ];
 
   let type = $state<"route" | "trail">("route");
   let distance = $state(21.1);
@@ -14,10 +24,21 @@
   let gpx = $state<File | null>(null);
 
   let goal = $state<Goal | null>(null);
+  let active = $state<Goal | null>(null);
   let plan = $state<Plan | null>(null);
   let summary = $state("");
   let busy = $state("");
   let error = $state<unknown>(null);
+  let selected = $state<number | null>(null);
+
+  const weeksLeft = $derived(raceDate && raceDate > today ? Math.ceil(daysUntil(today, raceDate) / 7) : null);
+  const selection = $derived.by(() => {
+    for (const w of plan?.weeks ?? []) {
+      const s = w.sessions.find((x) => x.id === selected);
+      if (s) return { session: s, week: w };
+    }
+    return null;
+  });
 
   // reprend un brouillon existant (objectif actif non validé)
   onMount(async () => {
@@ -26,6 +47,8 @@
       if (p.goal && !p.goal.plan_accepted && p.weeks.length) {
         goal = p.goal;
         plan = p;
+      } else if (p.goal?.plan_accepted) {
+        active = p.goal;
       }
     } catch (e) {
       error = e;
@@ -79,7 +102,7 @@
     try {
       await api.accept(goal.id);
       onchanged?.();
-      location.hash = "#/plan";
+      location.hash = "#/today";
     } catch (err) {
       error = err;
     } finally {
@@ -90,9 +113,18 @@
   function pickFile(e: Event) {
     gpx = (e.target as HTMLInputElement).files?.[0] ?? null;
   }
+
+  const goalLabel = (g: Goal) =>
+    `${g.distance_km.toLocaleString("fr-FR")} km ${g.type === "trail" ? `trail · ${g.d_plus_m} m D+` : "route"}`;
 </script>
 
-<h1>Objectif</h1>
+<header class="page-head">
+  <div>
+    <p class="eyebrow">Claude construit ton plan à partir de tes données Garmin</p>
+    <h1>{plan && goal ? "Brouillon du plan" : "Objectif"}</h1>
+  </div>
+</header>
+
 <ErrorBanner {error} />
 
 {#if busy}
@@ -100,49 +132,124 @@
 {/if}
 
 {#if plan && goal}
-  <section class="card">
-    <h2>Brouillon du plan</h2>
-    <p class="meta">{goal.distance_km} km{goal.type === "trail" ? ` · ${goal.d_plus_m} m D+` : ""} · {plan.weeks.length} semaines</p>
+  <section class="card stack">
+    <p class="meta">{goalLabel(goal)} · course le {formatDate(goal.race_date)} · {plan.weeks.length} semaines</p>
     {#if summary}<p>{summary}</p>{/if}
     <div class="row">
       <button class="primary" onclick={accept} disabled={!!busy}>Valider le plan</button>
       <button onclick={regenerate} disabled={!!busy}>Régénérer</button>
     </div>
   </section>
-  {#each plan.weeks as week (week.week_index)}
-    <WeekView {week} readonly />
-  {/each}
-{:else}
-  <form class="card" onsubmit={submit}>
-    <label>
-      Type de course
-      <select bind:value={type}>
-        <option value="route">Route</option>
-        <option value="trail">Trail</option>
-      </select>
-    </label>
-    <label>
-      Distance (km)
-      <input type="number" step="0.1" min="1" bind:value={distance} required />
-    </label>
-    {#if type === "trail"}
-      <label>
-        Dénivelé positif (m)
-        <input type="number" min="0" step="10" bind:value={dplus} required />
-      </label>
+  <div class="cols">
+    <div class="col-main" style:flex-grow="3">
+      <Calendar weeks={plan.weeks} {today} {selected} readonly onselect={(id) => (selected = id)} />
+    </div>
+    {#if selection}
+      <aside class="col-side card" aria-label="Séance sélectionnée">
+        <div class="row spread">
+          <span class="meta">Semaine {selection.week.week_index}</span>
+          <button class="icon" aria-label="Fermer le détail" onclick={() => (selected = null)}><Icon name="close" size={16} /></button>
+        </div>
+        <SessionCard session={selection.session} weekMonday={selection.week.week_monday} readonly />
+      </aside>
     {/if}
-    <label>
-      Date de la course
-      <input type="date" bind:value={raceDate} required />
-    </label>
-    <label>
-      Séances par semaine
-      <input type="number" min="2" max="7" bind:value={perWeek} required />
-    </label>
-    <label>
-      Tracé GPX (facultatif)
-      <input type="file" accept=".gpx,application/gpx+xml" onchange={pickFile} />
-    </label>
-    <button class="primary" disabled={!!busy}>Générer le plan</button>
-  </form>
+  </div>
+{:else}
+  <div class="cols">
+    <form class="col-main card lg stack" style:gap="26px" onsubmit={submit}>
+      <h2>Nouvel objectif</h2>
+
+      <fieldset>
+        <legend>Type de course</legend>
+        <div class="choices">
+          <label class="choice">
+            <input type="radio" name="type" value="route" bind:group={type} />
+            <span><strong>Route</strong>10 km, semi, marathon</span>
+          </label>
+          <label class="choice">
+            <input type="radio" name="type" value="trail" bind:group={type} />
+            <span><strong>Trail</strong>Avec dénivelé et tracé GPX</span>
+          </label>
+        </div>
+      </fieldset>
+
+      <div class="stack" style:gap="10px">
+        {#if type === "route"}
+          <div class="chips" role="group" aria-label="Distances courantes">
+            {#each PRESETS as p (p.km)}
+              <button type="button" aria-pressed={distance === p.km} onclick={() => (distance = p.km)}>{p.label}</button>
+            {/each}
+          </div>
+        {/if}
+        <div class="form-grid">
+          <label>
+            Distance (km)
+            <input type="number" step="0.1" min="1" bind:value={distance} required />
+          </label>
+          {#if type === "trail"}
+            <label>
+              Dénivelé positif (m)
+              <input type="number" min="0" step="10" bind:value={dplus} required />
+            </label>
+          {/if}
+          <label>
+            Date de la course
+            <input type="date" min={today} bind:value={raceDate} required />
+            {#if weeksLeft}<span class="hint">Dans {weeksLeft} semaines environ</span>{/if}
+          </label>
+        </div>
+      </div>
+
+      <fieldset>
+        <legend>Séances par semaine</legend>
+        <div class="segmented">
+          {#each [2, 3, 4, 5, 6, 7] as n (n)}
+            <label>
+              <input type="radio" name="per-week" value={n} bind:group={perWeek} />
+              <span>{n}</span>
+            </label>
+          {/each}
+        </div>
+      </fieldset>
+
+      <label class="drop">
+        <Icon name="upload" size={22} />
+        <span>
+          <strong>Tracé GPX {gpx ? `· ${gpx.name}` : ""}</strong>
+          Facultatif · clique pour choisir le fichier
+        </span>
+        <input type="file" accept=".gpx,application/gpx+xml" onchange={pickFile} />
+      </label>
+
+      <div class="actions row end">
+        <button class="primary" disabled={!!busy}>Générer le plan avec Claude</button>
+      </div>
+    </form>
+
+    <aside class="col-side">
+      {#if active}
+        <section class="card stack">
+          <h3>Objectif en cours</h3>
+          <p>{goalLabel(active)} · course le {formatDate(active.race_date)}</p>
+          <p class="meta">Un nouvel objectif remplacera ce plan.</p>
+        </section>
+      {/if}
+      <section class="card stack">
+        <h3>Aperçu</h3>
+        {#if weeksLeft}
+          <p class="stat"><strong>{weeksLeft} semaines</strong><span>de préparation, {perWeek} séances par semaine</span></p>
+        {:else}
+          <p class="empty">Choisis la date de la course pour voir la durée du plan.</p>
+        {/if}
+      </section>
+      <section class="tip stack" style:gap="8px">
+        <strong>Données utilisées par Claude</strong>
+        <ul class="plain stack" style:gap="4px">
+          <li>Tes activités Garmin des 8 dernières semaines</li>
+          <li>Tes zones cardiaques, ton seuil et ta VO2max</li>
+          <li>Tes prédictions de temps de course</li>
+        </ul>
+      </section>
+    </aside>
+  </div>
 {/if}

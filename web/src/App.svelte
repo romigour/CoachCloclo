@@ -2,12 +2,14 @@
   import { onMount } from "svelte";
   import { api, type Status } from "./lib/api";
   import ErrorBanner from "./components/ErrorBanner.svelte";
+  import Sidebar from "./components/Sidebar.svelte";
   import Setup from "./routes/Setup.svelte";
   import Goal from "./routes/Goal.svelte";
+  import Today from "./routes/Today.svelte";
   import Plan from "./routes/Plan.svelte";
   import Proposal from "./routes/Proposal.svelte";
 
-  const ROUTES = ["setup", "goal", "plan", "proposal"] as const;
+  const ROUTES = ["today", "plan", "goal", "setup", "proposal"] as const;
   type Route = (typeof ROUTES)[number];
 
   let route = $state<Route | null>(parse());
@@ -16,6 +18,7 @@
   let version = $state(0);
   let ready = $state(false);
   let syncing = $state(false);
+  let lastSync = $state<Date | null>(null);
   let autoSyncStarted = false; // une seule synchro automatique par chargement de l'app
 
   function parse(): Route | null {
@@ -37,10 +40,11 @@
     ready = true;
     if (!autoSyncStarted && !error && status?.garmin === "ok" && status.goal) {
       autoSyncStarted = true;
-      autoSync();
+      sync();
     }
     if (!route && !error) {
-      location.hash = status?.garmin === "auth_required" ? "#/setup" : status?.goal ? "#/plan" : "#/goal";
+      location.hash =
+        status?.garmin === "auth_required" ? "#/setup" : status?.goal?.plan_accepted ? "#/today" : "#/goal";
     }
   }
 
@@ -54,11 +58,14 @@
     return () => window.removeEventListener("hashchange", onhash);
   });
 
-  async function autoSync() {
+  async function sync() {
+    if (syncing) return;
     syncing = true;
     try {
       await api.sync();
-      synced();
+      lastSync = new Date();
+      version++;
+      refresh();
     } catch (e) {
       failed(e);
     } finally {
@@ -66,45 +73,33 @@
     }
   }
 
-  function synced() {
-    version++;
-    refresh();
-  }
-
   function failed(e: unknown) {
     error = e;
   }
 </script>
 
-<header class="topbar">
-  <strong>CoachCloclo</strong>
-  <nav>
-    <a href="#/plan" class:active={route === "plan"}>Plan</a>
-    <a href="#/goal" class:active={route === "goal"}>Objectif</a>
-    <a href="#/setup" class:active={route === "setup"}>Réglages</a>
-  </nav>
-</header>
+<div class="shell">
+  <Sidebar {route} {status} {syncing} {lastSync} onsync={sync} />
 
-<main>
-  <ErrorBanner {error} onpin={start} />
+  <main class="content">
+    <ErrorBanner {error} onpin={start} />
 
-  {#if syncing}
-    <p class="card busy" role="status">Analyse de ta séance par Claude…</p>
-  {/if}
-
-  {#if status?.pending_proposal_id != null && route !== "proposal"}
-    <a class="banner info" href="#/proposal">Claude propose des changements à ton plan — voir la proposition</a>
-  {/if}
-
-  {#if ready && !(error && (error as { code?: string }).code === "pin_required")}
-    {#if route === "setup"}
-      <Setup onchanged={refresh} />
-    {:else if route === "goal"}
-      <Goal onchanged={refresh} />
-    {:else if route === "plan"}
-      <Plan {version} {syncing} onsynced={synced} onerror={failed} />
-    {:else if route === "proposal"}
-      <Proposal onchanged={refresh} />
+    {#if syncing}
+      <p class="card busy" role="status">Analyse de ta séance par Claude…</p>
     {/if}
-  {/if}
-</main>
+
+    {#if ready && !(error && (error as { code?: string }).code === "pin_required")}
+      {#if route === "setup"}
+        <Setup onchanged={refresh} />
+      {:else if route === "goal"}
+        <Goal onchanged={refresh} />
+      {:else if route === "today"}
+        <Today {version} {status} onerror={failed} />
+      {:else if route === "plan"}
+        <Plan {version} onerror={failed} />
+      {:else if route === "proposal"}
+        <Proposal onchanged={refresh} />
+      {/if}
+    {/if}
+  </main>
+</div>

@@ -3,13 +3,16 @@
   import { formatActivity } from "../lib/activity";
   import { formatDay } from "../lib/dates";
   import { STATUS_LABEL, TYPE_LABEL } from "../lib/labels";
+  import { formatDuration, peakLevel, stepLevel, totalSeconds } from "../lib/profile";
   import { formatSteps } from "../lib/steps";
   import ExportDialog from "./ExportDialog.svelte";
+  import IntensityProfile from "./IntensityProfile.svelte";
 
   let {
     session,
     weekMonday,
     readonly = false,
+    large = false,
     activities = [],
     onchanged,
     onerror,
@@ -17,6 +20,7 @@
     session: Session;
     weekMonday: string;
     readonly?: boolean;
+    large?: boolean;
     activities?: Activity[];
     onchanged?: () => void;
     onerror?: (e: unknown) => void;
@@ -27,8 +31,9 @@
   let correcting = $state(false);
 
   const matched = $derived(activities.find((a) => a.session_id === session.id) ?? null);
-
   const lines = $derived(formatSteps(session.steps));
+  const levels = $derived(session.steps.map((item) => ("repeat" in item ? peakLevel([item]) : stepLevel(item))));
+  const total = $derived(totalSeconds(session.steps));
 
   async function act(fn: () => Promise<unknown>) {
     busy = true;
@@ -53,54 +58,84 @@
   }
 </script>
 
-<article class="card session">
-  <header>
-    <h3>{session.title}</h3>
+<article class="session stack">
+  <div class="row spread">
+    <span class="chip">{TYPE_LABEL[session.type] ?? session.type}</span>
     {#if !readonly}
-      <span class="badge {session.status}">{STATUS_LABEL[session.status]}</span>
+      <span class="pill {session.status}">{STATUS_LABEL[session.status]}</span>
     {/if}
-  </header>
-  <p class="meta">
-    {TYPE_LABEL[session.type] ?? session.type} · conseillé : {session.suggested_day}
-    {#if session.scheduled_date} · prévu le {formatDay(session.scheduled_date)}{/if}
-  </p>
-  {#if session.chaining_note}<p class="note">{session.chaining_note}</p>{/if}
-  <p>{session.description}</p>
-  <ul class="steps">
-    {#each lines as line}<li>{line}</li>{/each}
-  </ul>
+  </div>
+
+  <div class="stack tight">
+    <h2 class="session-title" class:lg={large}>{session.title}</h2>
+    <div class="stats">
+      {#if total}<div class="stat"><strong>{formatDuration(total)}</strong><span>Durée</span></div>{/if}
+      <div class="stat">
+        <strong>{session.scheduled_date ? formatDay(session.scheduled_date) : session.suggested_day}</strong>
+        <span>{session.scheduled_date ? "Prévue le" : "Jour conseillé"}</span>
+      </div>
+    </div>
+  </div>
+
+  <IntensityProfile steps={session.steps} small={!large} />
+
+  {#if session.description}<p>{session.description}</p>{/if}
+
+  {#if lines.length}
+    <ol class="steps">
+      {#each lines as line, i (i)}
+        <li><span class="bar lv{levels[i]}"></span><span>{line}</span></li>
+      {/each}
+    </ol>
+  {/if}
+
+  {#if session.chaining_note}<p class="tip">{session.chaining_note}</p>{/if}
+
   {#if !readonly && (matched || session.status === "done")}
-    <p class="matched">
-      Activité : {matched ? formatActivity(matched) : "rattachée"}
-      <button class="link" onclick={() => (correcting = !correcting)} disabled={busy}>Corriger</button>
-    </p>
+    <div class="row spread">
+      <span class="matched">
+        <span class="meta">Activité :</span>
+        {matched ? formatActivity(matched) : "rattachée"}
+      </span>
+      <button class="small" onclick={() => (correcting = !correcting)} disabled={busy} aria-expanded={correcting}>
+        Corriger
+      </button>
+    </div>
     {#if correcting}
       <div class="row correct">
         {#each activities as a (a.id)}
-          <button class:primary={a.session_id === session.id} onclick={() => rematch(a.id, session.id)} disabled={busy}>
+          <button
+            class="small"
+            class:primary={a.session_id === session.id}
+            onclick={() => rematch(a.id, session.id)}
+            disabled={busy}
+          >
             {formatActivity(a)}
           </button>
         {/each}
         {#if matched}
-          <button onclick={() => rematch(matched.id, null)} disabled={busy}>Aucune</button>
+          <button class="small" onclick={() => rematch(matched.id, null)} disabled={busy}>Aucune</button>
         {/if}
         {#if !activities.length}<span class="meta">Aucune activité cette semaine</span>{/if}
       </div>
     {/if}
   {/if}
-  {#if session.sync_error}<p class="error">{session.sync_error}</p>{/if}
 
-  {#if !readonly}
-    <div class="row">
+  {#if session.sync_error}<p class="banner error">{session.sync_error}</p>{/if}
+
+  {#if !readonly && session.status !== "done" && session.status !== "missed"}
+    <div class="actions">
       {#if session.status === "todo"}
-        <button class="primary" onclick={() => (dialog = "export")} disabled={busy}>Exporter</button>
-      {/if}
-      {#if session.status === "exported" || session.status === "sync_error"}
-        <button onclick={() => (dialog = "move")} disabled={busy}>Déplacer</button>
-        <button onclick={() => act(() => api.unschedule(session.id))} disabled={busy}>Retirer</button>
+        <button class="primary" onclick={() => (dialog = "export")} disabled={busy}>Envoyer sur la montre</button>
       {/if}
       {#if session.status === "sync_error"}
         <button class="primary" onclick={() => act(() => api.retry(session.id))} disabled={busy}>Réessayer</button>
+      {/if}
+      {#if session.status === "exported" || session.status === "sync_error"}
+        <button onclick={() => (dialog = "move")} disabled={busy}>Changer de jour</button>
+        <button class="danger" onclick={() => act(() => api.unschedule(session.id))} disabled={busy}>
+          Retirer de Garmin
+        </button>
       {/if}
     </div>
   {/if}

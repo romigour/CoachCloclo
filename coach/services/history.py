@@ -1,5 +1,7 @@
 """Import de tout l'historique Garmin en arrière-plan, avec état persistant."""
 
+import os
+import tempfile
 import threading
 import time
 from collections.abc import Callable
@@ -44,7 +46,19 @@ def load_state() -> HistoryState:
 
 
 def save_state(s: HistoryState) -> None:
-    _state_path().write_text(s.model_dump_json(), encoding="utf-8")
+    """Écriture atomique : fichier temporaire voisin puis remplacement, pour ne jamais lire un JSON tronqué."""
+    path = _state_path()
+    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix="history-", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(s.model_dump_json())
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
 
 
 def recover_orphan() -> None:

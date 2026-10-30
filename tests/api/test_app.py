@@ -10,7 +10,8 @@ from coach.api.deps import hash_pin, verify_pin
 from coach.config import load_settings, save_settings
 from coach.garmin.port import FakeGarminClient, GarminAuthRequired, Metrics
 from coach.llm.provider import FakeLLMProvider, LLMError, LLMUsageLimit
-from coach.plan.models import Activity
+from coach.plan.models import Activity, Race
+from coach.services.history import HistoryState, save_state
 from tests.llm.factories import valid_plan_json
 
 FIXTURES = Path(__file__).parent.parent / "fixtures" / "gpx"
@@ -58,6 +59,12 @@ class BrokenLLM:
 @pytest.fixture(autouse=True)
 def _home(coach_home):
     return coach_home
+
+
+@pytest.fixture(autouse=True)
+def _history_done(_home):
+    """Historique déjà importé : POST /api/sync ne lance pas d'import en arrière-plan."""
+    save_state(HistoryState(status="done"))
 
 
 @pytest.fixture
@@ -486,3 +493,130 @@ def test_wrong_garmin_password(make_client):
     r = make_client(login=login).post("/api/garmin/login", json={"email": "a", "password": "p"})
     assert r.status_code == 401
     assert r.json() == {"code": "garmin_login_failed", "detail": "Identifiants Garmin refusés"}
+
+
+# --- statistiques, compétitions, import ---------------------------------------------------------
+
+
+class FakeRunner:
+    def __init__(self, result: bool = True, running: bool = False):
+        self.result = result
+        self.running = running
+        self.calls = 0
+
+    def start(self) -> bool:
+        self.calls += 1
+        return self.result
+
+
+def _add_activity(repo, garmin_id: int, day: str, raw: str = "{}") -> int:
+    from datetime import date
+
+    with repo.transaction() as db:
+        a = Activity(garmin_activity_id=garmin_id, date=date.fromisoformat(day),
+                     type_key="running", raw_json=raw)
+        db.add(a)
+        db.flush()
+        return a.id
+
+
+def test_stats_activities_merges_races(make_client, repo):
+    a1 = _add_activity(repo, 1, "2026-01-02")
+    a2 = _add_activity(repo, 2, "2026-01-01")
+    with repo.transaction() as db:
+        db.add(Race(activity_id=a1, name="Marathon"))
+    rows = make_client().get("/api/stats/activities").json()["activities"]
+    assert [r["id"] for r in rows] == [a2, a1]
+    assert rows[0]["race"] is None
+    assert rows[1]["race"]["name"] == "Marathon"
+
+
+def test_put_race_validates_rank(make_client, repo):
+    a = _add_activity(repo, 1, "2026-01-01")
+    client = make_client()
+    r = client.put(f"/api/races/{a}", json={"overall_rank": 50, "overall_total": 10})
+    assert r.status_code == 422 and r.json()["code"] == "invalid"
+    r = client.put(f"/api/races/{a}", json={"official_time_s": 0})
+    assert r.status_code == 422
+    r = client.put(f"/api/races/{a}", json={"official_time_s": 3600, "name": "10 km"})
+    assert r.status_code == 200
+    assert r.json()["race"]["official_time_s"] == 3600
+
+
+def test_put_race_unknown_activity_404(make_client):
+    r = make_client().put("/api/races/999", json={"name": "x"})
+    assert r.status_code == 404 and r.json()["code"] == "not_found"
+
+
+def test_delete_race_unknown_activity_404(make_client):
+    assert make_client().delete("/api/races/999").status_code == 404
+
+
+def test_delete_race_excludes_detected_race(make_client, repo):
+    a = _add_activity(repo, 1, "2026-01-01", '{"eventType": {"typeKey": "race"}}')
+    client = make_client()
+    assert client.get("/api/stats/activities").json()["activities"][0]["race"] is not None
+    r = client.delete(f"/api/races/{a}")
+    assert r.status_code == 200 and r.json() == {"status": "ok"}
+    assert client.get("/api/stats/activities").json()["activities"][0]["race"] is None
+
+
+def test_delete_race_requires_csrf_header(make_client, repo):
+    a = _add_activity(repo, 1, "2026-01-01")
+    client = make_client()
+    r = client.delete(f"/api/races/{a}", headers={"X-Coach": "0"})
+    assert r.status_code == 403
+
+
+def test_history_import_conflict(make_client):
+    client = make_client()
+    client.app.state.history = FakeRunner(result=False)
+    r = client.post("/api/history/import")
+    assert r.status_code == 409 and r.json()["code"] == "history_running"
+
+
+def test_history_import_started(make_client):
+    client = make_client()
+    client.app.state.history = FakeRunner(result=True)
+    assert client.post("/api/history/import").json() == {"status": "started"}
+
+
+def test_status_has_activities_and_history(make_client, repo):
+    client = make_client()
+    body = client.get("/api/status").json()
+    assert body["has_activities"] is False
+    assert body["history"] == {"status": "done", "imported": 0, "error": None}
+    _add_activity(repo, 1, "2026-01-01")
+    save_state(HistoryState(status="error", imported=5, error="boum"))
+    body = client.get("/api/status").json()
+    assert body["has_activities"] is True
+    assert body["history"] == {"status": "error", "imported": 5, "error": "boum"}
+
+
+def test_status_reports_running_when_runner_running(make_client):
+    client = make_client()
+    save_state(HistoryState(status="idle"))
+    client.app.state.history = FakeRunner(running=True)
+    assert client.get("/api/status").json()["history"]["status"] == "running"
+
+
+def test_sync_starts_history_import_once(make_client):
+    save_state(HistoryState())  # idle
+    client = make_client()
+    runner = FakeRunner()
+    client.app.state.history = runner
+    assert client.post("/api/sync").status_code == 200
+    assert runner.calls == 1
+    save_state(HistoryState(status="done"))
+    client.post("/api/sync")
+    assert runner.calls == 1
+
+
+def test_records_endpoint(make_client, repo):
+    from datetime import date
+
+    from coach.plan.models import PersonalRecord
+
+    repo.replace_records([PersonalRecord(kind="5k", value=1200.0, garmin_activity_id=7, date=date(2026, 1, 1))])
+    r = make_client().get("/api/stats/records").json()
+    assert r == {"records": [{"kind": "5k", "value": 1200.0, "garmin_activity_id": 7, "date": "2026-01-01"}]}

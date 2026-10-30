@@ -140,3 +140,16 @@ def test_recover_orphan(coach_home):
     recover_orphan()
     state = load_state()
     assert state.status == "error" and state.error == "Import interrompu"
+
+
+def test_save_state_is_atomic(coach_home, monkeypatch):
+    import os
+
+    replaced = []
+    real = os.replace
+    monkeypatch.setattr(os, "replace", lambda a, b: (replaced.append(b), real(a, b))[1])
+    save_state(HistoryState(status="done", imported=3))
+    assert load_state().imported == 3
+    assert [p.name for p in map(__import__("pathlib").Path, replaced)] == ["history.json"]
+    # aucun fichier temporaire ne subsiste à côté de history.json
+    assert [p.name for p in coach_home.iterdir() if p.name.startswith("history")] == ["history.json"]

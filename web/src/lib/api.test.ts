@@ -30,3 +30,13 @@ test("non-JSON body falls back to a generic error", async () => {
   expect(err.status).toBe(502);
   expect(err.message).toBeTruthy();
 });
+
+test("removeRace envoie DELETE avec l'en-tête X-Coach", async () => {
+  const f = vi.fn(async () => new Response(JSON.stringify({ status: "ok" }), { status: 200 }));
+  vi.stubGlobal("fetch", f);
+  await api.removeRace(3);
+  const [url, init] = f.mock.calls[0] as unknown as [string, RequestInit];
+  expect(url).toBe("/api/races/3");
+  expect(init.method).toBe("DELETE");
+  expect((init.headers as Record<string, string>)["X-Coach"]).toBe("1");
+});

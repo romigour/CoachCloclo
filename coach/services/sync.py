@@ -17,6 +17,7 @@ from coach.llm.schemas import AdjustmentResponse, validate_adjustment
 from coach.plan.calendar import week_of
 from coach.plan.models import Activity, Goal, Proposal, Session
 from coach.plan.repo import Repo
+from coach.services.activities import store_summaries
 from coach.services.context import recent_history, refresh_snapshot
 
 FIRST_SYNC_DAYS = 56
@@ -30,31 +31,6 @@ class SyncResult(BaseModel):
     proposal_id: int | None
 
 
-def _import_activities(repo: Repo, garmin: GarminPort, since: date, today: date) -> int:
-    """Enregistre les activités absentes de la base ; retourne leur nombre."""
-    fetched = sorted(garmin.activities(since, today), key=lambda a: (a.date, a.garmin_id))
-    n = 0
-    for a in fetched:
-        if repo.activity_by_garmin_id(a.garmin_id) is not None:
-            continue
-        pace = a.duration_s / (a.distance_m / 1000) if a.distance_m else None
-        repo.add(
-            Activity(
-                garmin_activity_id=a.garmin_id,
-                date=a.date,
-                type_key=a.type_key,
-                duration_s=a.duration_s,
-                distance_m=a.distance_m,
-                d_plus_m=a.d_plus_m,
-                avg_hr=a.avg_hr,
-                avg_pace_s_km=pace,
-                raw_json=json.dumps(a.raw),
-            )
-        )
-        n += 1
-    return n
-
-
 def sync(repo: Repo, garmin: GarminPort, llm: LLMProvider, *, now: datetime) -> SyncResult:
     """Importe, rattache, marque les séances manquées, puis propose un ajustement."""
     _, zones = refresh_snapshot(repo, garmin)
@@ -65,7 +41,7 @@ def sync(repo: Repo, garmin: GarminPort, llm: LLMProvider, *, now: datetime) -> 
     else:
         since = today - timedelta(days=FIRST_SYNC_DAYS)
 
-    new_activities = _import_activities(repo, garmin, since, today)
+    new_activities = store_summaries(repo, garmin.activities(since, today))
 
     goal = repo.active_goal()
     pairs: list[tuple[int, int]] = []

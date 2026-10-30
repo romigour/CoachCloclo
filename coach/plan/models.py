@@ -117,3 +117,24 @@ class Proposal(SQLModel, table=True):
     analysis: str
     changes_json: str = "[]"
     status: str = "pending"  # pending | accepted | rejected | stale
+
+
+class Race(SQLModel, table=True):
+    id: int | None = Field(default=None, primary_key=True)
+    activity_id: int = Field(unique=True, index=True)
+    name: str | None = None
+    official_time_s: int | None = None
+    overall_rank: int | None = None
+    overall_total: int | None = None
+    category: str | None = None
+    category_rank: int | None = None
+    category_total: int | None = None
+    excluded: bool = False
+
+
+class PersonalRecord(SQLModel, table=True):
+    id: int | None = Field(default=None, primary_key=True)
+    kind: str
+    value: float
+    garmin_activity_id: int | None = None
+    date: dt.date | None = None

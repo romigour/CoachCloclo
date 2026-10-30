@@ -111,7 +111,10 @@ def _error(status: int, code: str, detail) -> JSONResponse:
 
 def _invalid(errors: list[dict], prefix: tuple = ()) -> JSONResponse:
     # jamais d'écho de `input` : il peut contenir clé API ou mot de passe
-    return _error(422, "invalid", [{"loc": [*prefix, *e["loc"]], "msg": e["msg"]} for e in errors])
+    # pydantic préfixe les ValueError des validateurs par « Value error, »
+    return _error(422, "invalid", [
+        {"loc": [*prefix, *e["loc"]], "msg": e["msg"].removeprefix("Value error, ")} for e in errors
+    ])
 
 
 def _goal_dict(goal: Goal) -> dict:

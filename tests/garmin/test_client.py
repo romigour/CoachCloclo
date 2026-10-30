@@ -387,3 +387,24 @@ def test_fake_activities_page_paginates_newest_first():
     assert [a.garmin_id for a in fake.activities_page(0, 2)] == [3, 2]
     assert [a.garmin_id for a in fake.activities_page(2, 2)] == [1]
     assert fake.activities_page(4, 2) == []
+
+
+def test_activities_page_ignores_non_finite_values():
+    """NaN/Infinity d'une seule activité ne doivent pas faire échouer toute la page."""
+    raw = [
+        {"activityId": 1, "startTimeLocal": "2026-10-01 10:00:00", "activityType": {"typeKey": "running"},
+         "duration": float("nan"), "distance": float("inf"), "elevationGain": float("-inf"),
+         "averageHR": float("nan")},
+        {"activityId": 2, "startTimeLocal": "2026-10-02 10:00:00", "duration": 3600, "distance": 10000,
+         "averageHR": "n/a"},
+    ]
+    page = GarminClient(FakeLib({"get_activities": raw})).activities_page(0, 100)
+    assert [a.garmin_id for a in page] == [1, 2]
+    a = page[0]
+    assert (a.duration_s, a.distance_m, a.d_plus_m, a.avg_hr) == (0, 0, None, None)
+    assert page[1].avg_hr is None
+
+
+def test_activities_page_skips_non_finite_id():
+    raw = [{"activityId": float("nan"), "startTimeLocal": "2026-10-01 10:00:00"}]
+    assert GarminClient(FakeLib({"get_activities": raw})).activities_page(0, 100) == []

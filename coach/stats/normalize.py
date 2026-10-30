@@ -1,6 +1,7 @@
 """Normalisation des activités Garmin en lignes JSON pour la page Stats."""
 
 import json
+import math
 from typing import Literal
 
 from coach.plan.models import Activity, Race
@@ -46,19 +47,23 @@ def _raw(activity: Activity) -> dict:
     return raw if isinstance(raw, dict) else {}
 
 
+def _finite(value):
+    """Nombre fini (booléens exclus), sinon `None` : NaN/Infinity casseraient la réponse JSON."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return value if math.isfinite(value) else None
+
+
 def _positive(value):
-    """Valeur numérique strictement positive, sinon `None`."""
-    return value if isinstance(value, (int, float)) and value > 0 else None
-
-
-def _is_num(v) -> bool:
-    return isinstance(v, (int, float)) and not isinstance(v, bool)
+    """Valeur numérique finie strictement positive, sinon `None`."""
+    value = _finite(value)
+    return value if value is not None and value > 0 else None
 
 
 def stat_row(activity: Activity, race: Race | None) -> dict:
     """Ligne normalisée d'une activité (consommée par le front)."""
     raw = _raw(activity)
-    zones = [raw.get(f"hrTimeInZone_{i}") for i in range(1, 6)]
+    zones = [_finite(raw.get(f"hrTimeInZone_{i}")) for i in range(1, 6)]
     event = raw.get("eventType")
     is_race = isinstance(event, dict) and event.get("typeKey") == "race"
     if race is not None and not race.excluded:
@@ -77,10 +82,10 @@ def stat_row(activity: Activity, race: Race | None) -> dict:
         "type_key": activity.type_key,
         "duration_s": _positive(activity.duration_s),
         "distance_m": _positive(activity.distance_m),
-        "d_plus_m": activity.d_plus_m,
-        "avg_hr": activity.avg_hr,
-        "max_hr": raw.get("maxHR"),
-        "vo2max": raw.get("vO2MaxValue"),
-        "hr_zones_s": zones if all(_is_num(z) for z in zones) else None,
+        "d_plus_m": _finite(activity.d_plus_m),
+        "avg_hr": _finite(activity.avg_hr),
+        "max_hr": _finite(raw.get("maxHR")),
+        "vo2max": _finite(raw.get("vO2MaxValue")),
+        "hr_zones_s": zones if all(z is not None for z in zones) else None,
         "race": race_out,
     }

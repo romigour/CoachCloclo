@@ -73,3 +73,20 @@ def test_race_priority():
     assert stat_row(_activity(raw), Race(activity_id=1, excluded=True))["race"] is None
     row = stat_row(_activity({}), Race(activity_id=1, name="Semi de Nantes"))
     assert row["race"]["name"] == "Semi de Nantes"
+
+
+def test_stat_row_non_finite_and_non_numeric_values_become_none():
+    raw = ('{"maxHR": NaN, "vO2MaxValue": Infinity, "hrTimeInZone_1": 10, "hrTimeInZone_2": 20,'
+           ' "hrTimeInZone_3": NaN, "hrTimeInZone_4": 1, "hrTimeInZone_5": 2}')
+    row = stat_row(_activity(raw, d_plus_m=float("nan"), avg_hr=float("inf"),
+                             duration_s=float("nan"), distance_m=float("inf")), None)
+    assert row["max_hr"] is None and row["vo2max"] is None
+    assert row["hr_zones_s"] is None
+    assert row["d_plus_m"] is None and row["avg_hr"] is None
+    assert row["duration_s"] is None and row["distance_m"] is None
+    json.dumps(row, allow_nan=False)  # sérialisable par Starlette
+
+
+def test_stat_row_string_values_become_none():
+    row = stat_row(_activity({"maxHR": "n/a", "vO2MaxValue": "52", "hrTimeInZone_1": True}), None)
+    assert row["max_hr"] is None and row["vo2max"] is None and row["hr_zones_s"] is None

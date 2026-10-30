@@ -620,3 +620,17 @@ def test_records_endpoint(make_client, repo):
     repo.replace_records([PersonalRecord(kind="5k", value=1200.0, garmin_activity_id=7, date=date(2026, 1, 1))])
     r = make_client().get("/api/stats/records").json()
     assert r == {"records": [{"kind": "5k", "value": 1200.0, "garmin_activity_id": 7, "date": "2026-01-01"}]}
+
+
+def test_stats_activities_tolerates_nan_in_raw_json(make_client, repo):
+    _add_activity(repo, 1, "2026-01-01", '{"maxHR": NaN, "vO2MaxValue": Infinity}')
+    r = make_client().get("/api/stats/activities")
+    assert r.status_code == 200
+    assert r.json()["activities"][0]["max_hr"] is None
+
+
+def test_put_race_rank_message_without_pydantic_prefix(make_client, repo):
+    a = _add_activity(repo, 1, "2026-01-01")
+    r = make_client().put(f"/api/races/{a}", json={"overall_rank": 50, "overall_total": 10})
+    assert r.status_code == 422
+    assert r.json()["detail"][0]["msg"].startswith("Le classement")

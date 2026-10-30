@@ -7,6 +7,7 @@ après 5 s sur un 429. Le parsing est défensif : une donnée absente vaut None.
 
 from __future__ import annotations
 
+import math
 import time
 from collections.abc import Callable
 from datetime import date
@@ -49,9 +50,11 @@ class _NotFound(GarminUnavailable):
 
 
 def _num(v: Any) -> float | None:
+    """Nombre fini, sinon None (booléens, chaînes, NaN et infinis exclus)."""
     if isinstance(v, bool) or not isinstance(v, int | float):
         return None
-    return float(v)
+    n = float(v)
+    return n if math.isfinite(n) else None
 
 
 def _int(v: Any) -> int | None:

@@ -145,7 +145,7 @@ des colonnes existantes) :
 ### 4.5 API
 
 - `GET /api/stats/activities` → `{"activities": [stat_row...]}`, triées par date.
-- `GET /api/stats/records` → `{"records": [...], "updated_at": ...}`.
+- `GET /api/stats/records` → `{"records": [...]}`.
 - `PUT /api/races/{activity_id}` : crée ou met à jour la ligne `Race` (`excluded = false`) ;
   validation : rangs ≥ 1, rang ≤ effectif quand les deux sont fournis, temps > 0.
 - `DELETE /api/races/{activity_id}` : dé-marque (ligne `Race` avec `excluded = true`, pour ne

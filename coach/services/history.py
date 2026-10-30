@@ -1,5 +1,6 @@
 """Import de tout l'historique Garmin en arrière-plan, avec état persistant."""
 
+import logging
 import os
 import tempfile
 import threading
@@ -20,6 +21,8 @@ from coach.garmin.port import (
 from coach.plan.models import PersonalRecord
 from coach.plan.repo import Repo
 from coach.services.activities import store_summaries
+
+log = logging.getLogger(__name__)
 
 PAGE_SIZE = 100
 PAGE_PAUSE_S = 1.0
@@ -107,7 +110,9 @@ def import_history(
             total += store_summaries(repo, page)
             state.imported = total
             save_state(state)
-            if len(page) < PAGE_SIZE:
+            # Fin d'historique sur page vide seulement : une page incomplète peut
+            # venir d'activités illisibles écartées par le client.
+            if not page:
                 break
             offset += PAGE_SIZE
             sleep(PAGE_PAUSE_S)
@@ -157,7 +162,8 @@ class HistoryRunner:
             try:
                 import_history(self._repo, garmin)
             except Exception:
-                pass  # déjà enregistrée dans l'état par import_history
+                # déjà enregistrée dans l'état par import_history ; trace pour le journal serveur
+                log.exception("Import de l'historique Garmin échoué")
         finally:
             self._lock.release()
 

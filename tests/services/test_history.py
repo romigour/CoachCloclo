@@ -50,10 +50,31 @@ def test_import_paginates_until_empty_page(repo, coach_home):
     calls: list[float] = []
     assert import_history(repo, garmin, sleep=calls.append) == 250
     assert len(repo.all_activities()) == 250
-    assert calls == [1.0, 1.0]
+    # pages 100, 100, 50, puis une page vide qui arrête l'import : une pause entre chaque appel
+    assert calls == [1.0, 1.0, 1.0]
     state = load_state()
     assert state.status == "done" and state.imported == 250
     assert state.finished_at is not None
+
+
+class LossyPageGarmin(FakeGarminClient):
+    """Fake dont la première page pleine perd une activité illisible (99 sur 100)."""
+
+    def __init__(self, **kw):
+        super().__init__(**kw)
+        self.offsets: list[int] = []
+
+    def activities_page(self, offset, limit):
+        self.offsets.append(offset)
+        page = super().activities_page(offset, limit)
+        return page[1:] if offset == 0 else page
+
+
+def test_import_continues_after_page_with_unparsable_entry(repo, coach_home):
+    garmin = LossyPageGarmin(activities=make_activities(250))
+    assert import_history(repo, garmin, sleep=lambda s: None) == 249
+    assert garmin.offsets == [0, 100, 200, 300]
+    assert load_state().status == "done"
 
 
 def test_import_resumes_without_duplicates(repo, coach_home):
@@ -133,6 +154,16 @@ def test_runner_factory_auth_error_sets_error_state(repo, coach_home):
     state = load_state()
     assert state.status == "error"
     assert state.error == "Connexion Garmin expirée : reconnecte-toi dans les Réglages"
+
+
+def test_runner_logs_import_failure(repo, coach_home, caplog):
+    garmin = FailingPageGarmin(activities=make_activities(250))
+    runner = HistoryRunner(repo, lambda: garmin)
+    with caplog.at_level("ERROR", logger="coach.services.history"):
+        assert runner.start() is True
+        runner.join(timeout=5)
+    assert load_state().status == "error"
+    assert any(r.exc_info for r in caplog.records)
 
 
 def test_recover_orphan(coach_home):

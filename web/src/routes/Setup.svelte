@@ -3,7 +3,7 @@
   import { api, ApiError, type SettingsView, type Status } from "../lib/api";
   import ErrorBanner from "../components/ErrorBanner.svelte";
 
-  let { onchanged }: { onchanged?: () => void } = $props();
+  let { onchanged, onconnected }: { onchanged?: () => void; onconnected?: () => void } = $props();
 
   let status = $state<Status | null>(null);
   let settings = $state<SettingsView | null>(null);
@@ -81,6 +81,8 @@
 
   async function connected() {
     await load();
+    // L'app synchronise et choisit la page ; sans elle, on retombe sur objectif / plan.
+    if (onconnected) return onconnected();
     onchanged?.();
     location.hash = status?.goal ? "#/plan" : "#/goal";
   }

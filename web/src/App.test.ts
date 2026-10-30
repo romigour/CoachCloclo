@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/svelte";
+import { fireEvent, render, screen, waitFor } from "@testing-library/svelte";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import App from "./App.svelte";
 
@@ -7,6 +7,8 @@ let syncDone: (() => void) | null = null;
 let statusBody: Record<string, unknown> = {};
 let statsCalls = 0;
 let syncInstant = false;
+let syncFails = false;
+let afterSync: (() => void) | null = null;
 
 const idle = { status: "idle", imported: 0, error: null };
 
@@ -19,6 +21,8 @@ beforeEach(() => {
   calls.length = 0;
   statsCalls = 0;
   syncInstant = false;
+  syncFails = false;
+  afterSync = null;
   statusBody = { garmin: "ok", llm_mode: "cli", pending_proposal_id: null, goal: plan.goal, has_activities: false, history: idle };
   location.hash = "";
   vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
@@ -29,8 +33,12 @@ beforeEach(() => {
     else if (url === "/api/stats/activities") { statsCalls++; body = { activities: [] }; }
     else if (url === "/api/stats/records") body = { records: [] };
     else if (url === "/api/plan") body = plan;
+    else if (url === "/api/settings") body = { llm_mode: "cli", anthropic_model: null, anthropic_api_key_set: false };
+    else if (url === "/api/garmin/login") body = { status: "ok" };
     else if (url === "/api/sync") {
       if (!syncInstant) await new Promise<void>((r) => (syncDone = r));
+      if (syncFails) return new Response(JSON.stringify({ code: "garmin_unavailable", detail: "Garmin coupé" }), { status: 503 });
+      afterSync?.();
       body = { new_activities: 0, matched: 0, missed: 0, proposal_id: null };
     }
     return new Response(JSON.stringify(body), { status: 200 });
@@ -115,4 +123,65 @@ test("status polling is cleaned up on unmount", async () => {
   const before = calls.filter((c) => c.url === "/api/status").length;
   await vi.advanceTimersByTimeAsync(20000);
   expect(calls.filter((c) => c.url === "/api/status").length).toBe(before);
+});
+
+async function loginToGarmin() {
+  await screen.findByText("Connexion Garmin");
+  await fireEvent.input(screen.getByLabelText("E-mail Garmin"), { target: { value: "a@b.c" } });
+  await fireEvent.input(screen.getByLabelText("Mot de passe"), { target: { value: "secret" } });
+  await fireEvent.click(screen.getByRole("button", { name: "Se connecter" }));
+}
+
+test("first Garmin login syncs, then opens stats once activities exist", async () => {
+  syncInstant = true;
+  statusBody = { ...statusBody, garmin: "auth_required", goal: null };
+  location.hash = "#/setup";
+  render(App);
+  await screen.findByText("Connexion Garmin");
+  expect(syncs()).toBe(0);
+  statusBody = { ...statusBody, garmin: "ok" };
+  afterSync = () => (statusBody = { ...statusBody, has_activities: true });
+  await loginToGarmin();
+  await waitFor(() => expect(syncs()).toBe(1));
+  await waitFor(() => expect(location.hash).toBe("#/stats"));
+});
+
+test("first Garmin login without any activity after sync goes to the goal", async () => {
+  syncInstant = true;
+  statusBody = { ...statusBody, garmin: "auth_required", goal: null };
+  location.hash = "#/setup";
+  render(App);
+  statusBody = { ...statusBody, garmin: "ok" };
+  await loginToGarmin();
+  await waitFor(() => expect(syncs()).toBe(1));
+  await waitFor(() => expect(location.hash).toBe("#/goal"));
+});
+
+test("status polling keeps the error banner", async () => {
+  syncInstant = true;
+  syncFails = true;
+  statusBody = { ...statusBody, has_activities: true, history: { status: "running", imported: 3, error: null } };
+  location.hash = "#/stats";
+  await new Promise((r) => setTimeout(r, 0)); // laisse passer le hashchange (il efface l'erreur)
+  vi.useFakeTimers();
+  const { unmount } = render(App);
+  await vi.advanceTimersByTimeAsync(100);
+  expect(screen.getByText("Garmin est indisponible pour le moment, réessaie plus tard.")).toBeTruthy();
+  await vi.advanceTimersByTimeAsync(5000);
+  expect(screen.getByText("Garmin est indisponible pour le moment, réessaie plus tard.")).toBeTruthy();
+  unmount();
+});
+
+test("an import ending in error also reloads the stats", async () => {
+  syncInstant = true;
+  statusBody = { ...statusBody, has_activities: true, history: { status: "running", imported: 3, error: null } };
+  location.hash = "#/stats";
+  vi.useFakeTimers();
+  const { unmount } = render(App);
+  await vi.advanceTimersByTimeAsync(100);
+  const baseline = statsCalls;
+  statusBody = { ...statusBody, history: { status: "error", imported: 5, error: "Garmin coupé" } };
+  await vi.advanceTimersByTimeAsync(5000);
+  expect(statsCalls).toBe(baseline + 1);
+  unmount();
 });

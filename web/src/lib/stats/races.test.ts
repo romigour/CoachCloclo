@@ -51,6 +51,14 @@ describe("raceRows", () => {
     expect(rows[1]).toMatchObject({ timeS: 2990, official: true, paceSKm: 299, overallTop: 15, categoryTop: null });
     expect(rows[0]).toMatchObject({ timeS: 3000, official: false, paceSKm: 300 });
   });
+  it("ignore les courses hors course à pied et trail", () => {
+    const rows = raceRows([
+      act("2026-01-01", { id: 1, family: "bike", type_key: "cycling" }),
+      act("2026-02-01", { id: 2, family: "trail", type_key: "trail_running" }),
+      act("2026-03-01", { id: 3, family: "swim", type_key: "swimming" }),
+    ]);
+    expect(rows.map((r) => r.activity.id)).toEqual([2]);
+  });
   it("allure null sans distance", () => {
     const rows = raceRows([act("2026-01-01", { distance_m: null })]);
     expect(rows[0].paceSKm).toBeNull();
@@ -67,6 +75,13 @@ describe("raceProgression", () => {
     expect(r).toEqual([{ category: "10k", points: [
       { date: "2026-01-01", timeS: 3000 }, { date: "2026-03-01", timeS: 2900 },
     ] }]);
+  });
+});
+
+describe("raceProgression hors course", () => {
+  it("ignore les sorties vélo de 10 km marquées compétition", () => {
+    const bike = { family: "bike" as const, type_key: "cycling", distance_m: 10000 };
+    expect(raceProgression([act("2026-01-01", bike), act("2026-02-01", bike)])).toEqual([]);
   });
 });
 

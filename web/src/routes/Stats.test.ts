@@ -36,7 +36,7 @@ beforeEach(() => {
     if (method !== "GET") return write(method, url, init?.body ? JSON.parse(String(init.body)) : null);
     let body: unknown = {};
     if (url === "/api/stats/activities") body = { activities };
-    else if (url === "/api/stats/records") body = { records, updated_at: null };
+    else if (url === "/api/stats/records") body = { records };
     return new Response(JSON.stringify(body), { status: 200 });
   }));
 });
@@ -66,6 +66,21 @@ test("empty period shows explicit empty state", async () => {
   render(Stats, { history: null, onimport: () => {} });
   expect((await screen.findAllByText("Pas assez de données sur cette période")).length).toBeGreaterThan(0);
   expect(screen.queryAllByRole("img")).toHaveLength(0);
+});
+
+test("no activity and no import yet: call to action imports the history", async () => {
+  activities = [];
+  const onimport = vi.fn();
+  render(Stats, { history: { status: "idle", imported: 0, error: null }, onimport });
+  await fireEvent.click(await screen.findByRole("button", { name: "Importer mon historique Garmin" }));
+  expect(onimport).toHaveBeenCalledOnce();
+  expect(screen.queryByRole("group", { name: "Séances" })).toBeNull();
+});
+
+test("no call to action once activities exist", async () => {
+  render(Stats, { history: { status: "idle", imported: 0, error: null }, onimport: () => {} });
+  await kpi("Séances");
+  expect(screen.queryByRole("button", { name: "Importer mon historique Garmin" })).toBeNull();
 });
 
 test("history running banner", async () => {

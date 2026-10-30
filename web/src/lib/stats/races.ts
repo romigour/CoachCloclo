@@ -36,9 +36,12 @@ export type RaceRow = {
   categoryTop: number | null;
 };
 
+const isRunning = (a: StatActivity) => a.family === "run" || a.family === "trail";
+
+/** Compétitions de course et de trail seulement (comme le sélecteur d'ajout). */
 export function raceRows(acts: StatActivity[]): RaceRow[] {
   return acts
-    .filter((a) => a.race != null)
+    .filter((a) => a.race != null && isRunning(a))
     .map((a) => {
       const race = a.race!;
       const official = race.official_time_s != null;
@@ -88,6 +91,6 @@ function searchText(a: StatActivity): string {
 export function raceCandidates(acts: StatActivity[], query: string): StatActivity[] {
   const q = fold(query.trim());
   return acts
-    .filter((a) => (a.family === "run" || a.family === "trail") && (!q || searchText(a).includes(q)))
+    .filter((a) => isRunning(a) && (!q || searchText(a).includes(q)))
     .sort((x, y) => (y.start ?? y.date).localeCompare(x.start ?? x.date));
 }

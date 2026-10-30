@@ -170,6 +170,11 @@
     <p class="banner error" role="alert">{loadError}</p>
   {:else if activities === null}
     <p class="meta">Chargement des statistiques…</p>
+  {:else if activities.length === 0 && history?.status === "idle"}
+    <section class="card first-import">
+      <p>Aucune activité pour l'instant : importe ton historique Garmin pour voir tes statistiques.</p>
+      <button type="button" class="primary" onclick={onimport}>Importer mon historique Garmin</button>
+    </section>
   {:else}
     <Filters {choice} {sport} {options} {years} {period} onchange={change} onreset={reset} />
     <p class="meta period">{periodText} · {current.length} séance{current.length > 1 ? "s" : ""}</p>
@@ -236,6 +241,7 @@
     padding: 0.6rem 0.75rem;
     margin: 0.6rem 0;
   }
+  .first-import { margin: 0.6rem 0; text-align: center; }
   .grid {
     display: grid;
     grid-template-columns: minmax(0, 1fr);

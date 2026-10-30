@@ -24,13 +24,15 @@
     return (ROUTES as readonly string[]).includes(name) ? (name as Route) : null;
   }
 
-  async function refresh() {
+  /** Relit l'état ; `clear` efface l'erreur affichée (pas depuis le sondage, qui la ferait disparaître). */
+  async function refresh(clear = true) {
     try {
       const next = await api.status();
-      // Fin d'import observée via le sondage : les statistiques doivent être rechargées.
-      if (status?.history.status === "running" && next.history.status === "done") version++;
+      // Fin d'import (réussie ou non) observée via le sondage : les statistiques doivent être rechargées.
+      const ended = next.history.status === "done" || next.history.status === "error";
+      if (status?.history.status === "running" && ended) version++;
       status = next;
-      error = null;
+      if (clear) error = null;
     } catch (e) {
       error = e;
     }
@@ -52,7 +54,7 @@
   const importRunning = $derived(status?.history.status === "running");
   $effect(() => {
     if (!importRunning) return;
-    const timer = setInterval(refresh, 5000);
+    const timer = setInterval(() => refresh(false), 5000);
     return () => clearInterval(timer);
   });
 
@@ -70,7 +72,7 @@
     syncing = true;
     try {
       await api.sync();
-      synced();
+      await synced();
     } catch (e) {
       failed(e);
     } finally {
@@ -78,9 +80,24 @@
     }
   }
 
-  function synced() {
+  async function synced() {
     version++;
-    refresh();
+    await refresh();
+  }
+
+  /** Connexion Garmin réussie depuis les Réglages : synchronise (même si une synchro a déjà eu lieu) puis oriente. */
+  async function garminConnected() {
+    await refresh();
+    autoSyncStarted = true;
+    if (status?.has_activities) {
+      // Activités déjà là : on les montre tout de suite, la synchro se fait en arrière-plan.
+      location.hash = "#/stats";
+      if (!syncing) autoSync();
+      return;
+    }
+    // Premier lancement : la synchro ramène les activités récentes et lance l'import de l'historique.
+    if (!syncing) await autoSync();
+    location.hash = status?.has_activities ? "#/stats" : status?.goal ? "#/plan" : "#/goal";
   }
 
   function failed(e: unknown) {
@@ -126,7 +143,7 @@
     {#if route === "stats"}
       <Stats {version} history={status?.history ?? null} onimport={importHistory} />
     {:else if route === "setup"}
-      <Setup onchanged={refresh} />
+      <Setup onchanged={refresh} onconnected={garminConnected} />
     {:else if route === "goal"}
       <Goal onchanged={refresh} />
     {:else if route === "plan"}

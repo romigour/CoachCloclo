@@ -1,5 +1,6 @@
 /** Filtres de période et de sport pour la page de statistiques. Dates ISO (AAAA-MM-JJ), calculs en UTC. */
 import type { Family, StatActivity } from "../api";
+import { addDays } from "../dates";
 
 export type Period = { from: string; to: string };
 
@@ -25,9 +26,7 @@ function toIso(ms: number): string {
   return new Date(ms).toISOString().slice(0, 10);
 }
 
-export function addDays(iso: string, n: number): string {
-  return toIso(utcMs(iso) + n * DAY_MS);
-}
+export { addDays };
 
 /** Nombre de jours de `a` à `b` (positif si `b` est après `a`). */
 export function daysBetween(a: string, b: string): number {

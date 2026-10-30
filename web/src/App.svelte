@@ -6,8 +6,9 @@
   import Goal from "./routes/Goal.svelte";
   import Plan from "./routes/Plan.svelte";
   import Proposal from "./routes/Proposal.svelte";
+  import Stats from "./routes/Stats.svelte";
 
-  const ROUTES = ["setup", "goal", "plan", "proposal"] as const;
+  const ROUTES = ["stats", "setup", "goal", "plan", "proposal"] as const;
   type Route = (typeof ROUTES)[number];
 
   let route = $state<Route | null>(parse());
@@ -74,18 +75,28 @@
   function failed(e: unknown) {
     error = e;
   }
+
+  async function importHistory() {
+    try {
+      await api.importHistory();
+      refresh();
+    } catch (e) {
+      failed(e);
+    }
+  }
 </script>
 
 <header class="topbar">
   <strong>CoachCloclo</strong>
   <nav>
+    <a href="#/stats" class:active={route === "stats"}>Stats</a>
     <a href="#/plan" class:active={route === "plan"}>Plan</a>
     <a href="#/goal" class:active={route === "goal"}>Objectif</a>
     <a href="#/setup" class:active={route === "setup"}>Réglages</a>
   </nav>
 </header>
 
-<main>
+<main class:wide={route === "stats"}>
   <ErrorBanner {error} onpin={start} />
 
   {#if syncing}
@@ -97,7 +108,9 @@
   {/if}
 
   {#if ready && !(error && (error as { code?: string }).code === "pin_required")}
-    {#if route === "setup"}
+    {#if route === "stats"}
+      <Stats history={status?.history ?? null} onimport={importHistory} />
+    {:else if route === "setup"}
       <Setup onchanged={refresh} />
     {:else if route === "goal"}
       <Goal onchanged={refresh} />

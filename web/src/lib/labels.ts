@@ -1,4 +1,5 @@
-import type { SessionStatus } from "./api";
+import type { Family, SessionStatus } from "./api";
+import type { SportFilter } from "./stats/filter";
 
 export const STATUS_LABEL: Record<SessionStatus, string> = {
   todo: "À exporter",
@@ -15,4 +16,22 @@ export const TYPE_LABEL: Record<string, string> = {
   "côtes": "Côtes",
   sortie_longue: "Sortie longue",
   "récup": "Récupération",
+};
+
+/** Libellés des familles de sport (page Stats). */
+export const FAMILY_LABEL: Record<Family, string> = {
+  run: "Course sur route",
+  trail: "Trail",
+  bike: "Vélo",
+  swim: "Natation",
+  strength: "Renfo / cardio",
+  walk: "Marche / rando",
+  other: "Autres",
+};
+
+/** Libellés du filtre sport : `running` regroupe route et trail. */
+export const SPORT_LABEL: Record<SportFilter, string> = {
+  all: "Tous",
+  running: "Course à pied",
+  ...FAMILY_LABEL,
 };

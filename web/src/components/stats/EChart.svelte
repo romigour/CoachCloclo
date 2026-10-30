@@ -3,6 +3,8 @@
   import type { EChartsCoreOption, ECharts } from "echarts/core";
   import { echarts } from "../../lib/stats/echarts";
 
+  type ClickParams = { name: string; dataIndex: number; seriesName?: string; data: unknown };
+
   let {
     option,
     height = "280px",
@@ -11,44 +13,25 @@
   }: {
     option: EChartsCoreOption;
     height?: string;
-    onclick?: (params: { name: string; dataIndex: number; seriesName?: string; data: unknown }) => void;
+    onclick?: (params: ClickParams) => void;
     label: string;
   } = $props();
 
   let el: HTMLDivElement;
   let chart: ECharts | null = null;
-  // Les options sont reposées avec les couleurs du thème courant : le parent les recalcule
-  // via themeColors(), donc on ré-init aussi quand le schéma de couleurs change.
-  let scheme = $state(0);
 
-  function init() {
-    chart?.dispose();
-    chart = echarts.init(el, undefined, { renderer: "svg" });
-    chart.on("click", (p: any) => onclick?.(p));
-    chart.setOption(option, true);
-  }
-
+  // Init unique au montage ; le thème est porté par l'option (recalculée par le parent
+  // via themeColors(), réactif), donc pas de ré-init.
   onMount(() => {
-    init();
+    chart = echarts.init(el, undefined, { renderer: "svg" });
+    chart.on("click", (p: unknown) => onclick?.(p as ClickParams));
     const ro = typeof ResizeObserver !== "undefined" ? new ResizeObserver(() => chart?.resize()) : null;
     ro?.observe(el);
-    const mq = window.matchMedia?.("(prefers-color-scheme: dark)");
-    const onScheme = () => {
-      scheme++;
-    };
-    mq?.addEventListener?.("change", onScheme);
     return () => {
       ro?.disconnect();
-      mq?.removeEventListener?.("change", onScheme);
       chart?.dispose();
       chart = null;
     };
-  });
-
-  $effect(() => {
-    void scheme;
-    if (!chart) return;
-    if (scheme > 0) init();
   });
 
   $effect(() => {

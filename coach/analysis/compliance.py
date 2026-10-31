@@ -3,11 +3,12 @@
 from datetime import date, timedelta
 
 from coach.llm.schemas import HARD_TYPES, RepeatSpec
-from coach.plan.calendar import week_monday, week_of
+from coach.plan.calendar import week_monday
 from coach.plan.models import Activity, Goal, Session
 
 RUNNING_TYPES = {"running", "trail_running", "treadmill_running", "track_running"}
 _PACE_S_PER_KM = 360  # allure supposée pour convertir une distance en durée
+_DURATION_TOLERANCE = 0.3  # écart de durée accepté pour un rattachement automatique
 
 
 def estimate_duration_min(session: Session) -> float:
@@ -42,29 +43,35 @@ def _awaiting_cleanup(s: Session) -> bool:
     )
 
 
-def match_activities(
-    sessions: list[Session], activities: list[Activity], goal: Goal
-) -> list[tuple[int, int]]:
-    """Paires (session_id, activity_id) ; aucune écriture."""
-    free = [a for a in activities if a.session_id is None and a.type_key in RUNNING_TYPES]
-    pairs: list[tuple[int, int]] = []
+def match_activities(sessions: list[Session], activities: list[Activity]) -> list[tuple[int, int]]:
+    """Paires (session_id, activity_id) ; aucune écriture.
 
-    def take(session: Session, candidates: list[Activity], key) -> None:
-        if not candidates:
-            return
-        best = min(candidates, key=key)
-        free.remove(best)
-        pairs.append((session.id, best.id))
+    Seules les séances planifiées sur Garmin sont rattachées automatiquement : course à ±1 jour de
+    la date prévue et durée à ±30 % de la durée prévue. Une séance non planifiée (`todo`) ne se
+    rattache qu'à la main, tout comme une activité détachée à la main."""
+    free = [
+        a
+        for a in activities
+        if a.session_id is None
+        and a.match_source != "manual"
+        and a.type_key in RUNNING_TYPES
+        and a.duration_s is not None
+    ]
+    pairs: list[tuple[int, int]] = []
 
     for s in (x for x in sessions if _scheduled(x) and x.scheduled_date is not None and not _awaiting_cleanup(x)):
         exp = _expected_min(s)
-        cands = [a for a in free if abs((a.date - s.scheduled_date).days) <= 1]
-        take(s, cands, lambda a: (abs((a.date - s.scheduled_date).days), abs((a.duration_s or 0) / 60 - exp)))
-
-    for s in (x for x in sessions if x.status == "todo"):
-        exp = _expected_min(s)
-        cands = [a for a in free if week_of(goal, a.date) == s.week_index]
-        take(s, cands, lambda a: abs((a.duration_s or 0) / 60 - exp))
+        cands = [
+            a
+            for a in free
+            if abs((a.date - s.scheduled_date).days) <= 1
+            and abs(a.duration_s / 60 - exp) <= _DURATION_TOLERANCE * exp
+        ]
+        if not cands:
+            continue
+        best = min(cands, key=lambda a: (abs((a.date - s.scheduled_date).days), abs(a.duration_s / 60 - exp)))
+        free.remove(best)
+        pairs.append((s.id, best.id))
 
     return pairs
 

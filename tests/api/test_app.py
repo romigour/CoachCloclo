@@ -258,6 +258,23 @@ def test_activities_of_plan_week(make_client, repo):
     assert goal["id"]
 
 
+def test_free_activities_of_last_days(make_client, repo):
+    from datetime import date, timedelta
+
+    today = date.today()
+    client = make_client()
+    recent = repo.add(Activity(garmin_activity_id=21, date=today - timedelta(days=2), type_key="running",
+                               duration_s=1800.0))
+    oldest = repo.add(Activity(garmin_activity_id=22, date=today - timedelta(days=14), type_key="trail_running"))
+    repo.add(Activity(garmin_activity_id=23, date=today - timedelta(days=15), type_key="running"))
+    repo.add(Activity(garmin_activity_id=24, date=today, type_key="running", session_id=7))
+    repo.add(Activity(garmin_activity_id=25, date=today, type_key="cycling"))
+    rows = client.get("/api/activities/free?days=14").json()
+    assert [r["id"] for r in rows] == [recent.id, oldest.id]
+    assert rows[0]["duration_s"] == 1800.0 and rows[0]["session_id"] is None
+    assert client.get("/api/activities/free?days=0").status_code == 422
+
+
 def test_activities_respects_host_and_pin(make_client):
     client = make_client()
     assert client.get("/api/activities?week=1", headers={"Host": "evil.example"}).status_code == 400
@@ -296,9 +313,11 @@ def test_generic_llm_error_maps_to_502_on_sync(make_client, fake_garmin):
     goal = _create_goal(client).json()
     client.post(f"/api/goals/{goal['id']}/generate")
     client.post(f"/api/goals/{goal['id']}/accept")
+    session = client.get("/api/plan").json()["weeks"][0]["sessions"][0]
+    assert client.post(f"/api/sessions/{session['id']}/export", json={"date": "2026-11-05"}).status_code == 200
     fake_garmin._activities = [
-        ActivitySummary(garmin_id=1, date=date(2026, 11, 3), type_key="running",
-                        duration_s=2700, distance_m=9000, raw={})
+        ActivitySummary(garmin_id=1, date=date(2026, 11, 4), type_key="running",
+                        duration_s=600, distance_m=2000, raw={})
     ]
     client.app.state.llm_factory = lambda: BrokenLLM()
     r = client.post("/api/sync")

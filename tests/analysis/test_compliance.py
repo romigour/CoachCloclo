@@ -32,36 +32,52 @@ def _act(id_, d=TUE, **kw):
 def test_exported_session_matches_adjacent_day():
     s = _session(1, scheduled=TUE)
     a = _act(10, d=WED)
-    assert match_activities([s], [a], make_goal()) == [(1, 10)]
+    assert match_activities([s], [a]) == [(1, 10)]
 
 
 def test_cycling_ignored():
     s = _session(1)
     a = _act(10, type_key="cycling")
-    assert match_activities([s], [a], make_goal()) == []
+    assert match_activities([s], [a]) == []
 
 
 def test_two_runs_same_day_pick_closest_duration():
     s = _session(1)
     short = _act(10, duration_s=20 * 60)
     long_ = _act(11, duration_s=50 * 60)
-    assert match_activities([s], [short, long_], make_goal()) == [(1, 11)]
+    assert match_activities([s], [short, long_]) == [(1, 11)]
 
 
-def test_todo_session_matches_within_week_only():
-    goal = make_goal()
+def test_todo_session_never_matched_automatically():
     s = _session(1, status="todo", scheduled=None)
-    same_week = _act(10, d=date(2026, 11, 14))
-    other_week = _act(11, d=date(2026, 11, 17))
-    assert match_activities([s], [other_week], goal) == []
-    assert match_activities([s], [same_week, other_week], goal) == [(1, 10)]
+    assert match_activities([s], [_act(10, d=date(2026, 11, 14))]) == []
+
+
+def test_duration_outside_tolerance_not_matched():
+    s = _session(1)  # 45 min prévues : 31,5 à 58,5 min acceptées
+    assert match_activities([s], [_act(10, duration_s=30 * 60)]) == []
+    assert match_activities([s], [_act(11, duration_s=60 * 60)]) == []
+    assert match_activities([s], [_act(12, duration_s=32 * 60)]) == [(1, 12)]
+    assert match_activities([s], [_act(13, duration_s=58 * 60)]) == [(1, 13)]
+
+
+def test_activity_without_duration_not_matched():
+    s = _session(1)
+    assert match_activities([s], [_act(10, duration_s=None)]) == []
+
+
+def test_manually_detached_activity_not_rematched():
+    s = _session(1)
+    a = _act(10)
+    a.match_source = "manual"
+    assert match_activities([s], [a]) == []
 
 
 def test_activity_used_once():
     s1 = _session(1, scheduled=TUE)
     s2 = _session(2, scheduled=TUE)
     a = _act(10)
-    pairs = match_activities([s1, s2], [a], make_goal())
+    pairs = match_activities([s1, s2], [a])
     assert len(pairs) == 1
     assert pairs[0][1] == 10
 
@@ -70,22 +86,14 @@ def test_already_attached_activity_ignored():
     s = _session(1)
     a = _act(10)
     a.session_id = 99
-    assert match_activities([s], [a], make_goal()) == []
-
-
-def test_exported_processed_before_todo():
-    goal = make_goal()
-    todo = _session(1, status="todo", scheduled=None)
-    exported = _session(2, status="exported", scheduled=TUE)
-    a = _act(10)
-    assert match_activities([todo, exported], [a], goal) == [(2, 10)]
+    assert match_activities([s], [a]) == []
 
 
 def test_estimate_falls_back_when_est_missing():
     s = _session(1)
     s.est_duration_min = None
     a = _act(10, duration_s=600)
-    assert match_activities([s], [a], make_goal()) == [(1, 10)]
+    assert match_activities([s], [a]) == [(1, 10)]
 
 
 def test_mark_missed_only_finished_weeks():
@@ -135,13 +143,13 @@ def test_warning_ignores_same_session():
 def test_sync_error_session_with_date_matches_like_exported():
     s = _session(1, status="sync_error")
     a = _act(10)
-    assert match_activities([s], [a], make_goal()) == [(1, 10)]
+    assert match_activities([s], [a]) == [(1, 10)]
 
 
 def test_sync_error_pending_removal_not_matched():
     s = _session(1, status="sync_error")
     s.pending_removal = True
-    assert match_activities([s], [_act(10)], make_goal()) == []
+    assert match_activities([s], [_act(10)]) == []
 
 
 def test_mark_missed_includes_sync_error_but_not_pending_removal():
@@ -157,7 +165,7 @@ def test_sync_error_awaiting_cleanup_neither_matched_nor_missed():
     goal = make_goal()
     s = _session(1, status="sync_error", scheduled=date(2026, 11, 3), week=2)
     s.pending_old_workout_id = 1000
-    assert match_activities([s], [_act(10, d=date(2026, 11, 3))], goal) == []
+    assert match_activities([s], [_act(10, d=date(2026, 11, 3))]) == []
     assert mark_missed([s], goal, date(2026, 11, 11)) == []
     s.pending_old_workout_id, s.pending_old_schedule_id = None, 5000
     assert mark_missed([s], goal, date(2026, 11, 11)) == []

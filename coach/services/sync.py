@@ -50,7 +50,7 @@ def sync(repo: Repo, garmin: GarminPort, llm: LLMProvider, *, now: datetime) -> 
     missed_ids: list[int] = []
     if goal is not None:
         sessions = repo.sessions(goal.id)
-        pairs = match_activities(sessions, repo.activities_since(since), goal)
+        pairs = match_activities(sessions, repo.activities_since(since))
         matched = {sid for sid, _ in pairs}
         missed_ids = mark_missed([s for s in sessions if s.id not in matched], goal, today)
         with repo.transaction() as db:

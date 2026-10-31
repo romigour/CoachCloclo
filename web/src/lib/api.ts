@@ -231,6 +231,7 @@ export const api = {
   unschedule: (id: number) => post<{ status: string }>(`/sessions/${id}/unschedule`),
   retry: (id: number) => post<{ status: string }>(`/sessions/${id}/retry`),
   activities: (week: number) => get<Activity[]>(`/activities?week=${week}`),
+  freeActivities: (days: number) => get<Activity[]>(`/activities/free?days=${days}`),
   match: (activityId: number, sessionId: number | null) =>
     post<{ status: string }>(`/activities/${activityId}/match`, { session_id: sessionId }),
   sync: () => post<Record<string, unknown>>("/sync"),

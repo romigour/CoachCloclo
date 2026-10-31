@@ -53,7 +53,12 @@ def _goal_with_sessions(repo, accepted: bool):
     goal = repo.add(make_goal(plan_start=date(2026, 11, 2), plan_accepted=accepted))
     for w in (1, 2):
         for o in (1, 2, 3):
-            repo.add(make_db_session(goal.id, week_index=w, order=o))
+            s = make_db_session(goal.id, week_index=w, order=o)
+            if w == 1 and o in (1, 2):  # envoyées sur la montre mardi et mercredi : rattachables
+                s.status = "exported"
+                s.scheduled_date = date(2026, 11, 2 + o)
+                s.est_duration_min = 45.0
+            repo.add(s)
     return goal
 
 

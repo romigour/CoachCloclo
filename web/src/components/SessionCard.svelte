@@ -8,6 +8,9 @@
   import ExportDialog from "./ExportDialog.svelte";
   import IntensityProfile from "./IntensityProfile.svelte";
 
+  /** Fenêtre des courses proposées au rattachement manuel. */
+  const FREE_DAYS = 14;
+
   let {
     session,
     weekMonday,
@@ -29,6 +32,7 @@
   let dialog = $state<"export" | "move" | null>(null);
   let busy = $state(false);
   let correcting = $state(false);
+  let candidates = $state<Activity[] | null>(null);
 
   const matched = $derived(activities.find((a) => a.session_id === session.id) ?? null);
   const lines = $derived(formatSteps(session.steps));
@@ -44,6 +48,19 @@
       onerror?.(e);
     } finally {
       busy = false;
+    }
+  }
+
+  async function toggleCorrecting() {
+    correcting = !correcting;
+    if (!correcting) return;
+    candidates = null;
+    try {
+      const free = await api.freeActivities(FREE_DAYS);
+      candidates = matched ? [matched, ...free] : free;
+    } catch (e) {
+      correcting = false;
+      onerror?.(e);
     }
   }
 
@@ -91,19 +108,23 @@
 
   {#if session.chaining_note}<p class="tip">{session.chaining_note}</p>{/if}
 
-  {#if !readonly && (matched || session.status === "done")}
+  {#if !readonly}
     <div class="row spread">
-      <span class="matched">
-        <span class="meta">Activité :</span>
-        {matched ? formatActivity(matched) : "rattachée"}
-      </span>
-      <button class="small" onclick={() => (correcting = !correcting)} disabled={busy} aria-expanded={correcting}>
-        Corriger
+      {#if matched || session.status === "done"}
+        <span class="matched">
+          <span class="meta">Activité :</span>
+          {matched ? formatActivity(matched) : "rattachée"}
+        </span>
+      {:else}
+        <span></span>
+      {/if}
+      <button class="small" onclick={toggleCorrecting} disabled={busy} aria-expanded={correcting}>
+        {matched || session.status === "done" ? "Corriger" : "Rattacher une activité"}
       </button>
     </div>
-    {#if correcting}
+    {#if correcting && candidates}
       <div class="row correct">
-        {#each activities as a (a.id)}
+        {#each candidates as a (a.id)}
           <button
             class="small"
             class:primary={a.session_id === session.id}
@@ -116,7 +137,7 @@
         {#if matched}
           <button class="small" onclick={() => rematch(matched.id, null)} disabled={busy}>Aucune</button>
         {/if}
-        {#if !activities.length}<span class="meta">Aucune activité cette semaine</span>{/if}
+        {#if !candidates.length}<span class="meta">Aucune course libre ces {FREE_DAYS} derniers jours</span>{/if}
       </div>
     {/if}
   {/if}

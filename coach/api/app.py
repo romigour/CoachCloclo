@@ -13,12 +13,13 @@ from urllib.parse import urlparse
 from typing import Annotated, Literal
 
 from fastapi.exceptions import RequestValidationError
-from fastapi import APIRouter, Depends, FastAPI, File, Form, Request, UploadFile
+from fastapi import APIRouter, Depends, FastAPI, File, Form, Query, Request, UploadFile
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, ValidationError, model_validator
 from sqlmodel import select
 
+from coach.analysis.compliance import RUNNING_TYPES
 from coach.analysis.gpx import GpxError
 from coach.api.deps import get_garmin, get_llm, verify_pin
 from coach.config import Settings, db_path, load_settings, save_settings, tokenstore_dir
@@ -103,6 +104,20 @@ class RaceBody(BaseModel):
             if rank is not None and total is not None and rank > total:
                 raise ValueError("Le classement dépasse le nombre de participants")
         return self
+
+
+def _activity_row(a: Activity) -> dict:
+    return {
+        "id": a.id,
+        "date": a.date.isoformat(),
+        "type_key": a.type_key,
+        "duration_s": a.duration_s,
+        "distance_m": a.distance_m,
+        "d_plus_m": a.d_plus_m,
+        "avg_hr": a.avg_hr,
+        "session_id": a.session_id,
+        "match_source": a.match_source,
+    }
 
 
 def _error(status: int, code: str, detail) -> JSONResponse:
@@ -436,21 +451,14 @@ def create_app(
             return []
         monday = calendar.week_monday(goal, week)
         sunday = monday + timedelta(days=6)
-        return [
-            {
-                "id": a.id,
-                "date": a.date.isoformat(),
-                "type_key": a.type_key,
-                "duration_s": a.duration_s,
-                "distance_m": a.distance_m,
-                "d_plus_m": a.d_plus_m,
-                "avg_hr": a.avg_hr,
-                "session_id": a.session_id,
-                "match_source": a.match_source,
-            }
-            for a in repo.activities_since(monday)
-            if a.date <= sunday
-        ]
+        return [_activity_row(a) for a in repo.activities_since(monday) if a.date <= sunday]
+
+    @api.get("/activities/free")
+    def get_free_activities(days: Annotated[int, Query(ge=1, le=90)], repo: RepoDep):
+        """Courses des `days` derniers jours rattachées à aucune séance, la plus récente d'abord."""
+        since = date.today() - timedelta(days=days)
+        free = [a for a in repo.activities_since(since) if a.session_id is None and a.type_key in RUNNING_TYPES]
+        return [_activity_row(a) for a in reversed(free)]
 
     @api.post("/activities/{activity_id}/match")
     def post_match(activity_id: int, body: MatchBody, repo: RepoDep):

@@ -9,6 +9,8 @@ _NO_ELE = "Trace sans altitude : D+ à saisir manuellement"
 _SMOOTH_WINDOW = 5
 _CLIMB_MIN_GAIN_M = 50
 _CLIMB_END_DROP_M = 20
+_PROFILE_STEP_KM = 0.05
+_WPT_MAX_DIST_M = 200
 
 
 class Climb(BaseModel):
@@ -25,6 +27,16 @@ class GpxSummary(BaseModel):
     max_ele_m: int | None
     climbs: list[Climb]
     warnings: list[str]
+
+
+class ProfilePoint(BaseModel):
+    km: float
+    ele_m: float
+
+
+class Waypoint(BaseModel):
+    name: str
+    km: float
 
 
 class GpxError(ValueError):
@@ -76,8 +88,8 @@ def _detect_climbs(dist_km: list[float], ele: list[float]) -> list[Climb]:
     return climbs
 
 
-def analyze_gpx(data: bytes) -> GpxSummary:
-    """Résume une trace GPX ; lève GpxError si le fichier est illisible ou a moins de 2 points."""
+def _parse(data: bytes) -> tuple[gpxpy.gpx.GPX, list[gpxpy.gpx.GPXTrackPoint], list[float]]:
+    """Fichier GPX, points de trace et km cumulés ; lève GpxError si illisible ou moins de 2 points."""
     try:
         gpx = gpxpy.parse(data)
     except Exception as exc:
@@ -90,6 +102,12 @@ def analyze_gpx(data: bytes) -> GpxSummary:
     for a, b in zip(points, points[1:]):
         step = gpxpy.geo.distance(a.latitude, a.longitude, None, b.latitude, b.longitude, None)
         dist_km.append(dist_km[-1] + step / 1000)
+    return gpx, points, dist_km
+
+
+def analyze_gpx(data: bytes) -> GpxSummary:
+    """Résume une trace GPX ; lève GpxError si le fichier est illisible ou a moins de 2 points."""
+    _, points, dist_km = _parse(data)
     distance_km = round(dist_km[-1], 2)
 
     if any(p.elevation is None for p in points):
@@ -108,6 +126,46 @@ def analyze_gpx(data: bytes) -> GpxSummary:
         climbs=_detect_climbs(dist_km, ele),
         warnings=[],
     )
+
+
+def profile(data: bytes) -> list[ProfilePoint] | None:
+    """Profil d'altitude lissé, rééchantillonné tous les 50 m ; None si la trace n'a pas d'altitude."""
+    _, points, dist_km = _parse(data)
+    if any(p.elevation is None for p in points):
+        return None
+    ele = _smooth([p.elevation for p in points])
+    total = dist_km[-1]
+    kms = [i * _PROFILE_STEP_KM for i in range(int(total / _PROFILE_STEP_KM + 1e-9) + 1)]
+    if total - kms[-1] > 1e-9:
+        kms.append(total)
+    else:
+        kms[-1] = total
+    out: list[ProfilePoint] = []
+    j = 0
+    for km in kms:
+        while j < len(dist_km) - 2 and dist_km[j + 1] < km:
+            j += 1
+        span = dist_km[j + 1] - dist_km[j]
+        t = 0.0 if span <= 0 else min(max((km - dist_km[j]) / span, 0.0), 1.0)
+        out.append(ProfilePoint(km=km, ele_m=ele[j] + t * (ele[j + 1] - ele[j])))
+    return out
+
+
+def waypoints(data: bytes) -> list[Waypoint]:
+    """Waypoints à moins de 200 m de la trace, projetés sur son point le plus proche, triés par km.
+
+    Départ et arrivée (km 0 et distance totale, au 0,01 km près) sont écartés.
+    """
+    gpx, points, dist_km = _parse(data)
+    distance = round(dist_km[-1], 2)
+    found: list[Waypoint] = []
+    for w in gpx.waypoints:
+        dists = [gpxpy.geo.distance(w.latitude, w.longitude, None, p.latitude, p.longitude, None) for p in points]
+        i = min(range(len(dists)), key=dists.__getitem__)
+        km = round(dist_km[i], 2)
+        if dists[i] <= _WPT_MAX_DIST_M and 0 < km < distance:
+            found.append(Waypoint(name=w.name or "Ravito", km=km))
+    return sorted(found, key=lambda x: x.km)
 
 
 def summary_to_text(s: GpxSummary) -> str:

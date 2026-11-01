@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from coach.analysis.gpx import GpxError, _detect_climbs, _smooth, analyze_gpx, summary_to_text
+from coach.analysis.gpx import GpxError, _detect_climbs, _smooth, analyze_gpx, profile, summary_to_text, waypoints
 
 _FIXTURES = Path(__file__).parent.parent / "fixtures" / "gpx"
 
@@ -83,3 +83,31 @@ def test_smooth_attenuates_spike_and_shrinks_window_at_edges():
     assert out[2] == pytest.approx(20.0)
     assert out[0] == pytest.approx(100 / 3) and out[1] == pytest.approx(25.0)  # fenêtres de 3 et 4 points
     assert _smooth([10.0, 20.0]) == [15.0, 15.0]
+
+
+def test_profile_resampled_every_50_m():
+    p = profile(FIX("climb.gpx"))
+    assert p[0].km == 0
+    assert p[-1].km == pytest.approx(analyze_gpx(FIX("climb.gpx")).distance_km, abs=0.01)
+    assert all(b.km - a.km == pytest.approx(0.05, abs=1e-6) for a, b in zip(p, p[1:-1]))
+    top = max((x for x in p if x.km < 5), key=lambda x: x.ele_m)  # 1er sommet : les deux sont à égalité
+    assert top.ele_m == pytest.approx(400, abs=15) and top.km == pytest.approx(4.0, abs=0.2)
+
+
+def test_profile_none_without_elevation():
+    assert profile(FIX("flat_no_ele.gpx")) is None
+
+
+def test_profile_broken_raises():
+    with pytest.raises(GpxError):
+        profile(FIX("broken.gpx"))
+
+
+def test_waypoints_projected_and_filtered():
+    w = waypoints(FIX("trail_wpt.gpx"))
+    assert [x.name for x in w] == ["Ravito Col"]  # départ/arrivée à km 0 / fin, parking hors trace
+    assert w[0].km == pytest.approx(4.0, abs=0.05)
+
+
+def test_waypoints_empty_when_none():
+    assert waypoints(FIX("climb.gpx")) == []

@@ -153,3 +153,5 @@ class RaceStrategy(SQLModel, table=True):
     pending_old_workout_id: int | None = None
     pending_old_schedule_id: int | None = None
     export_error: str | None = None
+    # Empreinte (settings_json + basis_json) du plan au dernier export réussi
+    exported_hash: str | None = None

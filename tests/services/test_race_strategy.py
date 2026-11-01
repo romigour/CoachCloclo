@@ -196,3 +196,55 @@ def test_race_line_for_prompt_ignores_broken_strategy(repo, coach_home, garmin):
     with pytest.raises(CoachError):
         race_plan_for(repo, goal, garmin.today())
     assert race_line_for_prompt(repo, goal, garmin.today()) is None
+
+
+LONG_NAME = "Ravitaillement complet - Refuge de la Croix du Bonhomme (barriere 14h30)"
+
+
+def test_long_waypoint_name_truncated(repo, coach_home, garmin):
+    gpx = (FIXTURES / "trail_wpt.gpx").read_bytes().replace(b"Ravito Col", LONG_NAME.encode())
+    data = GoalInput(type="trail", distance_km=10, d_plus_m=300, race_date=date(2027, 2, 7),
+                     sessions_per_week=3, gpx=gpx)
+    goal = create_goal(repo, garmin, data)
+    assert get_race_view(repo, garmin, goal.id).settings.aid_stations[0].name == LONG_NAME[:60]
+    assert reimport_stations(repo, garmin, goal.id).settings.aid_stations[0].name == LONG_NAME[:60]
+
+
+def test_station_beyond_distance_message_in_french(repo, coach_home, garmin):
+    goal = make_goal(repo, garmin)
+    with pytest.raises(CoachError) as exc:
+        save_settings(repo, garmin, goal.id, RaceSettings(aid_stations=[AidStation(km=10.5, name="X")]))
+    assert "(km 10,5)" in str(exc.value) and "(10,01 km)" in str(exc.value)
+
+
+def test_station_beyond_distance_ignored_on_read(repo, coach_home, garmin):
+    goal = make_goal(repo, garmin, distance_km=9)
+    save_settings(repo, garmin, goal.id, RaceSettings(aid_stations=[AidStation(km=9.5, name="X")]))
+    Path(goal.gpx_path).unlink()
+    view = get_race_view(repo, garmin, goal.id)
+    assert "Ravito « X » au-delà de la distance : ignoré" in view.plan.warnings
+    assert view.plan.aid_passages == [] and [s.name for s in view.settings.aid_stations] == ["X"]
+    with pytest.raises(CoachError, match="dépasse"):
+        save_settings(repo, garmin, goal.id, view.settings)
+
+
+def test_target_faster_than_floor_rejected(repo, coach_home, garmin):
+    goal = make_goal(repo, garmin)
+    with pytest.raises(CoachError, match="2:30/km"):
+        save_settings(repo, garmin, goal.id, RaceSettings(target_time_s=225))  # « 3:45 » lu en m:ss
+    with pytest.raises(CoachError, match="2:30/km"):
+        save_settings(repo, garmin, goal.id, RaceSettings(target_time_s=1450))
+    assert save_settings(repo, garmin, goal.id, RaceSettings(target_time_s=1600)).settings.target_time_s == 1600
+
+
+def test_export_stale_after_changes(repo, coach_home, garmin):
+    goal = make_goal(repo, garmin)
+    assert get_race_view(repo, garmin, goal.id).export_stale is False
+    view = export_race(repo, garmin, goal.id)
+    assert view.export_stale is False
+    assert get_race_view(repo, garmin, goal.id).export_stale is False
+    assert save_settings(repo, garmin, goal.id, view.settings).export_stale is False  # réglages identiques
+    assert save_settings(repo, garmin, goal.id, RaceSettings(target_time_s=4000)).export_stale is True
+    assert export_race(repo, garmin, goal.id).export_stale is False
+    garmin._metrics = Metrics(hr_max=190, hr_rest=50, pred_10k_s=2400)
+    assert refresh_basis(repo, garmin, goal.id).export_stale is True

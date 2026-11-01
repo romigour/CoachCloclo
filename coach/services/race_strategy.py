@@ -1,5 +1,6 @@
 """Stratégie du jour J : création, réglages et lecture du plan de course."""
 
+import hashlib
 from datetime import date
 from pathlib import Path
 from typing import Literal
@@ -20,6 +21,10 @@ from coach.services.plans import _get_goal
 MAX_PROFILE_POINTS = 500
 _GARMIN_ERRORS = (GarminUnavailable, GarminAuthRequired, GarminRateLimited)
 _NO_FILE = "Fichier GPX introuvable : découpage sans profil"
+_IGNORED = "Ravito « {} » au-delà de la distance : ignoré"
+_TOO_FAST = "Temps visé invraisemblable : allure moyenne plus rapide que 2:30/km (format attendu h:mm, ex. 3:45)"
+_MIN_PACE_S_KM = 150
+_NAME_MAX = 60
 
 
 class RaceView(BaseModel):
@@ -34,6 +39,7 @@ class RaceView(BaseModel):
     plan: RacePlan
     workout_id: int | None
     export_error: str | None
+    export_stale: bool  # plan modifié (réglages ou base) depuis le dernier envoi à la montre
 
 
 def _read_gpx(goal: Goal) -> bytes | None:
@@ -61,7 +67,20 @@ def _stations_from_gpx(goal: Goal) -> list[AidStation]:
     data = _read_gpx(goal)
     if goal.type != "trail" or data is None:
         return []
-    return [AidStation(km=w.km, name=w.name, kind="complet", stop_min=3) for w in waypoints(data)]
+    return [
+        AidStation(km=w.km, name=(w.name or "").strip()[:_NAME_MAX] or "Ravito", kind="complet", stop_min=3)
+        for w in waypoints(data)
+    ]
+
+
+def _fmt_km(km: float) -> str:
+    """Kilométrage à la française, deux décimales au plus : 10.0872 → « 10,09 »."""
+    return f"{round(km, 2):g}".replace(".", ",")
+
+
+def _fingerprint(strategy: RaceStrategy) -> str:
+    """Empreinte des réglages et de la base : change dès que le plan envoyé est périmé."""
+    return hashlib.sha256(f"{strategy.settings_json}|{strategy.basis_json}".encode()).hexdigest()
 
 
 def _downsample(points: list[ProfilePoint]) -> list[tuple[float, float]]:
@@ -74,15 +93,24 @@ def _downsample(points: list[ProfilePoint]) -> list[tuple[float, float]]:
     return [(points[i].km, points[i].ele_m) for i in idx]
 
 
-def _compute(strategy: RaceStrategy, goal: Goal, today: date) -> tuple[RacePlan, list[ProfilePoint] | None]:
+def _compute(
+    strategy: RaceStrategy, goal: Goal, today: date, *, strict: bool = False
+) -> tuple[RacePlan, list[ProfilePoint] | None]:
+    """Plan de course ; un ravito au-delà de la distance est refusé (`strict`) ou ignoré avec un avertissement."""
     settings = RaceSettings.model_validate_json(strategy.settings_json)
     basis = RaceBasis.model_validate_json(strategy.basis_json)
     data = _read_gpx(goal)
     prof = profile(data) if data is not None else None
     distance = prof[-1].km if prof else goal.distance_km
-    for st in settings.aid_stations:
-        if st.km >= distance:
-            raise CoachError(f"Le ravito « {st.name} » (km {st.km:g}) dépasse la distance du parcours ({distance:g} km)")
+    beyond = [st for st in settings.aid_stations if st.km >= distance]
+    if strict and beyond:
+        st = beyond[0]
+        raise CoachError(
+            f"Le ravito « {st.name} » (km {_fmt_km(st.km)}) dépasse la distance du parcours ({_fmt_km(distance)} km)"
+        )
+    if beyond:
+        kept = [st for st in settings.aid_stations if st.km < distance]
+        settings = settings.model_copy(update={"aid_stations": kept})
     try:
         plan = build_race_plan(
             distance_km=distance,
@@ -94,6 +122,9 @@ def _compute(strategy: RaceStrategy, goal: Goal, today: date) -> tuple[RacePlan,
         )
     except ValueError as exc:
         raise CoachError(str(exc)) from exc
+    if strict and settings.target_time_s is not None and settings.target_time_s < _MIN_PACE_S_KM * distance:
+        raise CoachError(_TOO_FAST)
+    plan.warnings.extend(_IGNORED.format(st.name) for st in beyond)
     if goal.gpx_path and data is None:
         plan.warnings.append(_NO_FILE)
     elif data is not None and prof is None:
@@ -113,6 +144,7 @@ def _view(strategy: RaceStrategy, goal: Goal, today: date) -> RaceView:
         plan=plan,
         workout_id=strategy.garmin_workout_id,
         export_error=strategy.export_error,
+        export_stale=strategy.garmin_workout_id is not None and strategy.exported_hash != _fingerprint(strategy),
     )
 
 
@@ -142,7 +174,7 @@ def save_settings(repo: Repo, garmin: GarminPort, goal_id: int, settings: RaceSe
     strategy = _get_or_create(repo, garmin, goal)
     settings = settings.model_copy(update={"aid_stations": sorted(settings.aid_stations, key=lambda s: s.km)})
     strategy.settings_json = settings.model_dump_json()
-    _compute(strategy, goal, garmin.today())  # refuse les réglages incohérents avant d'enregistrer
+    _compute(strategy, goal, garmin.today(), strict=True)  # refuse les réglages incohérents avant d'enregistrer
     strategy = repo.update(strategy)
     return _view(strategy, goal, garmin.today())
 
@@ -234,6 +266,7 @@ def export_race(repo: Repo, garmin: GarminPort, goal_id: int) -> RaceView:
     strategy.pending_old_schedule_id = strategy.garmin_schedule_id
     strategy.garmin_workout_id, strategy.garmin_schedule_id = workout_id, schedule_id
     strategy.export_error = None
+    strategy.exported_hash = _fingerprint(strategy)
     strategy = repo.update(strategy)
     try:
         strategy = _cleanup_old(repo, garmin, strategy)

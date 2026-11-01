@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 from coach.api.app import create_app
 from coach.api.deps import hash_pin, verify_pin
 from coach.config import load_settings, save_settings
+from coach.desktop import context
 from coach.desktop.context import Desktop, lan_addresses
 from coach.desktop.updater import UpdateBusy, UpdateError
 from coach.garmin.port import FakeGarminClient, GarminAuthRequired
@@ -261,9 +262,25 @@ def test_lan_toggle_keeps_history_runner(pc, app, lan_done):
 
 
 def test_lan_addresses_filters(monkeypatch):
+    monkeypatch.setattr(context, "_primary_ip", lambda: None)
     infos = [
         (socket.AF_INET, 0, 0, "", (ip, 0))
         for ip in ["127.0.0.1", "169.254.3.4", "192.168.1.20", "8.8.8.8", "10.0.0.2", "192.168.1.20"]
     ]
     monkeypatch.setattr(socket, "getaddrinfo", lambda *a, **k: infos)
     assert lan_addresses(8765) == ["http://10.0.0.2:8765", "http://192.168.1.20:8765"]
+
+
+def test_lan_addresses_keeps_only_primary_interface(monkeypatch):
+    # WSL et Hyper-V ajoutent des cartes virtuelles en 172.x injoignables depuis le téléphone
+    monkeypatch.setattr(context, "_primary_ip", lambda: "192.168.1.73")
+    infos = [(socket.AF_INET, 0, 0, "", (ip, 0)) for ip in ["192.168.1.73", "172.25.48.1", "172.27.240.1"]]
+    monkeypatch.setattr(socket, "getaddrinfo", lambda *a, **k: infos)
+    assert lan_addresses(8765) == ["http://192.168.1.73:8765"]
+
+
+def test_lan_addresses_ignores_public_primary(monkeypatch):
+    monkeypatch.setattr(context, "_primary_ip", lambda: "8.8.4.4")
+    infos = [(socket.AF_INET, 0, 0, "", ("192.168.1.20", 0))]
+    monkeypatch.setattr(socket, "getaddrinfo", lambda *a, **k: infos)
+    assert lan_addresses(8765) == ["http://192.168.1.20:8765"]

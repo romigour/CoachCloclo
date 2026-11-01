@@ -138,3 +138,18 @@ class PersonalRecord(SQLModel, table=True):
     value: float
     garmin_activity_id: int | None = None
     date: dt.date | None = None
+
+
+class RaceStrategy(SQLModel, table=True):
+    """Stratégie du jour J d'un objectif : réglages, base de calcul et export Garmin."""
+
+    id: int | None = Field(default=None, primary_key=True)
+    goal_id: int = Field(unique=True, index=True)
+    settings_json: str  # RaceSettings sérialisé (temps visé, départ, nutrition, ravitos)
+    basis_json: str  # RaceBasis sérialisé (prédictions, allure seuil, zones FC, date de capture)
+    garmin_workout_id: int | None = None
+    garmin_schedule_id: int | None = None
+    # Anciens ids Garmin à supprimer au prochain export
+    pending_old_workout_id: int | None = None
+    pending_old_schedule_id: int | None = None
+    export_error: str | None = None

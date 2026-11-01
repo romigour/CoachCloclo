@@ -9,7 +9,16 @@ from sqlalchemy.engine import Engine
 from sqlmodel import Session as DbSession
 from sqlmodel import SQLModel, create_engine, delete, select
 
-from coach.plan.models import Activity, AthleteSnapshot, Goal, PersonalRecord, Proposal, Race, Session
+from coach.plan.models import (
+    Activity,
+    AthleteSnapshot,
+    Goal,
+    PersonalRecord,
+    Proposal,
+    Race,
+    RaceStrategy,
+    Session,
+)
 
 
 def make_engine(path: Path) -> Engine:
@@ -55,6 +64,10 @@ class Repo:
         with self._open() as db:
             stmt = select(Goal).where(Goal.status == "active").order_by(Goal.id.desc())
             return db.exec(stmt).first()
+
+    def race_strategy(self, goal_id: int) -> RaceStrategy | None:
+        with self._open() as db:
+            return db.exec(select(RaceStrategy).where(RaceStrategy.goal_id == goal_id)).first()
 
     def sessions(self, goal_id: int, week_index: int | None = None) -> list[Session]:
         stmt = select(Session).where(Session.goal_id == goal_id)

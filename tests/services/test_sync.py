@@ -259,3 +259,11 @@ def test_sync_survives_laps_error_and_retries_next_time(repo, coach_home, accept
     garmin.fail_on.clear()
     sync(repo, garmin, FakeLLMProvider([adjustment_json()]), now=NOW)
     assert len(repo.laps(activity.id)) == 1
+
+
+def test_proposal_prompt_contains_step_detail(repo, coach_home, accepted_plan):
+    laps = {1: [LapSummary(index=0, duration_s=600, distance_m=1800, avg_hr=140, step_order=1)]}
+    garmin = FakeGarminClient(metrics=METRICS, activities=[run_summary()], today=date(2026, 11, 4), laps=laps)
+    llm = FakeLLMProvider([adjustment_json()])
+    sync(repo, garmin, llm, now=NOW)
+    assert "· échauffement" in llm.calls[0]

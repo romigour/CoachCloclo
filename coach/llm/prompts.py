@@ -4,6 +4,7 @@ import datetime as dt
 import json
 from typing import get_args
 
+from coach.analysis.laps import StepComparison, StepResult
 from coach.analysis.zones import Zones
 from coach.llm.schemas import AdjustmentResponse, PlanResponse, Weekday
 from coach.plan.calendar import week_of
@@ -11,6 +12,7 @@ from coach.plan.models import Activity, Goal, Session
 
 HISTORY_WEEKS = 8
 HISTORY_MAX_LINES = 60
+MAX_LAP_LINES = 30
 _WEEKDAYS = get_args(Weekday)
 _MONTHS = (
     "janvier", "février", "mars", "avril", "mai", "juin",
@@ -34,6 +36,102 @@ avec "hr", ce sont des zones de FC (Z1 à Z5).
 
 def _fmt_pace(s: int) -> str:
     return f"{s // 60}:{s % 60:02d}"
+
+_KIND_LABELS = {"warmup": "échauffement", "active": "actif", "recovery": "récup", "cooldown": "retour au calme"}
+_VERDICT_LABELS = {"fast": "trop vite", "slow": "trop lent", "hr_high": "FC trop haute", "hr_low": "FC trop basse"}
+_INDENT = "    "
+_DETAIL_RULE = (
+    "Le détail par étape compare le réalisé aux zones cibles ; "
+    "appuie ton analyse dessus quand il est présent."
+)
+
+
+def _planned_volume(r: StepResult) -> str:
+    if r.planned_distance_m is not None:
+        return f"{r.planned_distance_m} m"
+    d = r.planned_duration_s or 0
+    return f"{d // 60} min" if d >= 60 and d % 60 == 0 else f"{d} s"
+
+
+def _zone_text(r: StepResult, target_kind: str) -> str:
+    if r.zone is None:
+        return ""
+    if r.target_low is None or r.target_high is None:
+        return f" {r.zone}"
+    if target_kind == "pace":
+        return f" {r.zone} [{_fmt_pace(round(r.target_low))}–{_fmt_pace(round(r.target_high))}/km]"
+    return f" {r.zone} [{round(r.target_low)}–{round(r.target_high)} bpm]"
+
+
+def _step_head(r: StepResult, target_kind: str) -> str:
+    return f"{_KIND_LABELS[r.kind]} {_planned_volume(r)}{_zone_text(r, target_kind)}"
+
+
+def _with_verdict(text: str, r: StepResult) -> str:
+    return f"{text} ({_VERDICT_LABELS[r.verdict]})" if r.verdict in _VERDICT_LABELS else text
+
+
+def _simple_step_line(r: StepResult, target_kind: str) -> str:
+    head = _step_head(r, target_kind)
+    if not r.done:
+        return f"{head} : non réalisée"
+    parts = []
+    if r.duration_s is not None:
+        parts.append(_fmt_pace(round(r.duration_s)))
+    if r.avg_pace_s_km is not None:
+        parts.append(f"{_fmt_pace(round(r.avg_pace_s_km))}/km")
+    if r.avg_hr is not None:
+        parts.append(f"{r.avg_hr} bpm")
+    return _with_verdict(f"{head} : {', '.join(parts)}", r)
+
+
+def _repeat_value(r: StepResult, target_kind: str) -> str:
+    if not r.done:
+        return "non réalisée"
+    if target_kind == "pace":
+        value = _fmt_pace(round(r.avg_pace_s_km)) if r.avg_pace_s_km is not None else "?"
+    else:
+        value = f"{r.avg_hr} bpm" if r.avg_hr is not None else "?"
+    return _with_verdict(value, r)
+
+
+def _repeat_lines(group: list[StepResult], target_kind: str) -> list[str]:
+    by_position: dict[int, list[StepResult]] = {}
+    for r in group:
+        by_position.setdefault(r.position, []).append(r)
+    return [
+        f"{len(rs)}× {_step_head(rs[0], target_kind)} : " + ", ".join(_repeat_value(r, target_kind) for r in rs)
+        for _, rs in sorted(by_position.items())
+    ]
+
+
+def _lap_line(n: int, lap) -> str:
+    parts = [f"{round(lap.distance_m)} m", _fmt_pace(round(lap.duration_s))]
+    if lap.avg_pace_s_km is not None:
+        parts.append(f"{_fmt_pace(round(lap.avg_pace_s_km))}/km")
+    if lap.avg_hr is not None:
+        parts.append(f"{lap.avg_hr} bpm")
+    return f"· tour {n} : " + ", ".join(parts)
+
+
+def _comparison_lines(c: StepComparison) -> list[str]:
+    """Lignes (sans indentation) du détail par étape, ou des tours bruts en mode dégradé."""
+    if not c.followed_workout:
+        lines = ["séance non suivie sur la montre, tours :"]
+        lines += [_lap_line(n, lap) for n, lap in enumerate(c.laps[:MAX_LAP_LINES], start=1)]
+        if len(c.laps) > MAX_LAP_LINES:
+            lines.append(f"… {len(c.laps) - MAX_LAP_LINES} tours de plus")
+        return lines
+    groups: dict[int, list[StepResult]] = {}
+    for r in c.steps:
+        groups.setdefault(r.group, []).append(r)
+    lines = []
+    for group in groups.values():
+        if group[0].iteration is None:
+            lines.append("· " + _simple_step_line(group[0], c.target_kind))
+        else:
+            lines += ["· " + line for line in _repeat_lines(group, c.target_kind)]
+    return lines
 
 
 def _zones_text(zones: Zones) -> str:
@@ -127,6 +225,14 @@ def _done_line(s: Session, a: Activity) -> str:
     return f"- prévu : {s.title} ({s.type}) -> réalisé : " + _activity_line(a)[2:]
 
 
+def _done_block(s: Session, a: Activity, comparisons: dict[int, StepComparison]) -> str:
+    comparison = comparisons.get(s.id)
+    if comparison is None:
+        return _done_line(s, a)
+    detail = [_INDENT + line for line in _comparison_lines(comparison)]
+    return "\n".join([_done_line(s, a), *detail])
+
+
 def build_adjustment_prompt(
     goal: Goal,
     zones: Zones,
@@ -135,8 +241,13 @@ def build_adjustment_prompt(
     missed: list[Session],
     upcoming: list[Session],
     history: list[Activity],
+    comparisons: dict[int, StepComparison] | None = None,
 ) -> str:
-    """Prompt de proposition d'ajustements après une synchronisation."""
+    """Prompt de proposition d'ajustements après une synchronisation.
+
+    `comparisons` (clé = Session.id) ajoute le détail par étape sous les séances réalisées concernées.
+    """
+    comparisons = comparisons or {}
     parts = [
         _goal_text(goal),
         f"Nous sommes en semaine {current_week} du plan, à raison de {goal.sessions_per_week} séances "
@@ -144,7 +255,8 @@ def build_adjustment_prompt(
         "pour les séances à venir (liste vide si aucun changement n'est utile).",
         _zones_text(zones),
         "Séances réalisées (prévu -> réalisé) :\n"
-        + ("\n".join(_done_line(s, a) for s, a in done) if done else "aucune"),
+        + ("\n".join(_done_block(s, a, comparisons) for s, a in done) if done else "aucune")
+        + (f"\n{_DETAIL_RULE}" if comparisons else ""),
         "Séances manquées :\n"
         + ("\n".join(f"- {s.title} ({s.type}, semaine {s.week_index})" for s in missed) if missed else "aucune"),
         "Séances à venir :\n" + ("\n".join(_session_line(s) for s in upcoming) if upcoming else "aucune"),

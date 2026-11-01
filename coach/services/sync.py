@@ -6,6 +6,7 @@ from datetime import date, datetime, timedelta
 from pydantic import BaseModel
 from sqlmodel import select
 
+from coach.analysis.laps import StepComparison
 from coach.analysis.compliance import mark_missed, match_activities
 from coach.analysis.zones import Zones
 from coach.config import load_settings, save_settings
@@ -20,7 +21,7 @@ from coach.plan.repo import Repo
 from coach.services.activities import store_summaries
 from coach.services.context import recent_history, refresh_snapshot
 from coach.services.history import refresh_records
-from coach.services.laps import fetch_missing_laps
+from coach.services.laps import fetch_missing_laps, session_comparison
 
 FIRST_SYNC_DAYS = 56
 OVERLAP_DAYS = 2
@@ -113,7 +114,14 @@ def _propose(
     week_of_session = {s.id: s.week_index for s in sessions}
     pace_available = zones.pace is not None
 
-    prompt = build_adjustment_prompt(goal, zones, current_week, done, missed, upcoming, recent_history(garmin))
+    comparisons = {}
+    for s, _ in done:
+        comparison = session_comparison(repo, s, zones)
+        if isinstance(comparison, StepComparison):
+            comparisons[s.id] = comparison
+    prompt = build_adjustment_prompt(
+        goal, zones, current_week, done, missed, upcoming, recent_history(garmin), comparisons
+    )
     adj = ask_structured(
         llm,
         SYSTEM_PROMPT,

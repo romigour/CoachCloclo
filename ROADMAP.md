@@ -9,12 +9,27 @@ Idées d'amélioration, dans l'ordre où elles ont été notées.
 - [x] Installation facile sans cloner le projet : les scripts d'installation récupèrent la wheel de la dernière release GitHub (il reste à publier la première release, voir « Publier une version » dans le README)
 - [x] Page de statistiques globales sur l'ensemble de mes données, avec filtres. Elle doit être belle mais surtout utile. Ajouter mes records sur les distances, les temps de course officiels et les classements si possible
 - [x] Installateur Windows avec mise à jour intégrée (lancement sans terminal, écran d'accueil, mode LAN dans les Réglages)
+- [x] Demander des idées de fonctionnalités pour la suite de l'application (ajoutées ci-dessous)
 
 ## À faire
 
 - [ ] Publier une page statique avec mon programme d'entraînement (GitHub Pages ?)
 - [ ] Demander un avis lors de la récupération d'une séance effectuée : séance non effectuée, trop difficile, bien, trop facile. L'avis doit agir très légèrement sur la suite du programme
 - [ ] Se renseigner : est-il possible de renommer une activité Garmin exportée vers Strava, pour reprendre dans Strava le bon titre et la bonne description de l'activité Garmin ?
-- [ ] Demander des idées de fonctionnalités pour la suite de l'application
 - [ ] README avec des captures d'écran de l'application
 - [ ] Audit de sécurité
+- [ ] Comparer le prévu et le réalisé étape par étape : rapprocher les tours (laps) Garmin des étapes du workout, l'afficher dans le détail de la séance et le transmettre à Claude pour l'ajustement (aujourd'hui il ne voit que le résumé global de l'activité)
+- [ ] Forme et fatigue dans le contexte de Claude : charge aiguë/chronique (ATL/CTL), statut d'entraînement Garmin, VFC, sommeil, Body Battery ; graphe « forme / fatigue » dans Stats
+- [ ] Indisponibilités : vacances, blessure, jours impossibles (« pas dispo le mardi ») qui déclenchent une proposition de replanification
+- [ ] Valider les hypothèses sur les données Garmin réelles : fixtures de test synthétiques à remplacer, unité de la vitesse seuil, identifiant de planification, format des workouts (voir « Données réelles à vérifier » dans le README)
+- [ ] Stratégie du jour J : prédiction de temps, allure ou temps par segment à partir du GPX (montées, descentes), plan de ravitaillement et barrières horaires en trail
+- [ ] Bilan de fin de préparation à l'archivage de l'objectif : prévu contre réalisé, progression des métriques, temps visé contre temps réel ; contexte réutilisé pour la préparation suivante
+- [ ] Discuter avec le coach : question libre avec le contexte du plan, la réponse pouvant proposer un ajustement à valider
+- [ ] Rappel de la séance du jour par une notification Windows (icône près de l'horloge)
+- [ ] Revoir l'icône des Réglages
+- [ ] Créer un mode clair / sombre
+- [ ] Revoir le logo et l'icône de l'application
+- [ ] Ajouter l'allure en min/km dans le détail des séances, en plus des zones
+- [ ] Vérifier le fonctionnement des propositions de Claude : comment sont construites et appliquées ses mises à jour du programme ?
+- [ ] Revoir le design pour éviter le défilement sur PC
+- [ ] Ajouter des objectifs secondaires

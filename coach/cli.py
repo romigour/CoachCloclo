@@ -2,6 +2,7 @@
 
 import getpass
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -141,6 +142,49 @@ def update():
     except (OSError, RuntimeError, ValueError) as e:
         typer.echo(f"Impossible de trouver la dernière version : {e}")
         raise typer.Exit(1) from e
-    result = subprocess.run([uv, "tool", "install", "--force", "--python", "3.12", url])
-    if result.returncode != 0:
-        raise typer.Exit(result.returncode)
+    install = [uv, "tool", "install", "--force", "--python", "3.12", url]
+    if sys.platform != "win32":
+        result = subprocess.run(install)
+        if result.returncode != 0:
+            raise typer.Exit(result.returncode)
+        return
+    # Windows : un exécutable en cours d'exécution ne peut pas être supprimé. uv efface le
+    # venv avant de le recréer et le laisserait à moitié vide (« No module named 'coach' »).
+    others = running_coach_processes()
+    if others:
+        typer.echo("CoachCloclo tourne encore et bloque la mise à jour :")
+        for pid, cmd in others:
+            typer.echo(f"  PID {pid} : {cmd}")
+        typer.echo("Arrête-le (Ctrl+C dans sa fenêtre, ou Stop-Process -Id <PID>) "
+                   "puis relance coach update.")
+        raise typer.Exit(1)
+    update_after_exit(install)
+    typer.echo("La mise à jour se poursuit dans une nouvelle fenêtre.")
+
+
+def running_coach_processes() -> list[tuple[int, str]]:
+    """Autres processus lancés avec le Python de l'outil (Windows), hors celui-ci et son
+    parent (le python.exe d'un venv uv n'est qu'un lanceur du Python de base)."""
+    mine = {os.getpid(), os.getppid()}
+    script = ("Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath -eq $env:COACH_PYTHON } "
+              "| ForEach-Object { \"$($_.ProcessId)`t$($_.CommandLine)\" }")
+    out = subprocess.run(["powershell", "-NoProfile", "-Command", script], capture_output=True,
+                         text=True, env={**os.environ, "COACH_PYTHON": sys.executable}).stdout
+    procs = []
+    for line in out.splitlines():
+        pid, _, cmd = line.partition("\t")
+        if pid.strip().isdigit() and int(pid) not in mine:
+            procs.append((int(pid), cmd.strip()))
+    return procs
+
+
+def update_after_exit(install: list[str]) -> None:
+    """Lance l'installation dans une nouvelle console, une fois ce processus terminé."""
+    script = (f"Wait-Process -Id {os.getpid()},{os.getppid()} -ErrorAction SilentlyContinue; "
+              "$a = $env:COACH_INSTALL -split \"`n\"; & $a[0] $a[1..($a.Length - 1)]; "
+              "if ($LASTEXITCODE -eq 0) { Write-Host 'Mise à jour terminée.' } "
+              "else { Write-Host \"Échec de la mise à jour (code $LASTEXITCODE).\" }; "
+              "Read-Host 'Entrée pour fermer'")
+    subprocess.Popen(["powershell", "-NoProfile", "-Command", script],
+                     env={**os.environ, "COACH_INSTALL": "\n".join(install)},
+                     creationflags=getattr(subprocess, "CREATE_NEW_CONSOLE", 0))

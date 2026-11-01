@@ -38,8 +38,24 @@
 
   let comparison = $state<Comparison | null>(null);
   let comparisonAsked = false;
+  let failed = $state(false);
+  let detailsEl = $state<HTMLDetailsElement>();
 
   const matched = $derived(activities.find((a) => a.session_id === session.id) ?? null);
+  /** Identité de ce qui est comparé : change avec la séance affichée ou l'activité rattachée. */
+  const comparisonKey = $derived(`${session.id}:${matched?.id ?? ""}`);
+  let seenKey = comparisonKey;
+
+  // Une autre séance (ou une autre activité après « Corriger ») invalide le détail déjà chargé.
+  $effect(() => {
+    const key = comparisonKey;
+    if (key === seenKey) return;
+    seenKey = key;
+    comparison = null;
+    comparisonAsked = false;
+    failed = false;
+    if (detailsEl) detailsEl.open = false;
+  });
   const lines = $derived(formatSteps(session.steps));
   const levels = $derived(session.steps.map((item) => ("repeat" in item ? peakLevel([item]) : stepLevel(item))));
   const total = $derived(totalSeconds(session.steps));
@@ -73,17 +89,22 @@
   async function loadComparison() {
     if (comparisonAsked) return;
     comparisonAsked = true;
+    failed = false;
+    const key = comparisonKey;
     try {
-      comparison = await api.comparison(session.id);
+      const result = await api.comparison(session.id);
+      if (key === seenKey) comparison = result;
     } catch (e) {
+      if (key !== seenKey) return;
       comparisonAsked = false;
+      failed = true;
       onerror?.(e);
     }
   }
 
   function lapLine(l: { index: number; duration_s: number; distance_m: number; avg_hr: number | null; avg_pace_s_km: number | null }) {
     return [
-      `${l.index}`,
+      `${l.index + 1}`,
       `${Math.round(l.distance_m)} m`,
       fmtClock(l.duration_s),
       l.avg_pace_s_km != null ? paceText(l.avg_pace_s_km) : null,
@@ -152,7 +173,7 @@
       </button>
     </div>
     {#if session.status === "done" && matched}
-      <details class="cmp" ontoggle={(e) => e.currentTarget.open && loadComparison()}>
+      <details class="cmp" bind:this={detailsEl} ontoggle={(e) => e.currentTarget.open && loadComparison()}>
         <summary>Prévu / réalisé</summary>
         {#if comparison?.available}
           {#if comparison.followed_workout}
@@ -167,7 +188,7 @@
                   {#if s.done}
                     <span class="cmp-done">{doneLabel(s)}</span>
                     <span class="pill {s.verdict === 'in' ? 'done' : s.verdict ? 'todo' : ''}">
-                      {s.verdict ? VERDICT_LABEL[s.verdict] : "sans cible"}
+                      {s.verdict ? VERDICT_LABEL[s.verdict] : s.zone ? "donnée absente" : "sans cible"}
                     </span>
                   {:else}
                     <span class="cmp-done">non réalisée</span>
@@ -187,6 +208,8 @@
           {#if comparison.reason === "no_laps"}
             <p class="meta">Détail par étape disponible après la prochaine synchro</p>
           {/if}
+        {:else if failed}
+          <p class="meta">Impossible de charger le détail</p>
         {:else}
           <p class="meta">Chargement…</p>
         {/if}

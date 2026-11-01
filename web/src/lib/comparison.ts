@@ -45,10 +45,29 @@ export function targetLabel(s: StepResult, kind: "pace" | "hr"): string | null {
   return `${s.zone} ${range}`;
 }
 
-/** « 412 m · 3:48/km · 172 bpm », éléments manquants omis. */
+/** « (+12 m) » / « (−0:30) » : écart signé au prévu, vide s'il est nul. */
+function signedGap(actual: number, planned: number, fmt: (abs: number) => string): string {
+  const diff = Math.round(actual - planned);
+  if (diff === 0) return "";
+  return ` (${diff > 0 ? "+" : "−"}${fmt(Math.abs(diff))})`;
+}
+
+/** Volume réalisé avec son écart au prévu : « 412 m (+12 m) » ou « 14:30 (−0:30) » ; null sans mesure. */
+function volumeLabel(s: StepResult): string | null {
+  if (s.planned_duration_s != null && s.planned_distance_m == null) {
+    if (s.duration_s == null) return null;
+    return `${fmtClock(s.duration_s)}${signedGap(s.duration_s, s.planned_duration_s, fmtClock)}`;
+  }
+  if (s.distance_m == null) return null;
+  const meters = Math.round(s.distance_m);
+  const gap = s.planned_distance_m != null ? signedGap(meters, s.planned_distance_m, (d) => `${d} m`) : "";
+  return `${meters} m${gap}`;
+}
+
+/** « 412 m (+12 m) · 3:48/km · 172 bpm », éléments manquants omis. */
 export function doneLabel(s: StepResult): string {
   return [
-    s.distance_m != null ? `${Math.round(s.distance_m)} m` : null,
+    volumeLabel(s),
     s.avg_pace_s_km != null ? paceText(s.avg_pace_s_km) : null,
     s.avg_hr != null ? `${Math.round(s.avg_hr)} bpm` : null,
   ]

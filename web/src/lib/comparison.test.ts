@@ -32,6 +32,25 @@ test("doneLabel omits missing values", () => {
   expect(doneLabel(step({ distance_m: 412, avg_pace_s_km: 228 }))).toBe("412 m · 3:48/km");
 });
 
+test("doneLabel shows the signed distance gap for a distance step", () => {
+  const p = { planned_distance_m: 400, avg_pace_s_km: 228, avg_hr: 172 };
+  expect(doneLabel(step({ ...p, distance_m: 412 }))).toBe("412 m (+12 m) · 3:48/km · 172 bpm");
+  expect(doneLabel(step({ ...p, distance_m: 388 }))).toBe("388 m (−12 m) · 3:48/km · 172 bpm");
+  expect(doneLabel(step({ ...p, distance_m: 400 }))).toBe("400 m · 3:48/km · 172 bpm");
+});
+
+test("doneLabel shows actual duration and signed gap for a duration step", () => {
+  const p = { planned_duration_s: 900, avg_pace_s_km: 330 };
+  expect(doneLabel(step({ ...p, duration_s: 870 }))).toBe("14:30 (−0:30) · 5:30/km");
+  expect(doneLabel(step({ ...p, duration_s: 905 }))).toBe("15:05 (+0:05) · 5:30/km");
+  expect(doneLabel(step({ ...p, duration_s: 900 }))).toBe("15:00 · 5:30/km");
+});
+
+test("doneLabel omits the volume when the actual one is null", () => {
+  expect(doneLabel(step({ planned_distance_m: 400, avg_pace_s_km: 228 }))).toBe("3:48/km");
+  expect(doneLabel(step({ planned_duration_s: 900, avg_hr: 150 }))).toBe("150 bpm");
+});
+
 test("repeatSummary counts active steps in target", () => {
   const steps = [step({ group: 1, kind: "warmup" })];
   for (let i = 1; i <= 6; i++) {

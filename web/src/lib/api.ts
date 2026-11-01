@@ -134,6 +134,16 @@ export type Status = {
   history: HistoryState;
 };
 
+/** État de la mise à jour (GET /api/update, présent seulement dans l'appli de bureau). */
+export type UpdateView = {
+  current: string;
+  latest: string | null;
+  available: boolean;
+  state: "idle" | "checking" | "downloading" | "installing" | "failed";
+  progress: number;
+  error: string | null;
+};
+
 /** État de l'écran d'accueil (GET /api/setup/status, présent seulement dans l'appli de bureau). */
 export type SetupStatus = {
   claude_cli: boolean;
@@ -251,6 +261,18 @@ export const api = {
       throw e;
     }
   },
+  /** `null` sous `coach start` (pas d'appli de bureau : l'endpoint répond 404). */
+  update: async (): Promise<UpdateView | null> => {
+    try {
+      return await get<UpdateView>("/update");
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 404) return null;
+      throw e;
+    }
+  },
+  checkUpdate: () => post<UpdateView>("/update/check"),
+  installUpdate: () => post<{ status: string }>("/update/install"),
+  version: () => get<{ version: string }>("/version"),
   installClaude: () => post<{ status: string }>("/setup/claude/install"),
   loginClaude: () => post<{ status: string }>("/setup/claude/login"),
   settings: () => get<SettingsView>("/settings"),

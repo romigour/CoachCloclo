@@ -3,6 +3,7 @@
   import { api, ApiError, type SettingsView, type Status } from "../lib/api";
   import ErrorBanner from "../components/ErrorBanner.svelte";
   import GarminLogin from "../components/GarminLogin.svelte";
+  import UpdateSettings from "../components/UpdateSettings.svelte";
   import Icon from "../components/Icon.svelte";
 
   let { onchanged, onconnected }: { onchanged?: () => void; onconnected?: () => void } = $props();
@@ -117,6 +118,8 @@
     <p><a href="#/welcome">Assistant de configuration</a> : installer ou reconnecter Claude, puis Garmin.</p>
   </section>
 {/if}
+
+<UpdateSettings />
 
 <section class="card stack">
   <h2>Historique Garmin</h2>

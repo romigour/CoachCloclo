@@ -2,6 +2,7 @@
   import { onMount } from "svelte";
   import { api, ApiError, claudeSkipped, setupDone, type SetupStatus, type Status } from "./lib/api";
   import ErrorBanner from "./components/ErrorBanner.svelte";
+  import UpdateBanner from "./components/UpdateBanner.svelte";
   import Sidebar from "./components/Sidebar.svelte";
   import Welcome from "./routes/Welcome.svelte";
   import Setup from "./routes/Setup.svelte";
@@ -146,6 +147,7 @@
   <Sidebar {route} {status} {syncing} {lastSync} onsync={sync} />
 
   <main class="content">
+    <UpdateBanner />
     <ErrorBanner {error} onpin={start} {setupAvailable} />
 
     {#if syncing}

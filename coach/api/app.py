@@ -300,7 +300,7 @@ def create_app(
 
     @api.get("/status")
     def status(repo: RepoDep):
-        garmin = garmin_state(garmin_factory)
+        garmin = garmin_state(app.state.garmin_factory)
         goal = repo.active_goal()
         proposal = repo.pending_proposal()
         history = load_state()
@@ -618,7 +618,7 @@ def create_app(
 
     app.include_router(api)
     if desktop is not None:
-        app.state.garmin_state = lambda: garmin_state(garmin_factory)
+        app.state.garmin_state = lambda: garmin_state(app.state.garmin_factory)
         app.include_router(desktop_router(desktop))
     if WEB_DIST.is_dir():
         app.mount("/", StaticFiles(directory=WEB_DIST, html=True), name="web")

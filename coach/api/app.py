@@ -21,8 +21,10 @@ from sqlmodel import select
 
 from coach.analysis.compliance import RUNNING_TYPES
 from coach.analysis.gpx import GpxError
+from coach.api.desktop_routes import desktop_router
 from coach.api.deps import get_garmin, get_llm, is_loopback, verify_pin
 from coach.config import Settings, db_path, load_settings, save_settings, tokenstore_dir
+from coach.desktop.context import Desktop
 from coach.garmin.client import GarminClient
 from coach.garmin.port import (
     GarminAuthRequired,
@@ -211,6 +213,17 @@ def _host_allowed(host_header: str, lan: bool, extra: set[str]) -> bool:
     return name in {machine, machine + ".local"}
 
 
+def garmin_state(factory: Callable[[], GarminPort]) -> str:
+    """« ok », « auth_required » ou « unavailable » selon ce que renvoie la fabrique Garmin."""
+    try:
+        factory()
+    except GarminAuthRequired:
+        return "auth_required"
+    except (GarminUnavailable, GarminRateLimited):
+        return "unavailable"
+    return "ok"
+
+
 def create_app(
     *,
     lan: bool,
@@ -220,6 +233,7 @@ def create_app(
     login_client=GarminClient,
     clock: Callable[[], float] = time.monotonic,
     extra_hosts: set[str] | frozenset[str] = frozenset(),
+    desktop: Desktop | None = None,
 ) -> FastAPI:
     """`login_client` (start_login/finish_login) et `clock` sont injectables pour les tests."""
     if lan and not load_settings().pin_hash:
@@ -286,13 +300,7 @@ def create_app(
 
     @api.get("/status")
     def status(repo: RepoDep):
-        try:
-            app.state.garmin_factory()
-            garmin = "ok"
-        except GarminAuthRequired:
-            garmin = "auth_required"
-        except (GarminUnavailable, GarminRateLimited):
-            garmin = "unavailable"
+        garmin = garmin_state(garmin_factory)
         goal = repo.active_goal()
         proposal = repo.pending_proposal()
         history = load_state()
@@ -609,6 +617,9 @@ def create_app(
         return {"status": "started"}
 
     app.include_router(api)
+    if desktop is not None:
+        app.state.garmin_state = lambda: garmin_state(garmin_factory)
+        app.include_router(desktop_router(desktop))
     if WEB_DIST.is_dir():
         app.mount("/", StaticFiles(directory=WEB_DIST, html=True), name="web")
     return app

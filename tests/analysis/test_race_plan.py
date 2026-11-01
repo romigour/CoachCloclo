@@ -4,9 +4,16 @@ import pytest
 
 from coach.analysis.gpx import ProfilePoint
 from coach.analysis.race_plan import (
+    LATE,
+    NO_TIME,
+    STALE,
+    AidStation,
     RaceBasis,
+    RaceSettings,
+    build_race_plan,
     grade_multiplier,
     predict_run_time,
+    race_hr_zone,
     split_segments,
     step_eq_km,
 )
@@ -100,3 +107,81 @@ def test_slices_without_profile(dist, n, first):
     s = split_segments(None, dist)
     assert len(s) == n and s[0].end_km == first and s[-1].end_km == dist
     assert all(x.kind == "plat" and x.eq_km == pytest.approx(x.end_km - x.start_km) for x in s)
+
+
+BASIS = RaceBasis(captured_on=date(2026, 11, 1), pred_5k_s=None, pred_10k_s=2880, pred_half_s=None,
+                  pred_marathon_s=None, threshold_pace_s_km=None,
+                  hr={"Z1": (100, 120), "Z2": (120, 140), "Z3": (140, 160), "Z4": (160, 175), "Z5": (175, 190)})
+TODAY = date(2026, 11, 2)
+
+
+def plan(**kw):
+    args = dict(distance_km=10, trail=False, profile=None, basis=BASIS, settings=RaceSettings(), today=TODAY)
+    return build_race_plan(**{**args, **kw})
+
+
+def test_flat_route_prediction_and_pace_targets():
+    p = plan()
+    assert p.predicted_time_s == p.reference_time_s == 2880 and len(p.segments) == 10
+    s = p.segments[0]
+    assert (s.time_s, s.pace_s_km, s.target_kind, s.target_low, s.target_high) == (288, 288, "pace", 283, 293)
+    assert p.segments[-1].clock == "08:48" and p.aid_passages == [] and p.nutrition == []
+
+
+def test_target_time_rescales():
+    p = plan(settings=RaceSettings(target_time_s=2700))
+    assert p.predicted_time_s == 2880 and p.reference_time_s == 2700 and p.segments[0].time_s == 270
+
+
+def test_climb_slower_than_flat():
+    p = plan(trail=True, distance_km=6, profile=_prof([(1, 0), (3, 0.10), (1, -0.30), (1, 0)]))
+    flat, up = p.segments[0], p.segments[1]
+    assert up.pace_s_km > flat.pace_s_km and up.target_kind == "hr"
+
+
+STATION = AidStation(km=5, name="Col", kind="complet", cutoff="08:50", stop_min=3)
+
+
+def test_aid_passage_margin_and_nutrition():
+    p = plan(trail=True, settings=RaceSettings(aid_stations=[STATION]))
+    assert p.stops_s == 180 and p.reference_time_s == 3060
+    a = p.aid_passages[0].predicted
+    assert (a.elapsed_s, a.clock, a.margin_min, a.status) == (1440, "08:24", 26, "serré")
+    assert [(n.from_name, n.to_name, n.duration_s, n.carbs_g, n.water_ml) for n in p.nutrition] == [
+        ("Départ", "Col", 1440, 24, 200), ("Col", "Arrivée", 1440, 24, 200)]
+
+
+def test_late_cutoff_warns_and_capacity_alert():
+    st = STATION.model_copy(update={"cutoff": "08:20"})
+    p = plan(trail=True, settings=RaceSettings(aid_stations=[st], carry_ml=100))
+    assert p.aid_passages[0].predicted.status == "hors délai"
+    assert LATE.format("Col") in p.warnings and all(n.over_capacity for n in p.nutrition)
+
+
+def test_target_passage_computed_alongside_predicted():
+    p = plan(trail=True, settings=RaceSettings(aid_stations=[STATION], target_time_s=3600))
+    assert p.aid_passages[0].target.elapsed_s == 1710 and p.aid_passages[0].predicted.elapsed_s == 1440
+
+
+def test_target_not_above_stops_rejected():
+    with pytest.raises(ValueError, match="arrêts"):
+        plan(trail=True, settings=RaceSettings(aid_stations=[STATION], target_time_s=180))
+
+
+def test_no_reference_time():
+    b = BASIS.model_copy(update={"pred_10k_s": None})
+    p = plan(basis=b)
+    assert p.predicted_time_s is None and p.segments[0].time_s is None and NO_TIME in p.warnings
+
+
+def test_stale_basis_warns():
+    assert STALE.format(date(2026, 11, 1)) in plan(today=date(2026, 12, 5)).warnings
+
+
+def test_clock_wraps_after_midnight():
+    assert plan(settings=RaceSettings(start_time="23:30")).segments[-1].clock == "00:18"
+
+
+@pytest.mark.parametrize("t,z", [(5000, "Z4"), (10000, "Z3"), (14400, "Z3"), (20000, "Z2")])
+def test_race_hr_zone(t, z):
+    assert race_hr_zone(t) == z

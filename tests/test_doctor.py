@@ -1,8 +1,10 @@
 import socket
 import subprocess
+import sys
 from datetime import date
 
 from coach.doctor import Check, fix, run_checks
+from coach.proc import NO_WINDOW
 from coach.garmin.port import FakeGarminClient, GarminAuthRequired
 from coach.llm.provider import FakeLLMProvider, LLMUnavailable, LLMUsageLimit
 
@@ -37,6 +39,17 @@ def test_missing_claude_cli_reported(coach_home):
     checks = run_checks(live=False, which=lambda n: None if n == "claude" else "/x")
     c = by_name(checks, "claude_cli")
     assert not c.ok and c.fixable
+
+
+def test_claude_cli_check_finds_local_bin(coach_home, tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
+    name = "claude.exe" if sys.platform == "win32" else "claude"
+    exe = tmp_path / ".local" / "bin" / name
+    exe.parent.mkdir(parents=True)
+    exe.write_text("")
+    c = by_name(run_checks(live=False, which=lambda n: None if n == "claude" else "/x"), "claude_cli")
+    assert c.ok and str(exe) in c.detail
 
 
 def test_usage_limit_reported_on_auth_check(coach_home):
@@ -105,15 +118,17 @@ def test_fix_data_dir_creates_folder(tmp_path):
 
 
 def test_fix_claude_cli_runs_installer():
-    calls = []
+    calls, kws = [], []
 
     def runner(args, **kw):
         calls.append(args)
+        kws.append(kw)
         return subprocess.CompletedProcess(args, 0)
 
     c = Check(name="claude_cli", ok=False, detail="", fix_hint=None, fixable=True)
     assert fix(c, runner=runner) is True
     assert "claude.ai/install" in " ".join(calls[0])
+    assert kws[0] == {"creationflags": NO_WINDOW}
 
 
 def test_auth_reports_cli_absent_when_cli_check_failed(coach_home):

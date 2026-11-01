@@ -28,7 +28,10 @@ class Metrics(BaseModel):
     hr_rest: int | None = None
     threshold_hr: int | None = None
     threshold_pace_s_km: int | None = None
+    pred_5k_s: int | None = None
     pred_10k_s: int | None = None
+    pred_half_s: int | None = None
+    pred_marathon_s: int | None = None
     hr_zones: list[int] | None = None
 
 

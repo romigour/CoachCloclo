@@ -79,6 +79,7 @@ def test_metrics_parsing_from_fixtures():
     assert m.threshold_hr == 168
     assert m.hr_max == 187
     assert m.pred_10k_s == 2880
+    assert (m.pred_5k_s, m.pred_10k_s, m.pred_half_s, m.pred_marathon_s) == (1380, 2880, 6400, 13500)
     assert m.hr_zones == [118, 132, 146, 160, 174]
 
 

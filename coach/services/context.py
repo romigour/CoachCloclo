@@ -3,7 +3,7 @@
 from datetime import timedelta
 
 from coach.analysis.zones import Zones, compute_zones
-from coach.garmin.port import GarminPort
+from coach.garmin.port import GarminPort, Metrics
 from coach.plan.models import Activity, AthleteSnapshot
 from coach.plan.repo import Repo
 from coach.services import CoachError
@@ -11,11 +11,10 @@ from coach.services import CoachError
 HISTORY_DAYS = 56
 
 
-def refresh_snapshot(repo: Repo, garmin: GarminPort) -> tuple[AthleteSnapshot, Zones]:
-    """Lit les métriques Garmin, calcule les zones et enregistre un instantané."""
-    m = garmin.metrics()
+def zones_from_metrics(m: Metrics) -> Zones:
+    """Calcule les zones depuis les métriques Garmin ; CoachError si elles sont insuffisantes."""
     try:
-        zones = compute_zones(
+        return compute_zones(
             threshold_pace_s_km=m.threshold_pace_s_km,
             pred_10k_s=m.pred_10k_s,
             garmin_hr_zones=m.hr_zones,
@@ -24,6 +23,12 @@ def refresh_snapshot(repo: Repo, garmin: GarminPort) -> tuple[AthleteSnapshot, Z
         )
     except ValueError as exc:
         raise CoachError(f"{exc} : synchronise ta montre avec Garmin Connect") from exc
+
+
+def refresh_snapshot(repo: Repo, garmin: GarminPort) -> tuple[AthleteSnapshot, Zones]:
+    """Lit les métriques Garmin, calcule les zones et enregistre un instantané."""
+    m = garmin.metrics()
+    zones = zones_from_metrics(m)
     snapshot = repo.add(
         AthleteSnapshot(
             date=garmin.today(),

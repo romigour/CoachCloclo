@@ -221,7 +221,10 @@ class GarminClient:
             hr_rest=_int(hr.get("restingHeartRate")),
             threshold_hr=_int(lt.get("heartRate")),
             threshold_pace_s_km=_pace_s_km(lt.get("speed")),
+            pred_5k_s=_int(preds.get("time5K")),
             pred_10k_s=_int(preds.get("time10K")),
+            pred_half_s=_int(preds.get("timeHalfMarathon")),
+            pred_marathon_s=_int(preds.get("timeMarathon")),
             hr_zones=floors if all(f is not None for f in floors) else None,
         )
 

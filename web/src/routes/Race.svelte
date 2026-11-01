@@ -3,6 +3,8 @@
   import { fmtDuration, isDirty, targetLabel } from "../lib/race";
   import { fmtClock, fmtDay, fmtNumber, fmtPace, parseClock } from "../lib/stats/format";
   import ErrorBanner from "../components/ErrorBanner.svelte";
+  import ElevationProfile from "../components/race/ElevationProfile.svelte";
+  import AidStations from "../components/race/AidStations.svelte";
 
   let { goal, onerror: report }: { goal: Goal; onerror?: (e: unknown) => void } = $props();
 
@@ -10,7 +12,7 @@
   let draft = $state<RaceSettings | null>(null);
   let targetText = $state("");
   let error = $state<unknown>(null);
-  let busy = $state<"load" | "save" | "refresh" | "export" | null>(null);
+  let busy = $state<"load" | "save" | "refresh" | "export" | "reimport" | null>(null);
 
   const parsedTarget = $derived(parseClock(targetText));
   const targetInvalid = $derived(parsedTarget !== null && !(parsedTarget > 0)); // NaN ou 0
@@ -50,6 +52,7 @@
     return run("save", () => api.saveRacePlan(goal.id, current));
   };
   const refresh = () => run("refresh", () => api.refreshRacePlan(goal.id));
+  const reimport = () => run("reimport", () => api.reimportRacePlan(goal.id));
   const exportToWatch = () => run("export", () => api.exportRacePlan(goal.id));
 
   $effect(() => {
@@ -108,7 +111,12 @@
     {/if}
   </section>
 
-  <!-- Tâche 11 : profil d'altitude (ECharts) -->
+  {#if view.profile}
+    <section class="card lg stack" aria-label="Profil">
+      <h2>Profil</h2>
+      <ElevationProfile profile={view.profile} segments={plan.segments} stations={view.goal_type === "trail" ? draft.aid_stations : []} />
+    </section>
+  {/if}
 
   <section class="card lg stack">
     <h2>Segments</h2>
@@ -141,7 +149,53 @@
   </section>
 
   {#if view.goal_type === "trail"}
-    <!-- Tâche 11 : section « Ravitaillements » (tableau modifiable, réimport GPX) et nutrition par tronçon -->
+    <section class="card lg stack">
+      <h2>Ravitaillements</h2>
+      <AidStations
+        stations={draft.aid_stations}
+        passages={plan.aid_passages}
+        canReimport={busy === null && !dirty}
+        onchange={(s) => (draft!.aid_stations = s)}
+        onreimport={reimport}
+      />
+    </section>
+
+    <section class="card lg stack">
+      <h2>Nutrition</h2>
+      <div class="head-grid">
+        <div>
+          <label for="race-carbs">Glucides (g/h)</label>
+          <input id="race-carbs" type="number" min="0" bind:value={draft.carbs_g_h} />
+        </div>
+        <div>
+          <label for="race-water">Eau (ml/h)</label>
+          <input id="race-water" type="number" min="0" bind:value={draft.water_ml_h} />
+        </div>
+        <div>
+          <label for="race-carry">Contenance emportée (ml)</label>
+          <input id="race-carry" type="number" min="0" bind:value={draft.carry_ml} />
+        </div>
+      </div>
+      <div class="scroll">
+        <table aria-label="Nutrition">
+          <thead>
+            <tr><th>Tronçon</th><th>Km</th><th>Durée</th><th>Glucides</th><th>Eau</th><th>Alerte</th></tr>
+          </thead>
+          <tbody>
+            {#each plan.nutrition as leg (leg.from_km)}
+              <tr>
+                <td>{leg.from_name} → {leg.to_name}</td>
+                <td>{fmtNumber(leg.from_km, 1)} → {fmtNumber(leg.to_km, 1)}</td>
+                <td>{fmtDuration(leg.duration_s)}</td>
+                <td>{fmtNumber(leg.carbs_g)} g</td>
+                <td>{fmtNumber(leg.water_ml)} ml</td>
+                <td>{#if leg.over_capacity}<span class="pill missed">Dépasse la contenance</span>{:else}—{/if}</td>
+              </tr>
+            {/each}
+          </tbody>
+        </table>
+      </div>
+    </section>
   {/if}
 
   <div class="row actions">

@@ -3,6 +3,8 @@ import { afterEach, expect, test, vi } from "vitest";
 import Race from "./Race.svelte";
 import type { Goal, RaceSegment, RaceView } from "../lib/api";
 
+vi.mock("../components/stats/EChart.svelte", () => import("../test/EChartStub.svelte"));
+
 afterEach(() => vi.unstubAllGlobals());
 
 const goal: Goal = {
@@ -71,4 +73,86 @@ test("sending to the watch posts the export", async () => {
   render(Race, { goal });
   await fireEvent.click(await screen.findByRole("button", { name: "Envoyer à la montre" }));
   expect(calls(f)).toContain("POST /api/goals/7/race-plan/export");
+});
+
+const trailGoal: Goal = { ...goal, type: "trail", d_plus_m: 800 };
+const station = { km: 5, name: "Ravito Col", kind: "complet" as const, cutoff: "09:30", stop_min: 3 };
+const trailView = (): RaceView =>
+  view({
+    goal_type: "trail",
+    profile: [[0, 100], [5, 300], [10, 120]],
+    settings: { ...view().settings, aid_stations: [station] },
+    plan: {
+      ...view().plan,
+      stops_s: 180,
+      aid_passages: [
+        { station, predicted: { elapsed_s: 5400, clock: "09:30", margin_min: 12, status: "serré" }, target: null },
+      ],
+      nutrition: [
+        { from_name: "Départ", to_name: "Ravito Col", from_km: 0, to_km: 5, duration_s: 5400, carbs_g: 90, water_ml: 1200, over_capacity: true },
+        { from_name: "Ravito Col", to_name: "Arrivée", from_km: 5, to_km: 10, duration_s: 3600, carbs_g: 60, water_ml: 500, over_capacity: false },
+      ],
+    },
+  });
+
+test("a trail goal lists aid stations with their status, the nutrition legs and the profile", async () => {
+  mock(trailView());
+  render(Race, { goal: trailGoal });
+  const table = await screen.findByRole("table", { name: "Ravitaillements" });
+  expect(within(table).getByDisplayValue("Ravito Col")).toBeVisible();
+  expect(within(table).getByText("serré")).toBeVisible();
+  expect(within(table).getByText("09:30", { selector: "td" })).toBeVisible();
+  const nutrition = screen.getByRole("table", { name: "Nutrition" });
+  expect(within(nutrition).getAllByRole("row")).toHaveLength(3); // en-tête + 2 tronçons
+  expect(within(nutrition).getByText(/contenance/i)).toBeVisible();
+  expect(screen.getByRole("img", { name: /profil/i })).toBeInTheDocument();
+});
+
+test("a road goal has no elevation chart", async () => {
+  mock();
+  render(Race, { goal });
+  await screen.findByText("48 min");
+  expect(screen.queryByRole("img", { name: /profil/i })).toBeNull();
+});
+
+test("adding an aid station flags unsaved changes and is saved with the PUT", async () => {
+  const f = mock(trailView());
+  render(Race, { goal: trailGoal });
+  await fireEvent.click(await screen.findByRole("button", { name: "Ajouter un ravitaillement" }));
+  expect(screen.getByText("Modifications non enregistrées")).toBeVisible();
+  expect(screen.getByRole("button", { name: "Réimporter depuis le GPX" })).toBeDisabled();
+  await fireEvent.click(screen.getByRole("button", { name: "Enregistrer" }));
+  const put = f.mock.calls.find((c) => (c[1] as RequestInit).method === "PUT")!;
+  const body = JSON.parse((put[1] as RequestInit).body as string);
+  expect(body.aid_stations).toHaveLength(2);
+  expect(body.aid_stations[1]).toMatchObject({ kind: "complet", stop_min: 3 });
+});
+
+test("switching a station to water sets a one-minute stop", async () => {
+  mock(trailView());
+  render(Race, { goal: trailGoal });
+  await fireEvent.change(await screen.findByLabelText("Type du ravitaillement 1"), { target: { value: "eau" } });
+  expect(screen.getByLabelText("Arrêt du ravitaillement 1 (min)")).toHaveValue(1);
+});
+
+test("removing an aid station marks the page dirty", async () => {
+  mock(trailView());
+  render(Race, { goal: trailGoal });
+  await fireEvent.click(await screen.findByRole("button", { name: "Supprimer le ravitaillement 1" }));
+  expect(screen.getByText("Modifications non enregistrées")).toBeVisible();
+  expect(screen.queryByDisplayValue("Ravito Col")).toBeNull();
+});
+
+test("editing the nutrition settings marks the page dirty", async () => {
+  mock(trailView());
+  render(Race, { goal: trailGoal });
+  await fireEvent.input(await screen.findByLabelText("Glucides (g/h)"), { target: { value: "70" } });
+  expect(screen.getByText("Modifications non enregistrées")).toBeVisible();
+});
+
+test("reimporting from the GPX posts to reimport", async () => {
+  const f = mock(trailView());
+  render(Race, { goal: trailGoal });
+  await fireEvent.click(await screen.findByRole("button", { name: "Réimporter depuis le GPX" }));
+  expect(calls(f)).toContain("POST /api/goals/7/race-plan/reimport");
 });

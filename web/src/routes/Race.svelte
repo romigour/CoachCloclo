@@ -1,0 +1,166 @@
+<script lang="ts">
+  import { api, type Goal, type RaceSettings, type RaceView } from "../lib/api";
+  import { fmtDuration, isDirty, targetLabel } from "../lib/race";
+  import { fmtClock, fmtDay, fmtNumber, fmtPace, parseClock } from "../lib/stats/format";
+  import ErrorBanner from "../components/ErrorBanner.svelte";
+
+  let { goal, onerror: report }: { goal: Goal; onerror?: (e: unknown) => void } = $props();
+
+  let view = $state<RaceView | null>(null);
+  let draft = $state<RaceSettings | null>(null);
+  let targetText = $state("");
+  let error = $state<unknown>(null);
+  let busy = $state<"load" | "save" | "refresh" | "export" | null>(null);
+
+  const parsedTarget = $derived(parseClock(targetText));
+  const targetInvalid = $derived(parsedTarget !== null && !(parsedTarget > 0)); // NaN ou 0
+  const current = $derived<RaceSettings | null>(
+    draft ? { ...draft, target_time_s: parsedTarget !== null && parsedTarget > 0 ? parsedTarget : null } : null,
+  );
+  const dirty = $derived(!!view && !!current && (targetInvalid || isDirty(view.settings, current)));
+
+  const plan = $derived(view?.plan ?? null);
+  const shownTime = $derived(plan ? (plan.target_time_s ?? plan.predicted_time_s) : null);
+  const avgPace = $derived(plan && shownTime ? shownTime / plan.distance_km : null);
+  const dPlus = $derived(plan?.segments.reduce((sum, s) => sum + s.d_plus_m, 0) ?? 0);
+  const sent = $derived(!!view && view.workout_id !== null && !view.export_error);
+
+  function apply(v: RaceView) {
+    view = v;
+    draft = structuredClone(v.settings);
+    targetText = v.settings.target_time_s ? fmtClock(v.settings.target_time_s) : "";
+  }
+
+  async function run(kind: NonNullable<typeof busy>, call: () => Promise<RaceView>) {
+    busy = kind;
+    try {
+      apply(await call());
+      error = null;
+    } catch (e) {
+      error = e;
+      report?.(e);
+    } finally {
+      busy = null;
+    }
+  }
+
+  const load = () => run("load", () => api.racePlan(goal.id));
+  const save = () => {
+    if (targetInvalid || !current) return;
+    return run("save", () => api.saveRacePlan(goal.id, current));
+  };
+  const refresh = () => run("refresh", () => api.refreshRacePlan(goal.id));
+  const exportToWatch = () => run("export", () => api.exportRacePlan(goal.id));
+
+  $effect(() => {
+    goal.id;
+    load();
+  });
+</script>
+
+<header class="page-head">
+  <div>
+    <p class="eyebrow">{fmtDay(goal.race_date)}</p>
+    <h1>Jour J</h1>
+  </div>
+</header>
+
+<ErrorBanner {error} onpin={load} />
+
+{#if view && draft && plan}
+  <section class="card lg stack" aria-label="Prédiction">
+    <div class="head-grid">
+      <div>
+        <p class="meta">Temps prédit</p>
+        <p class="big">{plan.predicted_time_s ? fmtDuration(plan.predicted_time_s) : "—"}</p>
+        <p class="meta">
+          Données du {fmtDay(view.basis_date)}
+          <button type="button" onclick={refresh} disabled={busy !== null}>Actualiser</button>
+        </p>
+      </div>
+      <div>
+        <label for="race-target">Temps visé</label>
+        <input id="race-target" bind:value={targetText} placeholder="h:mm:ss" inputmode="numeric" aria-invalid={targetInvalid} />
+      </div>
+      <div>
+        <label for="race-start">Heure de départ</label>
+        <input id="race-start" type="time" bind:value={draft.start_time} />
+      </div>
+      <div>
+        <p class="meta">Allure moyenne</p>
+        <p class="big">{avgPace ? fmtPace(avgPace) : "—"}</p>
+      </div>
+      {#if view.goal_type === "trail"}
+        <div>
+          <p class="meta">D+</p>
+          <p class="big">{fmtNumber(dPlus)} m</p>
+        </div>
+      {/if}
+    </div>
+
+    {#if targetInvalid}
+      <p class="error" role="alert">Temps visé invalide : saisis une durée au format h:mm:ss (ex. 3:45:00).</p>
+    {/if}
+    {#if plan.warnings.length}
+      <ul class="warnings" aria-label="Avertissements">
+        {#each plan.warnings as w (w)}<li>{w}</li>{/each}
+      </ul>
+    {/if}
+  </section>
+
+  <!-- Tâche 11 : profil d'altitude (ECharts) -->
+
+  <section class="card lg stack">
+    <h2>Segments</h2>
+    <div class="scroll">
+      <table aria-label="Segments">
+        <thead>
+          <tr>
+            <th>N°</th><th>Type</th><th>Km</th><th>D+ / D-</th><th>Pente</th><th>Allure</th>
+            <th>Temps</th><th>Cumulé</th><th>Heure</th><th>Cible montre</th>
+          </tr>
+        </thead>
+        <tbody>
+          {#each plan.segments as s (s.index)}
+            <tr>
+              <td>{s.index}</td>
+              <td>{s.kind}</td>
+              <td>{fmtNumber(s.start_km, 1)} → {fmtNumber(s.end_km, 1)}</td>
+              <td>+{s.d_plus_m} / -{s.d_minus_m} m</td>
+              <td>{fmtNumber(s.avg_grade_pct, 1)} %</td>
+              <td>{s.pace_s_km ? fmtPace(s.pace_s_km) : "—"}</td>
+              <td>{s.time_s ? fmtClock(s.time_s) : "—"}</td>
+              <td>{s.elapsed_s ? fmtClock(s.elapsed_s) : "—"}</td>
+              <td>{s.clock ?? "—"}</td>
+              <td>{targetLabel(s)}</td>
+            </tr>
+          {/each}
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  {#if view.goal_type === "trail"}
+    <!-- Tâche 11 : section « Ravitaillements » (tableau modifiable, réimport GPX) et nutrition par tronçon -->
+  {/if}
+
+  <div class="row actions">
+    {#if dirty}<span class="meta" role="status">Modifications non enregistrées</span>{/if}
+    <button type="button" class="primary" onclick={save} disabled={busy !== null || !dirty}>Enregistrer</button>
+    <button type="button" onclick={exportToWatch} disabled={busy !== null || dirty}>Envoyer à la montre</button>
+    {#if sent}<span class="meta" role="status">Envoyé à la montre</span>{/if}
+    {#if view.export_error}<span class="error" role="alert">Échec de l'envoi : {view.export_error}</span>{/if}
+  </div>
+{/if}
+
+<style>
+  .head-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 16px; align-items: start; }
+  .big { font-size: 26px; font-weight: 700; margin: 0; }
+  .scroll { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+  th, td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--divider); white-space: nowrap; }
+  th { color: var(--muted); font-weight: 500; font-size: 13px; }
+  .error { color: var(--danger); margin: 0; }
+  .warnings { margin: 0; padding-left: 18px; color: var(--todo); }
+  .actions { align-items: center; gap: 12px; flex-wrap: wrap; }
+</style>

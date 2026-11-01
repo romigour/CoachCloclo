@@ -38,6 +38,11 @@
     <a href="#/plan" class:active={route === "plan"} aria-current={route === "plan" ? "page" : undefined}>
       <Icon name="calendar" /> Programme
     </a>
+    {#if status?.goal}
+      <a href="#/race" class:active={route === "race"} aria-current={route === "race" ? "page" : undefined}>
+        <Icon name="race" /> Jour J
+      </a>
+    {/if}
     <a href="#/stats" class:active={route === "stats"} aria-current={route === "stats" ? "page" : undefined}>
       <Icon name="chart" /> Statistiques
     </a>

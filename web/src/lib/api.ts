@@ -204,6 +204,78 @@ export type Change = {
 
 export type Proposal = { id: number; created_at: string; analysis: string; changes: Change[] };
 
+export type HrZone = "Z1" | "Z2" | "Z3" | "Z4" | "Z5";
+
+export type AidStation = { km: number; name: string; kind: "eau" | "complet"; cutoff: string | null; stop_min: number };
+
+export type RaceSettings = {
+  target_time_s: number | null;
+  start_time: string;
+  carbs_g_h: number;
+  water_ml_h: number;
+  carry_ml: number;
+  aid_stations: AidStation[];
+};
+
+export type RaceSegment = {
+  kind: "montée" | "plat" | "descente";
+  start_km: number;
+  end_km: number;
+  eq_km: number;
+  d_plus_m: number;
+  d_minus_m: number;
+  index: number;
+  avg_grade_pct: number;
+  time_s: number | null;
+  pace_s_km: number | null;
+  elapsed_s: number | null;
+  clock: string | null;
+  target_kind: "pace" | "hr";
+  target_low: number | null;
+  target_high: number | null;
+  target_zone: HrZone | null;
+};
+
+export type Passage = { elapsed_s: number; clock: string; margin_min: number | null; status: "ok" | "serré" | "hors délai" | null };
+
+export type AidPassage = { station: AidStation; predicted: Passage | null; target: Passage | null };
+
+export type NutritionLeg = {
+  from_name: string;
+  to_name: string;
+  from_km: number;
+  to_km: number;
+  duration_s: number;
+  carbs_g: number;
+  water_ml: number;
+  over_capacity: boolean;
+};
+
+export type RacePlan = {
+  distance_km: number;
+  eq_km: number;
+  stops_s: number;
+  predicted_time_s: number | null;
+  target_time_s: number | null;
+  reference_time_s: number | null;
+  segments: RaceSegment[];
+  aid_passages: AidPassage[];
+  nutrition: NutritionLeg[];
+  warnings: string[];
+};
+
+export type RaceView = {
+  goal_id: number;
+  goal_type: "route" | "trail";
+  race_date: string;
+  settings: RaceSettings;
+  basis_date: string;
+  profile: [number, number][] | null;
+  plan: RacePlan;
+  workout_id: number | null;
+  export_error: string | null;
+};
+
 export type GoalInput = {
   type: "route" | "trail";
   distance_km: number;
@@ -246,6 +318,7 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
 }
 
 const get = <T>(p: string) => request<T>("GET", p);
+const put = <T>(p: string, b: unknown) => request<T>("PUT", p, b);
 const del = <T>(p: string) => request<T>("DELETE", p);
 const post = <T>(p: string, b?: unknown) => request<T>("POST", p, b ?? {});
 
@@ -304,6 +377,11 @@ export const api = {
   generate: (goalId: number) => post<{ summary: string; weeks: number }>(`/goals/${goalId}/generate`),
   accept: (goalId: number) => post<{ status: string }>(`/goals/${goalId}/accept`),
   plan: () => get<Plan>("/plan"),
+  racePlan: (goalId: number) => get<RaceView>(`/goals/${goalId}/race-plan`),
+  saveRacePlan: (goalId: number, settings: RaceSettings) => put<RaceView>(`/goals/${goalId}/race-plan`, settings),
+  refreshRacePlan: (goalId: number) => post<RaceView>(`/goals/${goalId}/race-plan/refresh`),
+  reimportRacePlan: (goalId: number) => post<RaceView>(`/goals/${goalId}/race-plan/reimport`),
+  exportRacePlan: (goalId: number) => post<RaceView>(`/goals/${goalId}/race-plan/export`),
   exportCheck: (id: number, date: string) =>
     get<{ warnings: string[] }>(`/sessions/${id}/export-check?date=${encodeURIComponent(date)}`),
   exportSession: (id: number, date: string) => post<{ warnings: string[] }>(`/sessions/${id}/export`, { date }),

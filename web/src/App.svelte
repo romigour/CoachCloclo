@@ -10,9 +10,10 @@
   import Today from "./routes/Today.svelte";
   import Plan from "./routes/Plan.svelte";
   import Proposal from "./routes/Proposal.svelte";
+  import Race from "./routes/Race.svelte";
   import Stats from "./routes/Stats.svelte";
 
-  const ROUTES = ["today", "plan", "stats", "goal", "setup", "proposal", "welcome"] as const;
+  const ROUTES = ["today", "plan", "race", "stats", "goal", "setup", "proposal", "welcome"] as const;
   type Route = (typeof ROUTES)[number];
 
   let route = $state<Route | null>(parse());
@@ -167,6 +168,8 @@
         <Today {version} {status} onerror={failed} />
       {:else if route === "plan"}
         <Plan {version} onerror={failed} />
+      {:else if route === "race" && status?.goal}
+        <Race goal={status.goal} onerror={failed} />
       {:else if route === "stats"}
         <Stats {version} history={status?.history ?? null} onimport={importHistory} />
       {:else if route === "proposal"}

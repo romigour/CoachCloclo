@@ -1,0 +1,90 @@
+{
+  "workout": {
+    "activityId": 1000001,
+    "lapDTOs": [
+      {
+        "lapIndex": 1,
+        "duration": 600,
+        "distance": 1800,
+        "averageSpeed": 3.0,
+        "averageHR": 128,
+        "maxHR": 140,
+        "wktStepIndex": 0
+      },
+      {
+        "lapIndex": 2,
+        "duration": 100,
+        "distance": 400,
+        "averageSpeed": 4.0,
+        "averageHR": 170,
+        "maxHR": 176,
+        "wktStepIndex": 2
+      },
+      {
+        "lapIndex": 3,
+        "duration": 75,
+        "distance": 200,
+        "averageSpeed": 2.6667,
+        "averageHR": 150,
+        "maxHR": 165,
+        "wktStepIndex": 3
+      },
+      {
+        "lapIndex": 4,
+        "duration": 98,
+        "distance": 400,
+        "averageSpeed": 4.0816,
+        "averageHR": 172,
+        "maxHR": 179,
+        "wktStepIndex": 2
+      },
+      {
+        "lapIndex": 5,
+        "duration": 74,
+        "distance": 200,
+        "averageSpeed": 2.7027,
+        "averageHR": 152,
+        "maxHR": 166,
+        "wktStepIndex": 3
+      },
+      {
+        "lapIndex": 6,
+        "duration": 420,
+        "distance": 1300,
+        "averageSpeed": 3.0952,
+        "averageHR": 130,
+        "maxHR": 138,
+        "wktStepIndex": 4
+      }
+    ]
+  },
+  "free": {
+    "activityId": 1000002,
+    "lapDTOs": [
+      {
+        "lapIndex": 1,
+        "duration": 300,
+        "distance": 1000,
+        "averageSpeed": 3.3333,
+        "averageHR": 150,
+        "maxHR": 160
+      },
+      {
+        "lapIndex": 2,
+        "duration": 300,
+        "distance": 1000,
+        "averageSpeed": 3.3333,
+        "averageHR": 151,
+        "maxHR": 161
+      },
+      {
+        "lapIndex": 3,
+        "duration": 300,
+        "distance": 1000,
+        "averageSpeed": 3.3333,
+        "averageHR": 152,
+        "maxHR": 162
+      }
+    ]
+  }
+}

@@ -27,12 +27,17 @@ from coach.garmin.port import (
     GarminAuthRequired,
     GarminRateLimited,
     GarminUnavailable,
+    LapSummary,
     Metrics,
     PersonalRecordSummary,
 )
 
 RETRY_DELAY_S = 5
 PACE_MIN_S_KM, PACE_MAX_S_KM = 150, 600
+# `wktStepIndex` (tour Garmin) -> `stepOrder` du workout : stepOrder = index + base.
+# PROVISOIRE : base 1 supposée, non confirmée sur une activité réelle ; à vérifier
+# avec le test live `test_activity_splits_capture` avant de s'y fier.
+_STEP_INDEX_BASE = 1
 # typeId Garmin des records personnels de course -> `PersonalRecordSummary.kind`
 PR_KINDS: dict[int, str] = {
     1: "1k",
@@ -95,6 +100,27 @@ def _running_zones(zones: Any) -> dict:
             if str(z.get("sport", "")).upper() == sport:
                 return z
     return entries[0] if entries else {}
+
+
+def _lap(raw: Any, index: int) -> LapSummary | None:
+    """Tour Garmin normalisé ; ignoré s'il n'a pas de durée numérique."""
+    if not isinstance(raw, dict):
+        return None
+    duration = _num(raw.get("duration"))
+    if duration is None:
+        return None
+    speed = _num(raw.get("averageSpeed"))
+    step_index = _int(raw.get("wktStepIndex"))
+    return LapSummary(
+        index=index,
+        duration_s=duration,
+        distance_m=_num(raw.get("distance")) or 0.0,
+        avg_hr=_int(raw.get("averageHR")),
+        max_hr=_int(raw.get("maxHR")),
+        avg_pace_s_km=1000 / speed if speed is not None and speed > 0 else None,
+        step_order=None if step_index is None else step_index + _STEP_INDEX_BASE,
+        raw=raw,
+    )
 
 
 def _summary(a: Any) -> ActivitySummary | None:
@@ -233,6 +259,15 @@ class GarminClient:
         """Historique paginé, du plus récent au plus ancien ([] en fin d'historique)."""
         raw = self._call(self._api.get_activities, offset, limit)
         return [x for x in map(_summary, raw if isinstance(raw, list) else []) if x]
+
+    def activity_laps(self, garmin_id: int) -> list[LapSummary]:
+        """Tours d'une activité ; `step_order` n'est renseigné que pour un workout."""
+        raw = self._call(self._api.get_activity_splits, str(garmin_id))
+        dtos = raw.get("lapDTOs") if isinstance(raw, dict) else None
+        laps = (_lap(x, 0) for x in (dtos if isinstance(dtos, list) else []))
+        kept = [lap for lap in laps if lap]
+        # `index` = rang du tour conservé
+        return [lap.model_copy(update={"index": i}) for i, lap in enumerate(kept)]
 
     def personal_records(self) -> list[PersonalRecordSummary]:
         """Records personnels de course ; les types inconnus sont ignorés."""

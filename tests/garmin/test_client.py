@@ -408,3 +408,53 @@ def test_activities_page_ignores_non_finite_values():
 def test_activities_page_skips_non_finite_id():
     raw = [{"activityId": float("nan"), "startTimeLocal": "2026-10-01 10:00:00"}]
     assert GarminClient(FakeLib({"get_activities": raw})).activities_page(0, 100) == []
+
+
+SPLITS = load("activity_splits")
+
+
+def client_with(splits):
+    return GarminClient(FakeLib({"get_activity_splits": splits}))
+
+
+def test_activity_laps_workout_maps_step_orders():
+    laps = client_with(SPLITS["workout"]).activity_laps(1)
+    assert [l.index for l in laps] == list(range(len(laps)))
+    assert all(l.step_order is not None for l in laps)
+    assert laps[0].avg_pace_s_km == pytest.approx(1000 / SPLITS["workout"]["lapDTOs"][0]["averageSpeed"])
+
+
+def test_activity_laps_workout_step_order_is_index_plus_one():
+    laps = client_with(SPLITS["workout"]).activity_laps(1)
+    assert [l.step_order for l in laps] == [1, 3, 4, 3, 4, 5]
+
+
+def test_activity_laps_free_run_has_no_step_order():
+    assert all(l.step_order is None for l in client_with(SPLITS["free"]).activity_laps(2))
+
+
+def test_activity_laps_zero_distance_has_no_pace():
+    laps = client_with({"lapDTOs": [{"duration": 60, "distance": 0, "averageSpeed": 0}]}).activity_laps(3)
+    assert laps[0].distance_m == 0 and laps[0].avg_pace_s_km is None
+
+
+def test_activity_laps_skips_malformed_laps():
+    splits = {"lapDTOs": [{"duration": "x"}, None, {"duration": 120, "distance": 400, "averageSpeed": 3.5}]}
+    laps = client_with(splits).activity_laps(4)
+    assert len(laps) == 1 and laps[0].index == 0
+
+
+def test_activity_laps_passes_id_as_string_and_tolerates_missing_list():
+    lib = FakeLib({"get_activity_splits": {"lapDTOs": "x"}})
+    assert GarminClient(lib).activity_laps(5) == []
+    assert lib.seen[0] == ("get_activity_splits", ("5",), {})
+
+
+def test_fake_activity_laps():
+    from coach.garmin.port import LapSummary
+
+    lap = LapSummary(index=0, duration_s=60, distance_m=200)
+    fake = FakeGarminClient(laps={7: [lap]})
+    assert fake.activity_laps(7) == [lap] and fake.activity_laps(8) == []
+    with pytest.raises(GarminUnavailable):
+        FakeGarminClient(fail_on={"activity_laps"}).activity_laps(7)

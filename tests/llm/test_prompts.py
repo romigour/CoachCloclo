@@ -157,6 +157,12 @@ def test_adjustment_prompt_degraded_caps_at_30_laps():
     assert "\n    … 5 tours de plus" in p
 
 
+def test_adjustment_prompt_degraded_without_any_lap_has_no_dangling_header():
+    p = _adjustment(compare_session(make_session(), [], ZONES_VMA))
+    assert "\n    séance non suivie sur la montre : aucun tour enregistré" in p
+    assert "tours :" not in p
+
+
 def test_adjustment_prompt_without_comparison_unchanged():
     s1 = _db(1)
     args = dict(done=[(s1, make_activity())], missed=[], upcoming=[], history=[])

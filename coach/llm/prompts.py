@@ -117,6 +117,8 @@ def _lap_line(n: int, lap) -> str:
 def _comparison_lines(c: StepComparison) -> list[str]:
     """Lignes (sans indentation) du détail par étape, ou des tours bruts en mode dégradé."""
     if not c.followed_workout:
+        if not c.laps:
+            return ["séance non suivie sur la montre : aucun tour enregistré"]
         lines = ["séance non suivie sur la montre, tours :"]
         lines += [_lap_line(n, lap) for n, lap in enumerate(c.laps[:MAX_LAP_LINES], start=1)]
         if len(c.laps) > MAX_LAP_LINES:

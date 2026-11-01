@@ -3,7 +3,7 @@
 ; Prérequis : dist\CoachCloclo\ construit par PyInstaller (coachcloclo.spec).
 
 #ifndef AppVersion
-  #define AppVersion "0.0.0"
+  #error AppVersion manquant : compiler avec /DAppVersion=x.y.z
 #endif
 
 [Setup]

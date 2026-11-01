@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import sys
 import threading
 import urllib.request
 import webbrowser
@@ -47,9 +48,11 @@ def _log_thread(args) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
+    if argv is None:
+        argv = sys.argv[1:]
     log = setup_logging()
     threading.excepthook = _log_thread
-    smoke = "--smoke" in (argv or [])
+    smoke = "--smoke" in argv
     mutex = None
     server: AppServer | None = None
     try:

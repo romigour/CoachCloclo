@@ -1,4 +1,5 @@
 import socket
+import sys
 
 import pytest
 
@@ -42,6 +43,14 @@ def test_smoke_mode_returns_zero(coach_home, monkeypatch, opened):
     monkeypatch.setattr(instance, "PORTS", (free_port(),))
     assert launcher.main(["--smoke"]) == 0
     assert (coach_home / "logs" / "coachcloclo.log").exists()
+    assert opened == []
+
+
+def test_smoke_mode_lu_dans_sys_argv(coach_home, monkeypatch, opened):
+    """main() sans argument lit sys.argv (python -m coach.desktop --smoke, exécutable gelé)."""
+    monkeypatch.setattr(instance, "PORTS", (free_port(),))
+    monkeypatch.setattr(sys, "argv", ["coach", "--smoke"])
+    assert launcher.main() == 0
     assert opened == []
 
 

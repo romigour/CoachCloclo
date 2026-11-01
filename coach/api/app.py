@@ -21,7 +21,7 @@ from sqlmodel import select
 
 from coach.analysis.compliance import RUNNING_TYPES
 from coach.analysis.gpx import GpxError
-from coach.api.deps import get_garmin, get_llm, verify_pin
+from coach.api.deps import get_garmin, get_llm, is_loopback, verify_pin
 from coach.config import Settings, db_path, load_settings, save_settings, tokenstore_dir
 from coach.garmin.client import GarminClient
 from coach.garmin.port import (
@@ -47,6 +47,7 @@ from coach.services.plans import GoalInput, accept_plan, create_goal, generate_p
 from coach.services.history import HistoryRunner, load_state, recover_orphan
 from coach.services.sync import sync
 from coach.stats.normalize import stat_row
+from coach.version import app_version
 
 MFA_TTL_S = 600
 PIN_MAX_FAILURES = 5
@@ -229,6 +230,7 @@ def create_app(
     app.state.llm_factory = llm_factory
     app.state.repo = repo or Repo(make_engine(db_path()))
     app.state.mfa = {}  # login_id -> (état MFA, expiration) ; jamais renvoyé au client
+    app.state.lan = lan
     app.state.sessions = set()
     app.state.pin_failures = 0
     app.state.pin_locked_until = 0.0
@@ -244,15 +246,19 @@ def create_app(
     GarminDep = Annotated[GarminPort, Depends(get_garmin)]
     LLMDep = Annotated[LLMProvider, Depends(get_llm)]
 
-    if lan:
-
-        @app.middleware("http")
-        async def require_pin(request: Request, call_next):
-            path = request.url.path
-            if path.startswith("/api") and path != "/api/auth/pin":
-                if request.cookies.get(COOKIE) not in request.app.state.sessions:
-                    return _error(401, "pin_required", "PIN requis")
-            return await call_next(request)
+    @app.middleware("http")
+    async def require_pin(request: Request, call_next):
+        # le mode LAN se lit à chaque requête : il peut être basculé à chaud
+        path = request.url.path
+        if (
+            request.app.state.lan
+            and not is_loopback(request)
+            and path.startswith("/api")
+            and path not in ("/api/auth/pin", "/api/version")
+        ):
+            if request.cookies.get(COOKIE) not in request.app.state.sessions:
+                return _error(401, "pin_required", "PIN requis")
+        return await call_next(request)
 
     @app.middleware("http")
     async def csrf_guard(request: Request, call_next):
@@ -270,7 +276,7 @@ def create_app(
 
     @app.middleware("http")
     async def host_guard(request: Request, call_next):
-        if not _host_allowed(request.headers.get("host", ""), lan, set(extra_hosts)):
+        if not _host_allowed(request.headers.get("host", ""), request.app.state.lan, set(extra_hosts)):
             return JSONResponse(status_code=400, content={"code": "bad_host", "detail": "Hôte refusé"})
         return await call_next(request)
 
@@ -304,6 +310,10 @@ def create_app(
                 "error": history.error,
             },
         }
+
+    @api.get("/version")
+    def version():
+        return {"version": app_version()}
 
     @api.post("/auth/pin")
     def auth_pin(body: PinBody):

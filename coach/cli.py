@@ -13,7 +13,7 @@ import typer
 import uvicorn
 
 from coach.api.app import create_app
-from coach.api.deps import hash_pin
+from coach.api.deps import hash_pin, valid_pin
 from coach.config import load_settings, save_settings, tokenstore_dir
 from coach.doctor import DEFAULT_PORT, fix, run_checks
 from coach.garmin.client import GarminClient
@@ -38,7 +38,7 @@ def _ask_pin() -> str:
     while True:
         pin = typer.prompt("PIN pour le mode LAN (4 à 12 chiffres)", hide_input=True,
                            confirmation_prompt=True)
-        if pin.isdigit() and 4 <= len(pin) <= 12:
+        if valid_pin(pin):
             return pin
         typer.echo("Le PIN doit contenir de 4 à 12 chiffres.")
 

@@ -1,6 +1,6 @@
 [project]
 name = "coachcloclo"
-version = "0.2.0"
+version = "0.2.1"
 description = "CoachCloclo : plans d'entraînement running/trail à partir des données Garmin avec Claude"
 requires-python = ">=3.12"
 dependencies = [

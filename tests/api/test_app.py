@@ -1,19 +1,22 @@
 import logging
 import threading
+from datetime import date
 from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
 
 from coach.api.app import create_app
+from coach.analysis.zones import Zones, compute_zones
 from coach.api.deps import hash_pin, valid_pin, verify_pin
 from coach.config import load_settings, save_settings
 from coach.version import app_version
-from coach.garmin.port import FakeGarminClient, GarminAuthRequired, Metrics
+from coach.garmin.port import FakeGarminClient, GarminAuthRequired, LapSummary, Metrics
 from coach.llm.provider import FakeLLMProvider, LLMError, LLMUsageLimit
-from coach.plan.models import Activity, Race
+from coach.plan.models import Activity, AthleteSnapshot, Race
 from coach.services.history import HistoryState, save_state
 from tests.llm.factories import valid_plan_json
+from tests.plan.factories import make_activity, make_db_session, make_goal
 
 FIXTURES = Path(__file__).parent.parent / "fixtures" / "gpx"
 METRICS = Metrics(hr_max=190, hr_rest=50, threshold_pace_s_km=300)
@@ -231,6 +234,107 @@ def test_manual_match(make_client, repo):
     assert client.post(f"/api/activities/{act.id}/match", json={"session_id": None}).status_code == 200
     assert repo.session(sid).status == "todo"
     assert client.post("/api/activities/999/match", json={"session_id": None}).status_code == 404
+
+
+LAP = LapSummary(index=0, duration_s=600, distance_m=1800, avg_hr=140, step_order=1, raw={"x": 1})
+
+
+def _db_session(repo):
+    """Séance persistée (un échauffement Z2 de 10 min) sans activité."""
+    goal = repo.add(make_goal())
+    return repo.add(make_db_session(goal.id))
+
+
+def _zones() -> Zones:
+    return compute_zones(threshold_pace_s_km=300, pred_10k_s=None, garmin_hr_zones=None, hr_max=190, hr_rest=50)
+
+
+class CountingGarmin(FakeGarminClient):
+    """FakeGarminClient qui note les identifiants dont on lit les tours."""
+
+    def __init__(self, **kw):
+        super().__init__(**kw)
+        self.laps_calls: list[int] = []
+
+    def activity_laps(self, garmin_id):
+        self.laps_calls.append(garmin_id)
+        return super().activity_laps(garmin_id)
+
+
+def test_comparison_reasons_and_payload(make_client, repo):
+    session = _db_session(repo)
+    client = make_client()
+    url = f"/api/sessions/{session.id}/comparison"
+    assert client.get(url).json() == {"available": False, "reason": "no_activity"}
+
+    act = repo.add(make_activity(session_id=session.id))
+    assert client.get(url).json() == {"available": False, "reason": "no_laps"}
+
+    repo.save_laps(act.id, [LAP])
+    repo.add(AthleteSnapshot(date=date(2026, 11, 1), zones_json=_zones().model_dump_json()))
+    r = client.get(url)
+    assert r.status_code == 200
+    body = r.json()
+    assert body["available"] is True and body["followed_workout"] is True
+    assert body["steps"][0]["verdict"] is not None
+    assert len(body["laps"]) == 1 and "raw" not in body["laps"][0]
+
+
+def test_comparison_unknown_session_is_404(make_client):
+    r = make_client().get("/api/sessions/999/comparison")
+    assert r.status_code == 404 and r.json()["code"] == "not_found"
+
+
+def test_comparison_without_snapshot_has_no_verdicts(make_client, repo):
+    session = _db_session(repo)
+    act = repo.add(make_activity(session_id=session.id))
+    repo.save_laps(act.id, [LAP])
+    r = make_client().get(f"/api/sessions/{session.id}/comparison")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["available"] is True and body["followed_workout"] is True
+    assert body["steps"][0]["verdict"] is None
+
+
+def test_manual_match_fetches_laps(make_client, repo, fake_garmin):
+    session = _db_session(repo)
+    act = repo.add(make_activity(garmin_activity_id=7))
+    fake_garmin._laps[7] = [LAP]
+    r = make_client().post(f"/api/activities/{act.id}/match", json={"session_id": session.id})
+    assert r.status_code == 200 and r.json() == {"status": "ok"}
+    assert len(repo.laps(act.id)) == 1
+
+
+def test_manual_match_ok_when_garmin_logged_out(make_client, repo):
+    session = _db_session(repo)
+    act = repo.add(make_activity(garmin_activity_id=7))
+    r = make_client(garmin="auth").post(f"/api/activities/{act.id}/match", json={"session_id": session.id})
+    assert r.status_code == 200 and r.json() == {"status": "ok"}
+    assert repo.laps(act.id) is None
+
+
+def test_manual_match_ok_when_laps_fail(make_client, repo):
+    session = _db_session(repo)
+    act = repo.add(make_activity(garmin_activity_id=7))
+    garmin = FakeGarminClient(laps={7: [LAP]}, fail_on={"activity_laps"})
+    r = make_client(garmin=garmin).post(f"/api/activities/{act.id}/match", json={"session_id": session.id})
+    assert r.status_code == 200 and r.json() == {"status": "ok"}
+    assert repo.laps(act.id) is None
+
+
+def test_rematched_activity_keeps_its_laps(make_client, repo):
+    goal = repo.add(make_goal())
+    first = repo.add(make_db_session(goal.id))
+    second = repo.add(make_db_session(goal.id, order=2))
+    act = repo.add(make_activity(garmin_activity_id=7, session_id=first.id))
+    repo.save_laps(act.id, [LAP])
+    garmin = CountingGarmin(laps={7: [LAP]})
+    client = make_client(garmin=garmin)
+    r = client.post(f"/api/activities/{act.id}/match", json={"session_id": second.id})
+    assert r.status_code == 200
+    assert garmin.laps_calls == []
+    body = client.get(f"/api/sessions/{second.id}/comparison").json()
+    assert body["available"] is True
 
 
 def test_activities_of_plan_week(make_client, repo):

@@ -49,6 +49,7 @@ from coach.services.plans import GoalInput, accept_plan, create_goal, generate_p
 from coach.analysis.race_plan import RaceSettings
 from coach.services import race_strategy
 from coach.services.history import HistoryRunner, load_state, recover_orphan
+from coach.services.laps import fetch_laps, latest_zones, session_comparison
 from coach.services.sync import sync
 from coach.stats.normalize import stat_row
 from coach.version import app_version
@@ -481,6 +482,18 @@ def create_app(
         export.retry_sync_error(repo, garmin, session_id)
         return {"status": "ok"}
 
+    @api.get("/sessions/{session_id}/comparison")
+    def get_comparison(session_id: int, repo: RepoDep):
+        """Prévu / réalisé étape par étape, ou la raison pour laquelle la comparaison est impossible."""
+        try:
+            session = repo.session(session_id)
+        except KeyError:
+            return _error(404, "not_found", "Séance introuvable")
+        result = session_comparison(repo, session, latest_zones(repo))
+        if isinstance(result, str):
+            return {"available": False, "reason": result}
+        return {"available": True, **result.model_dump(exclude={"laps": {"__all__": {"raw"}}})}
+
     # --- activités, synchro, propositions ---------------------------------------------------
 
     @api.get("/activities")
@@ -501,7 +514,7 @@ def create_app(
         return [_activity_row(a) for a in reversed(free)]
 
     @api.post("/activities/{activity_id}/match")
-    def post_match(activity_id: int, body: MatchBody, repo: RepoDep):
+    def post_match(activity_id: int, body: MatchBody, request: Request, repo: RepoDep):
         """Correction manuelle du rattachement ; `session_id` nul détache l'activité."""
         with repo.transaction() as db:
             activity = db.get(Activity, activity_id)
@@ -533,6 +546,14 @@ def create_app(
                 if old is not None and old.status == "done" and still is None:
                     old.status = "exported" if old.garmin_schedule_id else "todo"
                     db.add(old)
+        if body.session_id is not None and repo.laps(activity_id) is None:
+            # lecture des tours hors transaction ; un Garmin déconnecté ne doit pas faire échouer le rattachement
+            try:
+                garmin = request.app.state.garmin_factory()
+            except GarminAuthRequired:
+                pass
+            else:
+                fetch_laps(repo, garmin, repo.activity(activity_id))
         return {"status": "ok"}
 
     @api.post("/sync")

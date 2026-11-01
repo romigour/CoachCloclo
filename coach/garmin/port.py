@@ -53,12 +53,24 @@ class PersonalRecordSummary(BaseModel):
     date: dt.date | None = None
 
 
+class LapSummary(BaseModel):
+    index: int
+    duration_s: float
+    distance_m: float
+    avg_hr: int | None = None
+    max_hr: int | None = None
+    avg_pace_s_km: float | None = None
+    step_order: int | None = None  # stepOrder Garmin de l'étape exécutée, None hors workout
+    raw: dict = {}
+
+
 class GarminPort(Protocol):
     def today(self) -> date: ...
     def metrics(self) -> Metrics: ...
     def activities(self, start: date, end: date) -> list[ActivitySummary]: ...
     def activities_page(self, offset: int, limit: int) -> list[ActivitySummary]: ...
     def personal_records(self) -> list[PersonalRecordSummary]: ...
+    def activity_laps(self, garmin_id: int) -> list[LapSummary]: ...
     def upload_workout(self, workout: dict) -> int: ...
     def schedule(self, workout_id: int, d: date) -> int: ...
     def reschedule(self, schedule_id: int, d: date) -> None: ...
@@ -76,11 +88,13 @@ class FakeGarminClient:
         today: date = date(2026, 11, 4),
         personal_records: list[PersonalRecordSummary] | None = None,
         fail_on: set[str] | None = None,
+        laps: dict[int, list[LapSummary]] | None = None,
     ):
         self._metrics = metrics or Metrics()
         self._activities = list(activities or [])
         self._today = today
         self._personal_records = list(personal_records or [])
+        self._laps = dict(laps or {})
         self.fail_on: set[str] = set(fail_on or ())
         self.workouts: dict[int, dict] = {}
         self.calendar: dict[date, list[int]] = {}  # jour -> ids planifiés
@@ -114,6 +128,10 @@ class FakeGarminClient:
     def personal_records(self) -> list[PersonalRecordSummary]:
         self._check("personal_records")
         return list(self._personal_records)
+
+    def activity_laps(self, garmin_id: int) -> list[LapSummary]:
+        self._check("activity_laps")
+        return list(self._laps.get(garmin_id, []))
 
     def upload_workout(self, workout: dict) -> int:
         self._check("upload_workout", write=True)

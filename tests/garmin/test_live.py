@@ -69,3 +69,27 @@ def test_workout_roundtrip():
         finally:
             if wid is not None:
                 c.delete_workout(wid)
+
+
+@pytest.mark.live
+@pytest.mark.skipif(
+    not (os.environ.get("COACH_LIVE_WORKOUT_ACTIVITY") and os.environ.get("COACH_LIVE_FREE_ACTIVITY")),
+    reason="COACH_LIVE_WORKOUT_ACTIVITY et COACH_LIVE_FREE_ACTIVITY requis",
+)
+def test_activity_splits_capture(tmp_path):
+    """Capture les tours bruts pour confirmer le champ d'étape et sa base.
+
+    Écrit dans tmp_path (la fixture versionnée n'est jamais écrasée) et affiche
+    les `wktStepIndex` de chaque tour : à comparer aux `stepOrder` du workout.
+    """
+    import json
+
+    c = _client()
+    out = {}
+    for name, var in (("workout", "COACH_LIVE_WORKOUT_ACTIVITY"), ("free", "COACH_LIVE_FREE_ACTIVITY")):
+        act_id = os.environ[var]
+        out[name] = c._call(c._api.get_activity_splits, act_id)
+        print(name, [lap.get("wktStepIndex") for lap in out[name].get("lapDTOs", [])])
+    target = tmp_path / "activity_splits.json"
+    target.write_text(json.dumps(out, indent=2), encoding="utf-8")
+    print("capture :", target)

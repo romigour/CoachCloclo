@@ -171,6 +171,13 @@ ul.plain { list-style: none; padding: 0; margin: 0; }
 
 .steps { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 10px; }
 .steps li { display: flex; gap: 10px; padding: 10px 12px; background: var(--bg); border-radius: 12px; }
+.cmp summary { cursor: pointer; font-size: 14px; font-weight: 600; color: var(--text-2); }
+.cmp-steps { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 6px; }
+.cmp-step { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 10px; padding: 8px 10px; background: var(--bg); border-radius: 10px; font-size: 13px; }
+.cmp-plan { flex: 1 1 100%; color: var(--text); }
+.cmp-done { color: var(--text-2); }
+.cmp-step.undone { opacity: 0.55; }
+.cmp-summary { font-size: 13px; font-weight: 600; color: var(--accent-strong); padding-top: 4px; }
 .steps .bar { width: 6px; height: auto; border-radius: 3px; flex: none; }
 
 /* ---- semaine (accueil) ---- */

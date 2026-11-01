@@ -34,8 +34,11 @@ Name: "{autoprograms}\CoachCloclo"; Filename: "{app}\CoachCloclo.exe"
 Name: "{autodesktop}\CoachCloclo"; Filename: "{app}\CoachCloclo.exe"; Tasks: desktopicon
 
 [Run]
-; Pas de skipifsilent : une mise à jour silencieuse relance l'appli
-Filename: "{app}\CoachCloclo.exe"; Description: "{cm:LaunchProgram,CoachCloclo}"; Flags: nowait postinstall
+; Pas de skipifsilent : une mise à jour silencieuse relance l'appli, sans ouvrir de
+; navigateur (l'onglet existant se recharge tout seul) ; l'installation interactive
+; ouvre l'appli normalement.
+Filename: "{app}\CoachCloclo.exe"; Parameters: "--no-browser"; Description: "{cm:LaunchProgram,CoachCloclo}"; Flags: nowait postinstall; Check: WizardSilent
+Filename: "{app}\CoachCloclo.exe"; Description: "{cm:LaunchProgram,CoachCloclo}"; Flags: nowait postinstall; Check: not WizardSilent
 
 ; [UninstallDelete] volontairement absent : les données vivent dans
 ; %LOCALAPPDATA%\CoachCloclo, jamais sous {app}.

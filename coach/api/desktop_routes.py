@@ -108,8 +108,12 @@ def desktop_router(desktop: Desktop) -> APIRouter:
             update["pin_hash"] = hash_pin(body.pin)
         save_settings(settings.model_copy(update=update))
         request.app.state.lan = body.enabled
-        if not body.enabled:
+        if not body.enabled or body.pin is not None:
+            # nouveau PIN : les téléphones déjà connectés doivent le saisir
             request.app.state.sessions.clear()
+        if body.pin is not None:
+            request.app.state.pin_failures = 0
+            request.app.state.pin_locked_until = 0.0
         # le serveur est relancé : la réponse doit partir avant
         timer = threading.Timer(LAN_DELAY_S, desktop.set_lan, args=(body.enabled,))
         timer.daemon = True

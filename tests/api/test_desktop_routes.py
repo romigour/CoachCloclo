@@ -227,6 +227,27 @@ def test_lan_disable_clears_sessions(pc, app, lan_calls, lan_done):
     assert lan_done.wait(5) and lan_calls == [False]
 
 
+def test_lan_pin_change_clears_sessions_and_lock(pc, app, lan_done):
+    save_settings(load_settings().model_copy(update={"pin_hash": hash_pin("1234"), "lan_enabled": True}))
+    app.state.lan = True
+    app.state.sessions.add("tok")
+    app.state.pin_failures = 3
+    app.state.pin_locked_until = 1e12
+    r = pc.post("/api/lan", json={"enabled": True, "pin": "5678"})
+    assert r.status_code == 200
+    assert app.state.sessions == set()
+    assert app.state.pin_failures == 0 and app.state.pin_locked_until == 0.0
+    assert lan_done.wait(5)
+
+
+def test_lan_enable_without_new_pin_keeps_sessions(pc, app, lan_done):
+    save_settings(load_settings().model_copy(update={"pin_hash": hash_pin("1234")}))
+    app.state.sessions.add("tok")
+    assert pc.post("/api/lan", json={"enabled": True}).status_code == 200
+    assert app.state.sessions == {"tok"}
+    assert lan_done.wait(5)
+
+
 def test_lan_view_from_phone_is_read_only(phone_with_pin_cookie):
     body = phone_with_pin_cookie.get("/api/lan").json()
     assert body["local"] is False and body["enabled"] is True and body["has_pin"] is True

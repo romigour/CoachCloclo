@@ -12,6 +12,8 @@ _log = logging.getLogger(__name__)
 
 _DELAI_DEMARRAGE_S = 10.0
 _DELAI_ARRET_S = 15.0
+# une requête longue (génération de plan) ne doit pas bloquer l'arrêt
+_DELAI_ARRET_GRACIEUX_S = 3
 
 
 class AppServer:
@@ -35,7 +37,13 @@ class AppServer:
             self._lancer(host)
 
     def _lancer(self, host: str) -> None:
-        config = uvicorn.Config(self.app, host=host, port=self.port, log_config=None)
+        config = uvicorn.Config(
+            self.app,
+            host=host,
+            port=self.port,
+            log_config=None,
+            timeout_graceful_shutdown=_DELAI_ARRET_GRACIEUX_S,
+        )
         server = uvicorn.Server(config)
         thread = threading.Thread(target=self._executer, args=(server,), name="coach-uvicorn", daemon=True)
         thread.start()
@@ -77,11 +85,16 @@ class AppServer:
     def restart(self, host: str) -> None:
         """Arrête puis relance sur `host` (même app, même port).
 
-        En cas d'échec, tente de relancer sur l'ancien hôte, puis relève l'erreur.
+        Si l'ancien serveur tarde à s'arrêter, la relance est tentée quand même (sa socket
+        d'écoute est déjà fermée). En cas d'échec, tente de relancer sur l'ancien hôte,
+        puis relève l'erreur.
         """
         with self._verrou:
             ancien = self.host
-            self._arreter()
+            try:
+                self._arreter()
+            except Exception:
+                _log.exception("Arrêt incomplet du serveur ; relance sur %s tentée quand même", host)
             try:
                 self._lancer(host)
             except Exception:

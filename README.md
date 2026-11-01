@@ -48,11 +48,13 @@ Python (>= 3.12), bibliothèque `garminconnect`, CLI `claude` installé, connexi
 
 ## Mode LAN et PIN
 
-Dans les Réglages, le bloc « Accès depuis ton téléphone » active l'écoute sur tout le réseau local et permet de définir le PIN (4 à 12 chiffres). Au premier passage, le pare-feu Windows demande une autorisation : coche « Réseaux privés ». Depuis le téléphone, ouvre `http://<ip>:8765`. Sans le mode LAN, seule ta machine peut accéder à l'app.
+Avec la version installée Windows, le bloc « Accès depuis ton téléphone » des Réglages active l'écoute sur tout le réseau local et permet de définir le PIN (4 à 12 chiffres). Au premier passage, le pare-feu Windows demande une autorisation : coche « Réseaux privés ». Depuis le téléphone, ouvre l'adresse affichée dans ce bloc des Réglages (`http://<ip>:<port>`). Sans le mode LAN, seule ta machine peut accéder à l'app.
 
-Le PC lui-même n'a plus besoin du PIN (y compris avec `coach start --lan`) ; seul le PC peut activer ou désactiver le mode LAN et changer le PIN. En terminal, `coach start --lan` reste disponible.
+Cet interrupteur n'existe que dans la version installée Windows : sous `coach start`, le mode LAN s'active avec `coach start --lan` (le PIN se définit à l'invite au premier lancement).
 
-Note : depuis un téléphone, via `http://<ip>:8765` en http simple (`--lan`), les navigateurs n'installent pas la PWA et n'enregistrent pas le service worker (contexte sécurisé requis). L'application fonctionne quand même dans le navigateur.
+Le PC lui-même n'a plus besoin du PIN (y compris avec `coach start --lan`) ; seul le PC peut activer ou désactiver le mode LAN et changer le PIN.
+
+Note : depuis un téléphone, via `http://<ip>:<port>` en http simple (`--lan`), les navigateurs n'installent pas la PWA et n'enregistrent pas le service worker (contexte sécurisé requis). L'application fonctionne quand même dans le navigateur.
 
 ## Données et tokens
 

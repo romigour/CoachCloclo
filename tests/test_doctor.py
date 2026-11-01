@@ -4,7 +4,6 @@ import sys
 from datetime import date
 
 from coach.doctor import Check, fix, run_checks
-from coach.proc import NO_WINDOW
 from coach.garmin.port import FakeGarminClient, GarminAuthRequired
 from coach.llm.provider import FakeLLMProvider, LLMUnavailable, LLMUsageLimit
 
@@ -128,7 +127,8 @@ def test_fix_claude_cli_runs_installer():
     c = Check(name="claude_cli", ok=False, detail="", fix_hint=None, fixable=True)
     assert fix(c, runner=runner) is True
     assert "claude.ai/install" in " ".join(calls[0])
-    assert kws[0] == {"creationflags": NO_WINDOW}
+    # chemin terminal (coach doctor --fix) : la progression doit rester visible
+    assert kws[0] == {}
 
 
 def test_auth_reports_cli_absent_when_cli_check_failed(coach_home):

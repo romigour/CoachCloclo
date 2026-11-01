@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import sys
+import threading
 from collections.abc import Callable
 from pathlib import Path
 
@@ -54,6 +55,10 @@ class Tray:
         self._open_app()
 
     def _verifier(self, icon=None, item=None) -> None:
+        """Lance la vérification dans un thread : le fil de messages de pystray reste libre."""
+        threading.Thread(target=self._verifier_fond, name="coach-update-tray", daemon=True).start()
+
+    def _verifier_fond(self) -> None:
         try:
             message = self._check_updates()
         except Exception as e:

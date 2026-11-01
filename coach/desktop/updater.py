@@ -237,7 +237,10 @@ def _spawn(args: list[str]) -> None:
     flags = getattr(subprocess, "DETACHED_PROCESS", 0) | getattr(
         subprocess, "CREATE_NEW_PROCESS_GROUP", 0
     )
-    subprocess.Popen(args, creationflags=flags, close_fds=True)
+    # sans cela, l'installateur puis l'exe relancé hériteraient des variables _PYI_*
+    # de l'ancien processus gelé
+    env = {**os.environ, "PYINSTALLER_RESET_ENVIRONMENT": "1"}
+    subprocess.Popen(args, creationflags=flags, close_fds=True, env=env)
 
 
 def default_updater(current: str) -> Updater:

@@ -48,6 +48,8 @@ jobs:
   windows:
     needs: build
     runs-on: windows-latest
+    # garde-fou : un exe bloqué ne doit pas occuper le runner 6 h
+    timeout-minutes: 30
     defaults:
       run:
         shell: pwsh
@@ -75,7 +77,7 @@ jobs:
       - name: Test de fumée
         run: |
           $env:COACH_HOME = Join-Path $env:RUNNER_TEMP 'coach-smoke'
-          $p = Start-Process dist\CoachCloclo\CoachCloclo.exe -ArgumentList '--smoke' -Wait -PassThru
+          $p = Start-Process dist\CoachCloclo\CoachCloclo.exe -ArgumentList '--smoke', '--expect-version', '${{ steps.version.outputs.version }}' -Wait -PassThru
           if ($p.ExitCode -ne 0) {
             $log = Join-Path $env:COACH_HOME 'logs\coachcloclo.log'
             if (Test-Path $log) { Get-Content $log }

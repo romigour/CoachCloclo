@@ -13,7 +13,7 @@ from coach.config import data_dir, load_settings, tokenstore_dir
 from coach.garmin.client import GarminClient
 from coach.garmin.port import GarminAuthRequired, GarminRateLimited, GarminUnavailable
 from coach.llm.provider import LLMError, LLMUnavailable, LLMUsageLimit, provider_from_settings
-from coach.proc import NO_WINDOW, find_claude
+from coach.proc import find_claude
 
 DEFAULT_PORT = 8765
 OFFLINE_DETAIL = "non vérifié (hors ligne)"
@@ -170,7 +170,8 @@ def fix(check: Check, *, runner=subprocess.run, data_path: Path | None = None,
         cmd = _INSTALL_WINDOWS if sys.platform == "win32" else _INSTALL_POSIX
         echo("Installation de Claude Code : " + " ".join(cmd[-1:] if len(cmd) > 2 else cmd))
         try:
-            return runner(cmd, creationflags=NO_WINDOW).returncode == 0
+            # chemin terminal : la progression de l'installation reste visible
+            return runner(cmd).returncode == 0
         except OSError:
             return False
     if check.name == "claude_auth":

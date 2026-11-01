@@ -106,3 +106,74 @@ def test_concurrent_restarts_leave_one_server(coach_home):
         assert httpx.get(f"http://127.0.0.1:{port}/api/version").status_code == 200
     finally:
         srv.stop()
+
+
+def _app_lente():
+    """App minimale avec une route lente (comme une génération de plan)."""
+    import asyncio
+    import threading
+
+    from fastapi import FastAPI
+
+    app = FastAPI()
+    app.state.en_cours = threading.Event()
+
+    @app.get("/api/version")
+    def version():
+        return {"version": "test"}
+
+    @app.get("/lent")
+    async def lent():
+        app.state.en_cours.set()
+        await asyncio.sleep(60)
+        return {}
+
+    return app
+
+
+def _requete_lente(app, port):
+    import threading
+
+    def appel():
+        try:
+            httpx.get(f"http://127.0.0.1:{port}/lent", timeout=70)
+        except Exception:
+            pass
+
+    threading.Thread(target=appel, daemon=True).start()
+    assert app.state.en_cours.wait(5)
+
+
+def test_restart_during_slow_request_serves_new_host(coach_home):
+    import time
+
+    app = _app_lente()
+    port = _port_libre()
+    srv = AppServer(app, port)
+    srv.start("127.0.0.1")
+    try:
+        _requete_lente(app, port)
+        debut = time.monotonic()
+        srv.restart("0.0.0.0")
+        assert time.monotonic() - debut < 10
+        assert srv.host == "0.0.0.0"
+        assert httpx.get(f"http://127.0.0.1:{port}/api/version").status_code == 200
+    finally:
+        srv.stop()
+
+
+def test_restart_relaunches_even_if_stop_times_out(coach_home, monkeypatch):
+    from coach.desktop import server as module
+
+    monkeypatch.setattr(module, "_DELAI_ARRET_S", 0.2)
+    app = _app_lente()
+    port = _port_libre()
+    srv = AppServer(app, port)
+    srv.start("127.0.0.1")
+    try:
+        _requete_lente(app, port)
+        srv.restart("0.0.0.0")
+        assert srv.host == "0.0.0.0"
+        assert httpx.get(f"http://127.0.0.1:{port}/api/version").status_code == 200
+    finally:
+        srv.stop()

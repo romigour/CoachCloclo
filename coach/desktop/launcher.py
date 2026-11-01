@@ -30,10 +30,10 @@ _DELAI_SONDE_S = 3
 
 def _version_servie(port: int) -> str | None:
     """Version renvoyée par l'appli sur ce port, ou None si elle ne répond pas."""
+    # sonde en boucle locale : jamais par le proxy système
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
     try:
-        with urllib.request.urlopen(
-            f"http://127.0.0.1:{port}/api/version", timeout=_DELAI_SONDE_S
-        ) as r:
+        with opener.open(f"http://127.0.0.1:{port}/api/version", timeout=_DELAI_SONDE_S) as r:
             return json.loads(r.read().decode("utf-8")).get("version")
     except Exception:
         return None
@@ -47,12 +47,50 @@ def _log_thread(args) -> None:
     )
 
 
+def _version_attendue(argv: list[str]) -> str | None:
+    """Valeur de `--expect-version X` (test de fumée de la CI), ou None."""
+    if "--expect-version" not in argv:
+        return None
+    i = argv.index("--expect-version")
+    return argv[i + 1] if i + 1 < len(argv) else ""
+
+
+def _fumee(port: int, attendue: str | None) -> int:
+    """Code de retour du test de fumée : l'appli répond avec une version plausible."""
+    actuelle = app_version()
+    if actuelle == "0.0.0":
+        _log.error("Test de fumée : métadonnées du paquet introuvables (version 0.0.0)")
+        return 1
+    if attendue is not None and actuelle != attendue:
+        _log.error("Test de fumée : version %s, %s attendue", actuelle, attendue)
+        return 1
+    servie = _version_servie(port)
+    if servie != actuelle:
+        _log.error("Test de fumée : version servie %r, %s attendue", servie, actuelle)
+        return 1
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     if argv is None:
         argv = sys.argv[1:]
-    log = setup_logging()
-    threading.excepthook = _log_thread
     smoke = "--smoke" in argv
+    ouvrir_navigateur = "--no-browser" not in argv
+
+    def signaler(message: str, log_path=None) -> None:
+        # en test de fumée (CI), une boîte de dialogue bloquerait le runner
+        if smoke:
+            _log.error("%s", message)
+            print(message, file=sys.stderr)
+        else:
+            fatal(message, log_path)
+
+    try:
+        log = setup_logging()
+    except Exception as e:
+        signaler(str(e))
+        return 1
+    threading.excepthook = _log_thread
     mutex = None
     server: AppServer | None = None
     try:
@@ -61,9 +99,10 @@ def main(argv: list[str] | None = None) -> int:
             etat = instance.read_state()
             port = etat.get("port") if etat else None
             if port and _version_servie(int(port)) is not None:
-                webbrowser.open(f"http://127.0.0.1:{port}")
+                if ouvrir_navigateur:
+                    webbrowser.open(f"http://127.0.0.1:{port}")
                 return 0
-            fatal(
+            signaler(
                 "CoachCloclo semble bloqué : quitte-le depuis l'icône près de l'horloge "
                 "ou redémarre l'ordinateur",
                 log,
@@ -73,7 +112,7 @@ def main(argv: list[str] | None = None) -> int:
         try:
             port = instance.pick_port()
         except instance.NoFreePort:
-            fatal("Aucun port libre entre 8765 et 8775", log)
+            signaler("Aucun port libre entre 8765 et 8775", log)
             return 1
         instance.write_state(port, os.getpid())
 
@@ -111,7 +150,7 @@ def main(argv: list[str] | None = None) -> int:
         server.start("0.0.0.0" if lan else "127.0.0.1")
 
         if smoke:
-            return 0 if _version_servie(port) == app_version() else 1
+            return _fumee(port, _version_attendue(argv))
 
         from coach.desktop.tray import Tray
 
@@ -136,7 +175,9 @@ def main(argv: list[str] | None = None) -> int:
                 tray.notify(f"Version {info.version} de CoachCloclo disponible")
 
         threading.Thread(target=verif_demarrage, name="coach-update", daemon=True).start()
-        webbrowser.open(url)
+        if ouvrir_navigateur:
+            # --no-browser : relance après une mise à jour, l'onglet existant se recharge
+            webbrowser.open(url)
         if quitter.is_set():
             tray.stop()
         else:
@@ -144,7 +185,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     except Exception as e:
         _log.exception("Erreur fatale")
-        fatal(str(e), log)
+        signaler(str(e), log)
         return 1
     finally:
         if server is not None:

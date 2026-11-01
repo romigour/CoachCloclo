@@ -302,3 +302,15 @@ def test_install_on_exit_error_is_logged(tmp_path):
 
     env.updater.install(bad)
     assert env.updater.view()["state"] == "installing"
+
+
+def test_spawn_resets_pyinstaller_environment(monkeypatch):
+    from coach.desktop import updater as module
+
+    appels = []
+    monkeypatch.setattr(module.subprocess, "Popen", lambda args, **kw: appels.append(kw))
+    monkeypatch.setenv("_PYI_APPLICATION_HOME_DIR", "C:/ancien")
+    module._spawn(["setup.exe"])
+    env = appels[0]["env"]
+    assert env["PYINSTALLER_RESET_ENVIRONMENT"] == "1"
+    assert env["_PYI_APPLICATION_HOME_DIR"] == "C:/ancien"  # le reste de l'environnement est transmis

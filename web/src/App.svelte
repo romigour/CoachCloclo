@@ -1,8 +1,9 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { api, ApiError, type Status } from "./lib/api";
+  import { api, ApiError, claudeSkipped, setupDone, type SetupStatus, type Status } from "./lib/api";
   import ErrorBanner from "./components/ErrorBanner.svelte";
   import Sidebar from "./components/Sidebar.svelte";
+  import Welcome from "./routes/Welcome.svelte";
   import Setup from "./routes/Setup.svelte";
   import Goal from "./routes/Goal.svelte";
   import Today from "./routes/Today.svelte";
@@ -10,11 +11,12 @@
   import Proposal from "./routes/Proposal.svelte";
   import Stats from "./routes/Stats.svelte";
 
-  const ROUTES = ["today", "plan", "stats", "goal", "setup", "proposal"] as const;
+  const ROUTES = ["today", "plan", "stats", "goal", "setup", "proposal", "welcome"] as const;
   type Route = (typeof ROUTES)[number];
 
   let route = $state<Route | null>(parse());
   let status = $state<Status | null>(null);
+  let setupAvailable = $state(false); // appli de bureau : l'écran d'accueil existe
   let error = $state<unknown>(null);
   let version = $state(0);
   let ready = $state(false);
@@ -48,14 +50,28 @@
     }
   }
 
+  /** État de l'écran d'accueil ; `null` sous `coach start` (404) ou si la lecture échoue. */
+  async function readSetup(): Promise<SetupStatus | null> {
+    try {
+      return await api.setupStatus();
+    } catch {
+      return null;
+    }
+  }
+
   async function start() {
-    await refresh();
+    const [setup] = await Promise.all([readSetup(), refresh()]);
+    setupAvailable = setup !== null;
     ready = true;
     if (!autoSyncStarted && !error && status?.garmin === "ok") {
       autoSyncStarted = true;
       sync();
     }
-    if (!route && !error) location.hash = home();
+    if (!route) {
+      // Configuration incomplète : l'écran d'accueil, même si /api/status a échoué.
+      if (setup && !setupDone(setup, claudeSkipped())) location.hash = "#/welcome";
+      else if (!error) location.hash = home();
+    }
   }
 
   // Pendant l'import de l'historique, on relit l'état toutes les 5 s ; l'intervalle s'arrête dès que l'état change.
@@ -130,7 +146,7 @@
   <Sidebar {route} {status} {syncing} {lastSync} onsync={sync} />
 
   <main class="content">
-    <ErrorBanner {error} onpin={start} />
+    <ErrorBanner {error} onpin={start} {setupAvailable} />
 
     {#if syncing}
       <p class="card busy" role="status">
@@ -139,7 +155,9 @@
     {/if}
 
     {#if ready && !(error && (error as { code?: string }).code === "pin_required")}
-      {#if route === "setup"}
+      {#if route === "welcome"}
+        <Welcome onconnected={garminConnected} />
+      {:else if route === "setup"}
         <Setup onchanged={refresh} onconnected={garminConnected} />
       {:else if route === "goal"}
         <Goal onchanged={refresh} />

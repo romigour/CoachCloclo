@@ -1,7 +1,7 @@
 <script lang="ts">
   import { api, ApiError } from "../lib/api";
 
-  let { error, onpin }: { error: unknown; onpin?: () => void } = $props();
+  let { error, onpin, setupAvailable = false }: { error: unknown; onpin?: () => void; setupAvailable?: boolean } = $props();
 
   let pin = $state("");
   let pinError = $state("");
@@ -61,6 +61,11 @@
       <button class="primary" disabled={busy}>Entrer</button>
     </form>
   {:else}
-    <div class="banner error" role="alert">{message}</div>
+    <div class="banner error" role="alert">
+      {message}
+      {#if code === "llm_unavailable" && setupAvailable}
+        <a href="#/welcome">Connecte Claude</a>
+      {/if}
+    </div>
   {/if}
 {/if}

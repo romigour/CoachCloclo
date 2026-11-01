@@ -5,11 +5,25 @@ from contextlib import contextmanager
 from datetime import date
 from pathlib import Path
 
+from pydantic import TypeAdapter
 from sqlalchemy.engine import Engine
 from sqlmodel import Session as DbSession
 from sqlmodel import SQLModel, create_engine, delete, select
 
-from coach.plan.models import Activity, AthleteSnapshot, Goal, PersonalRecord, Proposal, Race, Session
+from coach.garmin.port import LapSummary
+from coach.plan.models import (
+    Activity,
+    ActivityLaps,
+    AthleteSnapshot,
+    Goal,
+    PersonalRecord,
+    Proposal,
+    Race,
+    Session,
+    _now,
+)
+
+_LAPS = TypeAdapter(list[LapSummary])
 
 
 def make_engine(path: Path) -> Engine:
@@ -106,6 +120,30 @@ class Repo:
         if obj is None:
             raise KeyError(f"activité {id} introuvable")
         return obj
+
+    def activity_of_session(self, session_id: int) -> Activity | None:
+        stmt = select(Activity).where(Activity.session_id == session_id)
+        with self._open() as db:
+            return db.exec(stmt).first()
+
+    def laps(self, activity_id: int) -> list[LapSummary] | None:
+        """Tours enregistrés de l'activité ; `None` s'ils n'ont jamais été récupérés."""
+        stmt = select(ActivityLaps).where(ActivityLaps.activity_id == activity_id)
+        with self._open() as db:
+            row = db.exec(stmt).first()
+        return None if row is None else _LAPS.validate_json(row.laps_json)
+
+    def save_laps(self, activity_id: int, laps: list[LapSummary]) -> None:
+        """Enregistre les tours (sans `raw`), en remplaçant ceux déjà présents."""
+        payload = _LAPS.dump_json(laps, exclude={"__all__": {"raw"}}).decode()
+        with self.transaction() as db:
+            row = db.exec(select(ActivityLaps).where(ActivityLaps.activity_id == activity_id)).first()
+            if row is None:
+                row = ActivityLaps(activity_id=activity_id, laps_json=payload)
+            else:
+                row.laps_json = payload
+                row.fetched_at = _now()
+            db.add(row)
 
     def races(self) -> list[Race]:
         with self._open() as db:

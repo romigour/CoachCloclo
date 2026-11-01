@@ -111,6 +111,15 @@ class Activity(SQLModel, table=True):
     match_source: str | None = None  # "auto" | "manual"
 
 
+class ActivityLaps(SQLModel, table=True):
+    """Tours Garmin d'une activité (sans `raw`), récupérés une fois puis mis en cache."""
+
+    id: int | None = Field(default=None, primary_key=True)
+    activity_id: int = Field(unique=True, index=True)
+    laps_json: str
+    fetched_at: dt.datetime = Field(default_factory=_now)
+
+
 class Proposal(SQLModel, table=True):
     id: int | None = Field(default=None, primary_key=True)
     created_at: dt.datetime = Field(default_factory=_now)

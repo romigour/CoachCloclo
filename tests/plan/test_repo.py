@@ -2,10 +2,11 @@ from datetime import date
 
 import pytest
 
+from coach.garmin.port import LapSummary
 from coach.llm.schemas import RepeatSpec, StepSpec
 from coach.plan.models import Activity, AthleteSnapshot, Proposal, Session
 from tests.llm.factories import make_session
-from tests.plan.factories import make_db_session, make_goal
+from tests.plan.factories import make_activity, make_db_session, make_goal
 
 
 def test_session_spec_roundtrip(repo):
@@ -143,3 +144,16 @@ def test_has_activities(repo):
     assert repo.activity(repo.all_activities()[0].id).garmin_activity_id == 1
     with pytest.raises(KeyError):
         repo.activity(999)
+
+
+def test_laps_absent_then_saved_then_replaced(repo):
+    assert repo.laps(1) is None
+    repo.save_laps(1, [LapSummary(index=0, duration_s=60, distance_m=200, raw={"x": 1})])
+    assert repo.laps(1)[0].distance_m == 200 and repo.laps(1)[0].raw == {}
+    repo.save_laps(1, [])
+    assert repo.laps(1) == []
+
+
+def test_activity_of_session(repo):
+    a = repo.add(make_activity(session_id=7))
+    assert repo.activity_of_session(7).id == a.id and repo.activity_of_session(8) is None

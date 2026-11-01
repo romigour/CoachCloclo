@@ -76,6 +76,49 @@ export type Activity = {
   match_source: string | null;
 };
 
+export type Verdict = "in" | "fast" | "slow" | "hr_high" | "hr_low";
+
+/** Un tour brut de la montre (sans le `raw` Garmin). */
+export type Lap = {
+  index: number;
+  duration_s: number;
+  distance_m: number;
+  avg_hr: number | null;
+  max_hr: number | null;
+  avg_pace_s_km: number | null;
+  step_order: number | null;
+};
+
+/** Une étape à plat (itérations dépliées) avec son prévu et son réalisé. */
+export type StepResult = {
+  group: number;
+  iteration: number | null;
+  position: number;
+  kind: "warmup" | "active" | "recovery" | "cooldown";
+  planned_duration_s: number | null;
+  planned_distance_m: number | null;
+  zone: string | null;
+  target_low: number | null;
+  target_high: number | null;
+  done: boolean;
+  duration_s: number | null;
+  distance_m: number | null;
+  avg_pace_s_km: number | null;
+  avg_hr: number | null;
+  verdict: Verdict | null;
+};
+
+export type StepComparison = {
+  followed_workout: boolean;
+  target_kind: "pace" | "hr";
+  steps: StepResult[];
+  laps: Lap[];
+};
+
+export type Comparison =
+  | { available: false; reason: "no_activity" | "no_laps" }
+  | ({ available: true } & StepComparison);
+
 /** Famille de sport normalisée côté serveur. */
 export type Family = "run" | "trail" | "bike" | "swim" | "strength" | "walk" | "other";
 
@@ -311,6 +354,7 @@ export const api = {
   unschedule: (id: number) => post<{ status: string }>(`/sessions/${id}/unschedule`),
   retry: (id: number) => post<{ status: string }>(`/sessions/${id}/retry`),
   activities: (week: number) => get<Activity[]>(`/activities?week=${week}`),
+  comparison: (sessionId: number) => get<Comparison>(`/sessions/${sessionId}/comparison`),
   freeActivities: (days: number) => get<Activity[]>(`/activities/free?days=${days}`),
   match: (activityId: number, sessionId: number | null) =>
     post<{ status: string }>(`/activities/${activityId}/match`, { session_id: sessionId }),

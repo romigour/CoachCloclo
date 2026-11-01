@@ -184,3 +184,65 @@ def test_login_not_restarted_while_running():
     s.start_login()
     s.start_login()
     assert len(popen_calls) == 1
+
+
+def test_install_timeout():
+    def slow(*a, **k):
+        raise subprocess.TimeoutExpired("powershell", 600)
+
+    s, _ = _setup(runner=slow)
+    s.start_install()
+    s._thread.join(5)
+    st = s.status()
+    assert st["claude_step"] == "failed" and "trop de temps" in st["claude_error"]
+
+
+def test_install_unexpected_error():
+    def boom(*a, **k):
+        raise RuntimeError("x")
+
+    s, _ = _setup(runner=boom)
+    s.start_install()
+    s._thread.join(5)
+    assert s.status()["claude_step"] == "failed"
+
+
+def test_install_passes_timeout_and_stdin():
+    calls = []
+    s, _ = _setup(runner=_runner(calls=calls))
+    s.start_install()
+    s._thread.join(5)
+    assert calls[0][1]["timeout"] == 600
+    assert calls[0][1]["stdin"] == subprocess.DEVNULL
+
+
+def test_login_ignored_while_installing():
+    import threading
+
+    gate = threading.Event()
+
+    def blocking(*a, **k):
+        gate.wait(5)
+        return SimpleNamespace(stdout="", stderr="", returncode=0)
+
+    s, popen_calls = _setup(runner=blocking)
+    s.start_install()
+    s.start_login()
+    assert popen_calls == []
+    gate.set()
+    s._thread.join(5)
+
+
+def test_status_result_ignored_if_step_changed_during_call():
+    # loggedIn arrive alors que le login a été relancé entre-temps : on ne conclut pas.
+    holder = {}
+
+    def runner(*a, **k):
+        s = holder["s"]
+        s._proc = object()  # le processus change pendant l'appel
+        return SimpleNamespace(stdout='{"loggedIn": true}', returncode=0)
+
+    s, _ = _setup(runner=runner)
+    holder["s"] = s
+    s.start_login()
+    assert s.status()["claude_step"] == "logging_in"

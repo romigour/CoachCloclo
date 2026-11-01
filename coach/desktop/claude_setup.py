@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import subprocess
 import threading
 import time
@@ -15,6 +16,9 @@ LOGIN_NEEDS_CONSOLE = False
 INSTALL_CMD = ["powershell", "-NoProfile", "-Command", "irm https://claude.ai/install.ps1 | iex"]
 LOGIN_TIMEOUT_S = 300
 STATUS_TIMEOUT_S = 15
+INSTALL_TIMEOUT_S = 600  # l'installeur natif télécharge ~100 Mo
+
+logger = logging.getLogger(__name__)
 
 
 class ClaudeSetup:
@@ -61,9 +65,16 @@ class ClaudeSetup:
 
     def status(self) -> dict:
         exe = self._find()
+        with self._lock:
+            observed_step, observed_proc = self._step, self._proc
         auth = self._logged_in(exe) if exe else False
         with self._lock:
-            if self._step == "logging_in":
+            # Le résultat n'est appliqué que si l'étape n'a pas changé pendant l'appel.
+            if (
+                observed_step == "logging_in"
+                and self._step == "logging_in"
+                and self._proc is observed_proc
+            ):
                 if auth:
                     self._proc = None
                     self._set("idle")
@@ -94,17 +105,26 @@ class ClaudeSetup:
 
     def _install(self) -> None:
         try:
-            res = self._runner(INSTALL_CMD, creationflags=NO_WINDOW, capture_output=True)
+            res = self._runner(
+                INSTALL_CMD,
+                creationflags=NO_WINDOW,
+                capture_output=True,
+                stdin=subprocess.DEVNULL,
+                timeout=INSTALL_TIMEOUT_S,
+            )
             ok = res.returncode == 0
             error = None if ok else "L'installation de Claude a échoué, réessaie"
-        except OSError as exc:
-            ok, error = False, f"Impossible de lancer l'installation de Claude : {exc}"
+        except Exception:
+            logger.exception("Installation de Claude impossible")
+            ok = False
+            error = "L'installation de Claude a échoué ou pris trop de temps, réessaie"
         with self._lock:
-            self._set("idle") if ok else self._set("failed", error)
+            if self._step == "installing":
+                self._set("idle") if ok else self._set("failed", error)
 
     def start_login(self) -> None:
         with self._lock:
-            if self._step == "logging_in":
+            if self._step in ("logging_in", "installing"):
                 return
             exe = self._find()
             if not exe:

@@ -700,3 +700,43 @@ def test_version_endpoint(make_client):
                                     ("1234567890123", False), ("12a4", False), ("", False)])
 def test_valid_pin(pin, ok):
     assert valid_pin(pin) is ok
+
+
+def _create_trail_goal(client) -> int:
+    gpx = (FIXTURES / "climb.gpx").read_bytes()
+    r = client.post("/api/goals", data=GOAL_FORM, files={"gpx": ("route.gpx", gpx, "application/gpx+xml")})
+    assert r.status_code == 200, r.text
+    return r.json()["id"]
+
+
+def test_race_plan_routes(make_client):
+    client = make_client()
+    gid = _create_trail_goal(client)
+    url = f"/api/goals/{gid}/race-plan"
+
+    r = client.get(url)
+    assert r.status_code == 200
+    assert r.json()["plan"]["segments"]
+
+    r = client.put(url, json={"aid_stations": [{"name": "A", "km": 10, "kind": "eau", "cutoff": "8h"}]})
+    assert r.status_code == 422
+    assert any("cutoff" in e["loc"] for e in r.json()["detail"])
+
+    r = client.put(url, json={"target_time_s": 18000})
+    assert r.status_code == 200
+    assert r.json()["settings"]["target_time_s"] == 18000
+
+    assert client.post(f"{url}/refresh").status_code == 200
+    assert client.post(f"{url}/reimport").status_code == 200
+
+    r = client.post(f"{url}/export")
+    assert r.status_code == 200
+    assert r.json()["workout_id"] is not None
+
+
+def test_race_plan_archived_goal_422(make_client):
+    client = make_client()
+    first = _create_trail_goal(client)
+    _create_trail_goal(client)
+    r = client.get(f"/api/goals/{first}/race-plan")
+    assert r.status_code == 422

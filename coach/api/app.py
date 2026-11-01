@@ -46,6 +46,8 @@ from coach.plan.repo import Repo, make_engine
 from coach.services import CoachError
 from coach.services import garmin_export as export
 from coach.services.plans import GoalInput, accept_plan, create_goal, generate_plan
+from coach.analysis.race_plan import RaceSettings
+from coach.services import race_strategy
 from coach.services.history import HistoryRunner, load_state, recover_orphan
 from coach.services.sync import sync
 from coach.stats.normalize import stat_row
@@ -414,6 +416,26 @@ def create_app(
     def post_accept(goal_id: int, repo: RepoDep):
         accept_plan(repo, goal_id)
         return {"status": "ok"}
+
+    @api.get("/goals/{goal_id}/race-plan")
+    def get_race_plan(goal_id: int, repo: RepoDep, garmin: GarminDep):
+        return race_strategy.get_race_view(repo, garmin, goal_id).model_dump(mode="json")
+
+    @api.put("/goals/{goal_id}/race-plan")
+    def put_race_plan(goal_id: int, body: RaceSettings, repo: RepoDep, garmin: GarminDep):
+        return race_strategy.save_settings(repo, garmin, goal_id, body).model_dump(mode="json")
+
+    @api.post("/goals/{goal_id}/race-plan/refresh")
+    def post_race_plan_refresh(goal_id: int, repo: RepoDep, garmin: GarminDep):
+        return race_strategy.refresh_basis(repo, garmin, goal_id).model_dump(mode="json")
+
+    @api.post("/goals/{goal_id}/race-plan/reimport")
+    def post_race_plan_reimport(goal_id: int, repo: RepoDep, garmin: GarminDep):
+        return race_strategy.reimport_stations(repo, garmin, goal_id).model_dump(mode="json")
+
+    @api.post("/goals/{goal_id}/race-plan/export")
+    def post_race_plan_export(goal_id: int, repo: RepoDep, garmin: GarminDep):
+        return race_strategy.export_race(repo, garmin, goal_id).model_dump(mode="json")
 
     @api.get("/plan")
     def get_plan(repo: RepoDep):

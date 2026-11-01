@@ -90,7 +90,9 @@ def session_to_workout_json(session: SessionSpec, zones: Zones, *, name: str) ->
 
 def _race_description(seg: Segment) -> str:
     d_plus = f" +{seg.d_plus_m} m" if seg.d_plus_m else ""
-    return f"{seg.kind.capitalize()}{d_plus} – viser {round(seg.time_s / 60)} min"
+    minutes = round(seg.time_s / 60)
+    duration = f"{minutes // 60} h {minutes % 60:02d}" if minutes >= 60 else f"{minutes} min"
+    return f"{seg.kind.capitalize()}{d_plus} – viser {duration}"
 
 
 def _race_target(seg: Segment) -> dict:

@@ -172,3 +172,15 @@ def test_race_workout_requires_reference_time():
     plan = _race_plan(trail=False).model_copy(update={"reference_time_s": None})
     with pytest.raises(ValueError):
         race_to_workout_json(plan, name="x")
+
+
+def test_race_workout_description_hours_beyond_60_min():
+    from coach.export.garmin_workout import race_to_workout_json
+
+    plan = _race_plan(trail=False)
+    long = plan.segments[0].model_copy(update={"time_s": 95 * 60})
+    short = plan.segments[1].model_copy(update={"time_s": 52 * 60})
+    plan = plan.model_copy(update={"segments": [long, short]})
+    steps = race_to_workout_json(plan, name="x")["workoutSegments"][0]["workoutSteps"]
+    assert steps[0]["description"] == "Plat – viser 1 h 35"
+    assert steps[1]["description"] == "Plat – viser 52 min"

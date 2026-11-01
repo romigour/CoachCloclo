@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { api, type UpdateView } from "../lib/api";
-  import { installAndWait } from "../lib/update";
+  import { followInstall, installAndWait } from "../lib/update";
 
   let view = $state<UpdateView | null>(null); // reste null sous `coach start` : le bloc est masqué
   let checking = $state(false);
@@ -9,11 +9,34 @@
   let phase = $state<"idle" | "downloading" | "installing" | "stuck">("idle");
   let progress = $state(0);
 
+  function onProgress(v: UpdateView) {
+    progress = v.progress;
+    if (v.state === "installing") phase = "installing";
+    if (v.state === "failed") message = v.error ?? "La mise à jour a échoué";
+  }
+
+  async function settle(run: () => Promise<"restarted" | "stuck" | "failed">) {
+    try {
+      const result = await run();
+      if (result === "restarted") location.reload();
+      else phase = result === "stuck" ? "stuck" : "idle";
+    } catch (e) {
+      message = e instanceof Error ? e.message : "La mise à jour a échoué";
+      phase = "idle";
+    }
+  }
+
   onMount(async () => {
     try {
       view = await api.update();
     } catch {
       view = null;
+    }
+    // Page ouverte en pleine installation : on suit la progression.
+    if (view && (view.state === "downloading" || view.state === "installing")) {
+      phase = view.state;
+      progress = view.progress;
+      settle(() => followInstall(view!.current, onProgress));
     }
   });
 
@@ -35,18 +58,7 @@
     phase = "downloading";
     progress = 0;
     message = "";
-    try {
-      const result = await installAndWait(view.current, (v) => {
-        progress = v.progress;
-        if (v.state === "installing") phase = "installing";
-        if (v.state === "failed") message = v.error ?? "La mise à jour a échoué";
-      });
-      if (result === "restarted") location.reload();
-      else phase = result === "stuck" ? "stuck" : "idle";
-    } catch (e) {
-      message = e instanceof Error ? e.message : "La mise à jour a échoué";
-      phase = "idle";
-    }
+    settle(() => installAndWait(view!.current, onProgress));
   }
 </script>
 

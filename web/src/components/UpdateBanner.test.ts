@@ -10,12 +10,14 @@ const idle: View = { current: "0.1.0", latest: "0.2.0", available: true, state: 
 let update: View;
 let version: string | "down";
 let checkResult: View;
+let installResponse: { status: number; body: unknown } | null;
 let reload: ReturnType<typeof vi.fn>;
 
 beforeEach(() => {
   update = { ...idle };
   checkResult = { ...idle, available: false, latest: null };
   version = "0.1.0";
+  installResponse = null;
   localStorage.clear();
   reload = vi.fn();
   vi.stubGlobal("location", { ...window.location, reload, hash: "" });
@@ -24,6 +26,8 @@ beforeEach(() => {
     vi.fn(async (url: string) => {
       if (url === "/api/update") return new Response(JSON.stringify(update), { status: 200 });
       if (url === "/api/update/check") return new Response(JSON.stringify(checkResult), { status: 200 });
+      if (url === "/api/update/install" && installResponse)
+        return new Response(JSON.stringify(installResponse.body), { status: installResponse.status });
       if (url === "/api/update/install") return new Response(JSON.stringify({ status: "started" }), { status: 202 });
       if (url === "/api/version") {
         if (version === "down") throw new TypeError("fetch failed");
@@ -130,4 +134,56 @@ test("le bouton des Réglages affiche À jour", async () => {
   expect(await screen.findByText("Version installée : 0.1.0")).toBeTruthy();
   await fireEvent.click(screen.getByRole("button", { name: "Vérifier les mises à jour" }));
   expect(await screen.findByText("CoachCloclo est à jour")).toBeTruthy();
+});
+
+test("409 update_running : on suit la progression sans erreur", async () => {
+  render(UpdateBanner);
+  await screen.findByText(/Version 0\.2\.0 disponible/);
+  vi.useFakeTimers();
+  installResponse = { status: 409, body: { code: "update_running", detail: "Déjà en cours" } };
+  update = { ...idle, state: "downloading", progress: 30 };
+  await fireEvent.click(screen.getByRole("button", { name: "Mettre à jour" }));
+  await vi.advanceTimersByTimeAsync(1100);
+  expect(screen.getByText(/Téléchargement… 30 %/)).toBeTruthy();
+  expect(screen.queryByText("Déjà en cours")).toBeNull();
+  expect(screen.queryByRole("button", { name: "Réessayer" })).toBeNull();
+});
+
+test("403 local_only : message du serveur sans Réessayer", async () => {
+  render(UpdateBanner);
+  await screen.findByText(/Version 0\.2\.0 disponible/);
+  installResponse = { status: 403, body: { code: "local_only", detail: "Réservé au PC" } };
+  await fireEvent.click(screen.getByRole("button", { name: "Mettre à jour" }));
+  expect(await screen.findByText(/Réservé au PC/)).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Réessayer" })).toBeNull();
+});
+
+test("page ouverte en pleine installation : la progression s'affiche", async () => {
+  update = { ...idle, state: "downloading", progress: 55 };
+  render(UpdateBanner);
+  expect(await screen.findByText(/Téléchargement… 55 %/)).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Mettre à jour" })).toBeNull();
+});
+
+test("le serveur s'arrête pendant le suivi : message de redémarrage", async () => {
+  render(UpdateBanner);
+  await screen.findByText(/Version 0\.2\.0 disponible/);
+  vi.useFakeTimers();
+  const f = fetch as unknown as ReturnType<typeof vi.fn>;
+  const impl = f.getMockImplementation()!;
+  f.mockImplementation(async (url: string, init?: RequestInit) => {
+    if (url === "/api/update") throw new TypeError("fetch failed");
+    return impl(url, init);
+  });
+  version = "down";
+  await fireEvent.click(screen.getByRole("button", { name: "Mettre à jour" }));
+  await vi.advanceTimersByTimeAsync(1100);
+  expect(screen.getByText("Mise à jour en cours, CoachCloclo va redémarrer…")).toBeTruthy();
+});
+
+test("sans appli de bureau (404) : pas de bandeau", async () => {
+  vi.stubGlobal("fetch", vi.fn(async () => new Response("{}", { status: 404 })));
+  const { container } = render(UpdateBanner);
+  await new Promise((r) => setTimeout(r, 20));
+  expect(container.querySelector(".banner")).toBeNull();
 });

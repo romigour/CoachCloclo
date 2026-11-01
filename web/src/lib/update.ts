@@ -1,4 +1,4 @@
-import { api, type UpdateView } from "./api";
+import { api, ApiError, type UpdateView } from "./api";
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
@@ -24,21 +24,22 @@ export async function waitForVersion(
 }
 
 /**
- * Lance l'installation, suit la progression (sondage 1 s) jusqu'à « installing » ou l'échec,
+ * Suit une installation déjà en cours (sondage 1 s) jusqu'à « installing » ou l'échec,
  * puis attend la nouvelle version. En cas d'échec, `onProgress` a reçu l'état avec le message d'erreur.
  */
-export async function installAndWait(
+export async function followInstall(
   current: string,
   onProgress: (v: UpdateView) => void,
 ): Promise<"restarted" | "stuck" | "failed"> {
-  await api.installUpdate();
   for (;;) {
     await sleep(1000);
     let v: UpdateView | null;
     try {
       v = await api.update();
     } catch {
-      break; // le serveur s'est arrêté pour laisser l'installateur travailler
+      // le serveur s'est arrêté pour laisser l'installateur travailler
+      onProgress({ current, latest: null, available: true, state: "installing", progress: 100, error: null });
+      break;
     }
     if (!v) break;
     onProgress(v);
@@ -46,4 +47,17 @@ export async function installAndWait(
     if (v.state === "installing") break;
   }
   return (await waitForVersion(current)) ? "restarted" : "stuck";
+}
+
+/** Lance l'installation (409 « déjà en cours » : on la suit simplement) puis la suit jusqu'au redémarrage. */
+export async function installAndWait(
+  current: string,
+  onProgress: (v: UpdateView) => void,
+): Promise<"restarted" | "stuck" | "failed"> {
+  try {
+    await api.installUpdate();
+  } catch (e) {
+    if (!(e instanceof ApiError && e.code === "update_running")) throw e;
+  }
+  return followInstall(current, onProgress);
 }

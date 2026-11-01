@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { api, type UpdateView } from "../lib/api";
-  import { installAndWait } from "../lib/update";
+  import { api, ApiError, type UpdateView } from "../lib/api";
+  import { followInstall, installAndWait } from "../lib/update";
 
   const KEY = "coach.updateDismissed";
 
@@ -10,6 +10,7 @@
   let phase = $state<"idle" | "downloading" | "installing" | "stuck" | "failed">("idle");
   let progress = $state(0);
   let failure = $state("");
+  let canRetry = $state(true);
 
   function readDismissed(): string | null {
     try {
@@ -19,11 +20,39 @@
     }
   }
 
+  function onProgress(v: UpdateView) {
+    progress = v.progress;
+    if (v.state === "installing") phase = "installing";
+    if (v.state === "failed") {
+      failure = v.error ?? "La mise à jour a échoué";
+      canRetry = true;
+    }
+  }
+
+  async function settle(run: () => Promise<"restarted" | "stuck" | "failed">) {
+    try {
+      const result = await run();
+      if (result === "restarted") location.reload();
+      else phase = result;
+    } catch (e) {
+      failure = e instanceof Error ? e.message : "La mise à jour a échoué";
+      // Depuis un téléphone (403 local_only), réessayer ne servirait à rien.
+      canRetry = !(e instanceof ApiError && e.code === "local_only");
+      phase = "failed";
+    }
+  }
+
   async function load() {
     try {
       view = await api.update();
     } catch {
-      // pas de bandeau si la lecture échoue
+      return; // pas de bandeau si la lecture échoue
+    }
+    // Page ouverte en pleine installation : on suit la progression au lieu de proposer « Mettre à jour ».
+    if (view && phase === "idle" && (view.state === "downloading" || view.state === "installing")) {
+      phase = view.state;
+      progress = view.progress;
+      settle(() => followInstall(view!.current, onProgress));
     }
   }
 
@@ -51,18 +80,7 @@
     phase = "downloading";
     progress = 0;
     failure = "";
-    try {
-      const result = await installAndWait(view.current, (v) => {
-        progress = v.progress;
-        if (v.state === "installing") phase = "installing";
-        if (v.state === "failed") failure = v.error ?? "La mise à jour a échoué";
-      });
-      if (result === "restarted") location.reload();
-      else phase = result;
-    } catch (e) {
-      failure = e instanceof Error ? e.message : "La mise à jour a échoué";
-      phase = "failed";
-    }
+    settle(() => installAndWait(view!.current, onProgress));
   }
 </script>
 
@@ -76,7 +94,7 @@
       La mise à jour semble bloquée : relance CoachCloclo depuis l'icône du bureau
     {:else if phase === "failed"}
       {failure}
-      <button type="button" onclick={install}>Réessayer</button>
+      {#if canRetry}<button type="button" onclick={install}>Réessayer</button>{/if}
     {:else}
       Version {view.latest} disponible —
       <button type="button" onclick={install}>Mettre à jour</button>

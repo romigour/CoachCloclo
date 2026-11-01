@@ -106,3 +106,69 @@ def test_pace_zone_without_pace_zones_raises():
     zones = ZONES.model_copy(update={"pace": None})
     with pytest.raises(ValueError):
         session_to_workout_json(INTERVALS_SESSION, zones, name="x")
+
+
+def _race_plan(*, trail: bool):
+    from datetime import date
+
+    from coach.analysis.gpx import ProfilePoint
+    from coach.analysis.race_plan import RaceBasis, RaceSettings, build_race_plan
+
+    basis = RaceBasis(
+        captured_on=date(2026, 11, 1),
+        pred_5k_s=None,
+        pred_10k_s=2880,
+        pred_half_s=None,
+        pred_marathon_s=None,
+        threshold_pace_s_km=None,
+        hr={"Z1": (100, 120), "Z2": (120, 140), "Z3": (140, 160), "Z4": (160, 175), "Z5": (175, 190)},
+    )
+    profile = None
+    if trail:  # 1 km plat, 3 km à +10 %, 1 km plat
+        profile = [ProfilePoint(km=0.0, ele_m=100.0)]
+        for i in range(1, 101):
+            km = i * 0.05
+            profile.append(ProfilePoint(km=km, ele_m=100.0 + max(0.0, min(km, 4.0) - 1.0) * 100))
+    return build_race_plan(
+        distance_km=5 if trail else 10,
+        trail=trail,
+        profile=profile,
+        basis=basis,
+        settings=RaceSettings(),
+        today=date(2026, 11, 2),
+    )
+
+
+def test_race_workout_steps():
+    from coach.export.garmin_workout import race_to_workout_json
+
+    route = race_to_workout_json(_race_plan(trail=False), name="Jour J – 10 km")
+    steps = route["workoutSegments"][0]["workoutSteps"]
+    assert route["workoutName"] == "Jour J – 10 km" and len(steps) == 10
+    assert steps[0]["endConditionValue"] == 1000
+    assert steps[0]["endCondition"]["conditionTypeKey"] == "distance"
+    assert steps[0]["stepType"]["stepTypeKey"] == "interval"
+    assert steps[0]["targetType"]["workoutTargetTypeKey"] == "pace.zone"
+    assert steps[0]["targetValueOne"] == pytest.approx(1000 / 293)
+    assert steps[0]["targetValueTwo"] == pytest.approx(1000 / 283)
+    assert [s["stepOrder"] for s in steps] == list(range(1, 11))
+    assert steps[0]["description"] == "Plat – viser 5 min"
+
+
+def test_race_workout_trail_uses_heart_rate():
+    from coach.export.garmin_workout import race_to_workout_json
+
+    plan = _race_plan(trail=True)
+    steps = race_to_workout_json(plan, name="x")["workoutSegments"][0]["workoutSteps"]
+    climb = next(s for s, seg in zip(steps, plan.segments) if seg.kind == "montée")
+    assert climb["targetType"]["workoutTargetTypeKey"] == "heart.rate.zone"
+    assert climb["description"].startswith("Montée +")
+    assert " m – viser " in climb["description"]
+
+
+def test_race_workout_requires_reference_time():
+    from coach.export.garmin_workout import race_to_workout_json
+
+    plan = _race_plan(trail=False).model_copy(update={"reference_time_s": None})
+    with pytest.raises(ValueError):
+        race_to_workout_json(plan, name="x")

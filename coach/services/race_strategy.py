@@ -8,7 +8,8 @@ from pydantic import BaseModel
 
 from coach.analysis.gpx import _NO_ELE, ProfilePoint, profile, waypoints
 from coach.analysis.race_plan import AidStation, RaceBasis, RacePlan, RaceSettings, build_race_plan
-from coach.garmin.port import GarminPort
+from coach.export.garmin_workout import race_to_workout_json
+from coach.garmin.port import GarminAuthRequired, GarminPort, GarminRateLimited, GarminUnavailable
 from coach.plan.models import Goal, RaceStrategy
 from coach.plan.repo import Repo
 from coach.services import CoachError
@@ -16,6 +17,7 @@ from coach.services.context import zones_from_metrics
 from coach.services.plans import _get_goal
 
 MAX_PROFILE_POINTS = 500
+_GARMIN_ERRORS = (GarminUnavailable, GarminAuthRequired, GarminRateLimited)
 _NO_FILE = "Fichier GPX introuvable : découpage sans profil"
 
 
@@ -144,7 +146,6 @@ def save_settings(repo: Repo, garmin: GarminPort, goal_id: int, settings: RaceSe
     return _view(strategy, goal, garmin.today())
 
 
-
 def refresh_basis(repo: Repo, garmin: GarminPort, goal_id: int) -> RaceView:
     """Recapture la base de calcul depuis Garmin."""
     goal = _get_goal(repo, goal_id)
@@ -167,3 +168,65 @@ def race_plan_for(repo: Repo, goal: Goal, today: date) -> RacePlan | None:
     """Plan de course de l'objectif, ou None s'il n'a pas de stratégie."""
     strategy = repo.race_strategy(goal.id)
     return None if strategy is None else _compute(strategy, goal, today)[0]
+
+
+# --- export vers la montre -------------------------------------------------------------------
+
+_NO_REFERENCE = "Pas de temps de référence : saisis un temps visé"
+
+
+def _cleanup_old(repo: Repo, garmin: GarminPort, strategy: RaceStrategy) -> RaceStrategy:
+    """Supprime les anciens ids Garmin en attente ; chaque id est effacé dès qu'il est traité."""
+    if strategy.pending_old_schedule_id is not None:
+        garmin.unschedule(strategy.pending_old_schedule_id)
+        strategy.pending_old_schedule_id = None
+        strategy = repo.update(strategy)
+    if strategy.pending_old_workout_id is not None:
+        garmin.delete_workout(strategy.pending_old_workout_id)
+        strategy.pending_old_workout_id = None
+        strategy = repo.update(strategy)
+    return strategy
+
+
+def _upload_and_schedule(garmin: GarminPort, workout: dict, d: date) -> tuple[int, int]:
+    """Upload puis planifie ; si la planification échoue, supprime le workout téléversé."""
+    workout_id = garmin.upload_workout(workout)
+    try:
+        return workout_id, garmin.schedule(workout_id, d)
+    except Exception:
+        try:
+            garmin.delete_workout(workout_id)
+        except _GARMIN_ERRORS:
+            pass  # meilleur effort : on remonte l'erreur d'origine
+        raise
+
+
+def export_race(repo: Repo, garmin: GarminPort, goal_id: int) -> RaceView:
+    """Envoie le plan sur la montre, programmé le jour de la course ; remplace l'export précédent.
+
+    Le nouveau workout est envoyé et programmé avant de retirer l'ancien ; si ce retrait échoue,
+    ses ids sont gardés dans `pending_old_*` et retentés au prochain export.
+    """
+    goal = _get_goal(repo, goal_id)
+    strategy = _get_or_create(repo, garmin, goal)
+    plan, _ = _compute(strategy, goal, garmin.today())
+    if plan.reference_time_s is None:
+        raise CoachError(_NO_REFERENCE)
+    workout = race_to_workout_json(plan, name=f"Jour J – {goal.distance_km:g} km")
+    try:
+        strategy = _cleanup_old(repo, garmin, strategy)
+        workout_id, schedule_id = _upload_and_schedule(garmin, workout, goal.race_date)
+    except _GARMIN_ERRORS as e:
+        strategy.export_error = f"Export Garmin échoué : {e}"
+        repo.update(strategy)
+        raise
+    strategy.pending_old_workout_id = strategy.garmin_workout_id
+    strategy.pending_old_schedule_id = strategy.garmin_schedule_id
+    strategy.garmin_workout_id, strategy.garmin_schedule_id = workout_id, schedule_id
+    strategy.export_error = None
+    strategy = repo.update(strategy)
+    try:
+        strategy = _cleanup_old(repo, garmin, strategy)
+    except _GARMIN_ERRORS:
+        pass  # ids conservés dans pending_old_* : retentés au prochain export
+    return _view(strategy, goal, garmin.today())

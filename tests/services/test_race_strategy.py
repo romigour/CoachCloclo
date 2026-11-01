@@ -4,10 +4,11 @@ from pathlib import Path
 import pytest
 
 from coach.analysis.race_plan import AidStation, RaceSettings
-from coach.garmin.port import FakeGarminClient, Metrics
+from coach.garmin.port import FakeGarminClient, GarminUnavailable, Metrics
 from coach.services import CoachError
 from coach.services.plans import GoalError, GoalInput, create_goal
 from coach.services.race_strategy import (
+    export_race,
     get_race_view,
     race_plan_for,
     refresh_basis,
@@ -124,3 +125,53 @@ def test_race_plan_for_none_without_strategy(repo, coach_home, garmin):
     assert race_plan_for(repo, goal, garmin.today()) is None
     get_race_view(repo, garmin, goal.id)
     assert race_plan_for(repo, goal, garmin.today()) is not None
+
+
+def test_export_schedules_on_race_day(repo, coach_home, garmin):
+    goal = make_goal(repo, garmin)
+    view = export_race(repo, garmin, goal.id)
+    assert view.workout_id in garmin.workouts
+    assert garmin.schedules[next(iter(garmin.schedules))] == (view.workout_id, goal.race_date)
+    assert garmin.workouts[view.workout_id]["workoutName"] == "Jour J – 10 km"
+    assert view.export_error is None
+
+
+def test_reexport_replaces_old(repo, coach_home, garmin):
+    goal = make_goal(repo, garmin)
+    first = export_race(repo, garmin, goal.id)
+    second = export_race(repo, garmin, goal.id)
+    assert second.workout_id != first.workout_id
+    assert list(garmin.workouts) == [second.workout_id]
+    assert len(garmin.schedules) == 1
+
+
+def test_reexport_old_already_deleted(repo, coach_home, garmin):
+    goal = make_goal(repo, garmin)
+    first = export_race(repo, garmin, goal.id)
+    garmin.fail_on = {"delete_workout"}
+    second = export_race(repo, garmin, goal.id)
+    assert repo.race_strategy(goal.id).pending_old_workout_id == first.workout_id
+    garmin.fail_on = set()
+    third = export_race(repo, garmin, goal.id)
+    strategy = repo.race_strategy(goal.id)
+    assert strategy.pending_old_workout_id is None and strategy.pending_old_schedule_id is None
+    assert list(garmin.workouts) == [third.workout_id] and second.workout_id not in garmin.workouts
+
+
+def test_export_failure_keeps_old(repo, coach_home, garmin):
+    goal = make_goal(repo, garmin)
+    first = export_race(repo, garmin, goal.id)
+    garmin.fail_on = {"upload_workout"}
+    with pytest.raises(GarminUnavailable):
+        export_race(repo, garmin, goal.id)
+    strategy = repo.race_strategy(goal.id)
+    assert strategy.export_error and strategy.garmin_workout_id == first.workout_id
+    assert list(garmin.workouts) == [first.workout_id]
+
+
+def test_export_without_reference_time(repo, coach_home, garmin):
+    goal = make_goal(repo, garmin)
+    garmin._metrics = Metrics(hr_max=190, hr_rest=50)
+    refresh_basis(repo, garmin, goal.id)
+    with pytest.raises(CoachError, match="Pas de temps de référence"):
+        export_race(repo, garmin, goal.id)

@@ -3,6 +3,7 @@
 from itertools import count
 from typing import get_args
 
+from coach.analysis.race_plan import RacePlan, Segment
 from coach.analysis.zones import HrZoneName, PaceZoneName, Zones
 from coach.llm.schemas import RepeatSpec, SessionSpec, StepSpec
 
@@ -84,4 +85,45 @@ def session_to_workout_json(session: SessionSpec, zones: Zones, *, name: str) ->
                 "workoutSteps": [convert(s) for s in session.steps],
             }
         ],
+    }
+
+
+def _race_description(seg: Segment) -> str:
+    d_plus = f" +{seg.d_plus_m} m" if seg.d_plus_m else ""
+    return f"{seg.kind.capitalize()}{d_plus} – viser {round(seg.time_s / 60)} min"
+
+
+def _race_target(seg: Segment) -> dict:
+    if seg.target_low is None or seg.target_high is None:
+        return {"targetType": dict(_TARGET_NONE)}
+    if seg.target_kind == "pace":
+        # m/s, borne lente (vitesse la plus basse) en premier.
+        return {
+            "targetType": dict(_TARGET_PACE),
+            "targetValueOne": 1000 / seg.target_high,
+            "targetValueTwo": 1000 / seg.target_low,
+        }
+    return {"targetType": dict(_TARGET_HR), "targetValueOne": seg.target_low, "targetValueTwo": seg.target_high}
+
+
+def race_to_workout_json(plan: RacePlan, *, name: str) -> dict:
+    """Workout du jour J : une étape à la distance par segment du plan de course."""
+    if plan.reference_time_s is None:
+        raise ValueError("Pas de temps de référence : saisis un temps visé")
+    steps = [
+        {
+            "type": "ExecutableStepDTO",
+            "stepOrder": i,
+            "stepType": dict(_STEP_TYPES["active"]),
+            "endCondition": dict(_END_DISTANCE),
+            "endConditionValue": round((seg.end_km - seg.start_km) * 1000),
+            "description": _race_description(seg),
+            **_race_target(seg),
+        }
+        for i, seg in enumerate(plan.segments, start=1)
+    ]
+    return {
+        "workoutName": name,
+        "sportType": dict(_SPORT_RUNNING),
+        "workoutSegments": [{"segmentOrder": 1, "sportType": dict(_SPORT_RUNNING), "workoutSteps": steps}],
     }

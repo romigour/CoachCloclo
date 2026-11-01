@@ -7,7 +7,8 @@ from coach.desktop.logs import setup_logging, teardown_logging
 
 
 @pytest.fixture(autouse=True)
-def _nettoyage():
+def _nettoyage(monkeypatch):
+    # dépend de monkeypatch : le nettoyage passe avant la restauration de sys.stdout
     yield
     teardown_logging()
 
@@ -48,3 +49,8 @@ def test_teardown_restaure(coach_home, monkeypatch):
     assert sys.stdout is None
     assert sys.excepthook is hook
     assert logging.getLogger().handlers == avant
+
+
+def test_stdout_reel_intact_apres_nettoyage():
+    """Garde-fou : le test de redirection ne doit pas laisser stdout/stderr à None."""
+    assert sys.stdout is not None and sys.stderr is not None

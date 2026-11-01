@@ -70,9 +70,10 @@ def release_mutex(handle: object) -> None:
         return
     if sys.platform == "win32":
         import ctypes
+        from ctypes import wintypes
 
-        kernel32 = ctypes.windll.kernel32
-        kernel32.ReleaseMutex(handle)
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
         kernel32.CloseHandle(handle)
     else:
         try:

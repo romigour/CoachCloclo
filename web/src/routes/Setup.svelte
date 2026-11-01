@@ -22,14 +22,23 @@
     try {
       status = await api.status();
       settings = await api.settings();
-      wizard = (await api.setupStatus()) !== null;
       mode = settings.llm_mode;
       model = settings.anthropic_model ?? "";
     } catch (e) {
       error = e;
     }
   }
-  onMount(load);
+  async function loadWizard() {
+    try {
+      wizard = (await api.setupStatus()) !== null;
+    } catch {
+      wizard = false;
+    }
+  }
+  onMount(() => {
+    load();
+    loadWizard();
+  });
 
   const GARMIN_LABEL = {
     ok: "Connecté",

@@ -85,3 +85,9 @@ test("saute l'étape Claude en mode clé API", async () => {
   expect(await screen.findByLabelText("E-mail Garmin")).toBeTruthy();
   expect(screen.queryByRole("button", { name: "Installer Claude" })).toBeNull();
 });
+
+test("l'étape Claude reste accessible même si elle a déjà été passée", async () => {
+  localStorage.setItem("coach.claudeSkipped", "1");
+  render(Welcome, { onconnected: () => {} });
+  expect(await screen.findByRole("button", { name: "Installer Claude" })).toBeTruthy();
+});

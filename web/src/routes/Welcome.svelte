@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { api, claudeSkipped, skipClaude, type SetupStatus } from "../lib/api";
+  import { api, skipClaude, type SetupStatus } from "../lib/api";
   import ErrorBanner from "../components/ErrorBanner.svelte";
   import GarminLogin from "../components/GarminLogin.svelte";
 
@@ -8,7 +8,8 @@
   let { onconnected }: { onconnected?: () => void | Promise<void> } = $props();
 
   let setup = $state<SetupStatus | null>(null);
-  let skipped = $state(claudeSkipped());
+  // « Passer » ne vaut que pour cette visite ; le drapeau mémorisé ne sert qu'à la redirection du démarrage.
+  let skipped = $state(false);
   let error = $state<unknown>(null);
   let loaded = $state(false);
 

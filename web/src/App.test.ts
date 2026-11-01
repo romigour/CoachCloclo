@@ -229,7 +229,19 @@ test("redirige vers l'écran d'accueil si la configuration est incomplète", asy
 test("ne montre pas l'écran d'accueil sous coach start (404)", async () => {
   render(App);
   await waitFor(() => expect(location.hash).toBe("#/today"));
-  syncDone?.();
+});
+
+test("pas de lien Connecte Claude sous coach start (404)", async () => {
+  syncInstant = true;
+  const real = globalThis.fetch;
+  vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) =>
+    url === "/api/sync"
+      ? new Response(JSON.stringify({ code: "llm_unavailable", detail: "Claude n'est pas connecté" }), { status: 503 })
+      : real(url, init)));
+  location.hash = "#/plan";
+  render(App);
+  await screen.findByText("Claude n'est pas connecté");
+  expect(screen.queryByRole("link", { name: "Connecte Claude" })).toBeNull();
 });
 
 test("revient à l'étape Garmin quand la connexion Garmin a expiré", async () => {

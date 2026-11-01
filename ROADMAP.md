@@ -23,6 +23,8 @@ Idées d'amélioration, dans l'ordre où elles ont été notées.
 - [ ] Indisponibilités : vacances, blessure, jours impossibles (« pas dispo le mardi ») qui déclenchent une proposition de replanification
 - [ ] Valider les hypothèses sur les données Garmin réelles : fixtures de test synthétiques à remplacer, unité de la vitesse seuil, identifiant de planification, format des workouts (voir « Données réelles à vérifier » dans le README)
 - [ ] Stratégie du jour J : prédiction de temps, allure ou temps par segment à partir du GPX (montées, descentes), plan de ravitaillement et barrières horaires en trail
+- [ ] Stratégie du jour J, version hybride : en plus des calculs, Claude rédige un court texte de stratégie (« pars prudemment jusqu'au km 12, la montée 3 est la clé… »)
+- [ ] Stratégie du jour J, calibration sur l'historique : ajuster le modèle de prédiction avec mes sorties trail passées (vitesse ascensionnelle réelle, allure en descente)
 - [ ] Bilan de fin de préparation à l'archivage de l'objectif : prévu contre réalisé, progression des métriques, temps visé contre temps réel ; contexte réutilisé pour la préparation suivante
 - [ ] Discuter avec le coach : question libre avec le contexte du plan, la réponse pouvant proposer un ajustement à valider
 - [ ] Rappel de la séance du jour par une notification Windows (icône près de l'horloge)

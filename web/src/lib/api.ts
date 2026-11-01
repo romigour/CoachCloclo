@@ -144,6 +144,9 @@ export type UpdateView = {
   error: string | null;
 };
 
+/** Mode LAN (GET/POST /api/lan, présent seulement dans l'appli de bureau). */
+export type LanView = { enabled: boolean; has_pin: boolean; addresses: string[]; local: boolean };
+
 /** État de l'écran d'accueil (GET /api/setup/status, présent seulement dans l'appli de bureau). */
 export type SetupStatus = {
   claude_cli: boolean;
@@ -270,6 +273,16 @@ export const api = {
       throw e;
     }
   },
+  /** `null` sous `coach start` (pas d'appli de bureau : l'endpoint répond 404). */
+  lan: async (): Promise<LanView | null> => {
+    try {
+      return await get<LanView>("/lan");
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 404) return null;
+      throw e;
+    }
+  },
+  setLan: (enabled: boolean, pin?: string) => post<LanView>("/lan", pin === undefined ? { enabled } : { enabled, pin }),
   checkUpdate: () => post<UpdateView>("/update/check"),
   installUpdate: () => post<{ status: string }>("/update/install"),
   version: () => get<{ version: string }>("/version"),

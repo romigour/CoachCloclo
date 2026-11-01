@@ -3,6 +3,7 @@
   import { api, ApiError, type SettingsView, type Status } from "../lib/api";
   import ErrorBanner from "../components/ErrorBanner.svelte";
   import GarminLogin from "../components/GarminLogin.svelte";
+  import LanSettings from "../components/LanSettings.svelte";
   import UpdateSettings from "../components/UpdateSettings.svelte";
   import Icon from "../components/Icon.svelte";
 
@@ -120,6 +121,8 @@
 {/if}
 
 <UpdateSettings />
+
+<LanSettings />
 
 <section class="card stack">
   <h2>Historique Garmin</h2>

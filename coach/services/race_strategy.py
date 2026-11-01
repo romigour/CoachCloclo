@@ -10,6 +10,7 @@ from coach.analysis.gpx import _NO_ELE, ProfilePoint, profile, waypoints
 from coach.analysis.race_plan import AidStation, RaceBasis, RacePlan, RaceSettings, build_race_plan
 from coach.export.garmin_workout import race_to_workout_json
 from coach.garmin.port import GarminAuthRequired, GarminPort, GarminRateLimited, GarminUnavailable
+from coach.llm.prompts import race_text
 from coach.plan.models import Goal, RaceStrategy
 from coach.plan.repo import Repo
 from coach.services import CoachError
@@ -168,6 +169,15 @@ def race_plan_for(repo: Repo, goal: Goal, today: date) -> RacePlan | None:
     """Plan de course de l'objectif, ou None s'il n'a pas de stratégie."""
     strategy = repo.race_strategy(goal.id)
     return None if strategy is None else _compute(strategy, goal, today)[0]
+
+
+def race_line_for_prompt(repo: Repo, goal: Goal, today: date) -> str | None:
+    """Ligne « Stratégie jour J » pour Claude ; None sans stratégie ni si elle est devenue incohérente."""
+    try:
+        plan = race_plan_for(repo, goal, today)
+    except CoachError:
+        return None  # une stratégie cassée ne doit jamais empêcher la génération ni la synchro
+    return None if plan is None else race_text(plan)
 
 
 # --- export vers la montre -------------------------------------------------------------------

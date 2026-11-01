@@ -10,6 +10,7 @@ from coach.services.plans import GoalError, GoalInput, create_goal
 from coach.services.race_strategy import (
     export_race,
     get_race_view,
+    race_line_for_prompt,
     race_plan_for,
     refresh_basis,
     reimport_stations,
@@ -175,3 +176,23 @@ def test_export_without_reference_time(repo, coach_home, garmin):
     refresh_basis(repo, garmin, goal.id)
     with pytest.raises(CoachError, match="Pas de temps de référence"):
         export_race(repo, garmin, goal.id)
+
+
+def test_race_line_for_prompt(repo, coach_home, garmin):
+    goal = make_goal(repo, garmin)
+    assert race_line_for_prompt(repo, goal, garmin.today()) is None
+    get_race_view(repo, garmin, goal.id)
+    assert race_line_for_prompt(repo, goal, garmin.today()).startswith("Stratégie jour J")
+
+
+def test_race_line_for_prompt_ignores_broken_strategy(repo, coach_home, garmin):
+    goal = make_goal(repo, garmin)
+    get_race_view(repo, garmin, goal.id)
+    strategy = repo.race_strategy(goal.id)
+    strategy.settings_json = RaceSettings(
+        target_time_s=60, aid_stations=[AidStation(km=5, name="X", stop_min=3)]
+    ).model_dump_json()
+    repo.update(strategy)
+    with pytest.raises(CoachError):
+        race_plan_for(repo, goal, garmin.today())
+    assert race_line_for_prompt(repo, goal, garmin.today()) is None

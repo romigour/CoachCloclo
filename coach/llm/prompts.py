@@ -4,6 +4,7 @@ import datetime as dt
 import json
 from typing import get_args
 
+from coach.analysis.race_plan import RacePlan
 from coach.analysis.zones import Zones
 from coach.llm.schemas import AdjustmentResponse, PlanResponse, Weekday
 from coach.plan.calendar import week_of
@@ -88,6 +89,35 @@ def _today_text(goal: Goal, today: dt.date) -> str:
     )
 
 
+def _fmt_duration(s: int) -> str:
+    """« 5 h 12 » (arrondi à la minute)."""
+    h, m = divmod(round(s / 60), 60)
+    return f"{h} h {m:02d}"
+
+
+def race_text(plan: RacePlan) -> str | None:
+    """Résumé indicatif de la stratégie du jour J ; None sans temps de référence."""
+    if plan.reference_time_s is None:
+        return None
+    times = []
+    if plan.predicted_time_s is not None:
+        times.append(f"temps prévu {_fmt_duration(plan.predicted_time_s)}")
+    if plan.target_time_s is not None:
+        times.append(f"visé {_fmt_duration(plan.target_time_s)}")
+    text = "Stratégie jour J (indicative) : " + ", ".join(times)
+    climbs = sorted(
+        sorted((s for s in plan.segments if s.kind == "montée"), key=lambda s: s.d_plus_m, reverse=True)[:3],
+        key=lambda s: s.start_km,
+    )
+    if climbs:
+        labels = [f"km {round(s.start_km)} (+{s.d_plus_m} m)" for s in climbs]
+        text += " ; montées clés " + (labels[0] if len(labels) == 1 else ", ".join(labels[:-1]) + " et " + labels[-1])
+    return (
+        text + ". N'en tenir compte que pour orienter légèrement le contenu de l'affûtage, "
+        "sans modifier la structure ni le volume du plan."
+    )
+
+
 def _schema_text(model) -> str:
     return json.dumps(model.model_json_schema(), ensure_ascii=False)
 
@@ -99,6 +129,7 @@ def build_generation_prompt(
     n_weeks: int,
     gpx_text: str | None,
     today: dt.date | None = None,
+    race_text: str | None = None,
 ) -> str:
     """Prompt de génération du plan complet ; `today` situe le jour courant dans la semaine 1."""
     parts = [
@@ -112,6 +143,8 @@ def build_generation_prompt(
     ]
     if gpx_text:
         parts.append("Profil du parcours (GPX) :\n" + gpx_text)
+    if race_text:
+        parts.append(race_text)
     parts.append("Schéma JSON attendu :\n" + _schema_text(PlanResponse))
     return "\n\n".join(parts)
 
@@ -135,6 +168,7 @@ def build_adjustment_prompt(
     missed: list[Session],
     upcoming: list[Session],
     history: list[Activity],
+    race_text: str | None = None,
 ) -> str:
     """Prompt de proposition d'ajustements après une synchronisation."""
     parts = [
@@ -155,6 +189,8 @@ def build_adjustment_prompt(
         f"respecter le maximum de {goal.sessions_per_week} séances par semaine et viser la semaine "
         f"{current_week} ou une suivante.",
         _history_text(history),
-        "Schéma JSON attendu :\n" + _schema_text(AdjustmentResponse),
     ]
+    if race_text:
+        parts.append(race_text)
+    parts.append("Schéma JSON attendu :\n" + _schema_text(AdjustmentResponse))
     return "\n\n".join(parts)

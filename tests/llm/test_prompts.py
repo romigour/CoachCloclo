@@ -1,7 +1,8 @@
 from datetime import date, timedelta
 
+from coach.analysis.race_plan import RacePlan, Segment
 from coach.analysis.zones import compute_zones
-from coach.llm.prompts import SYSTEM_PROMPT, build_adjustment_prompt, build_generation_prompt
+from coach.llm.prompts import SYSTEM_PROMPT, build_adjustment_prompt, build_generation_prompt, race_text
 from tests.llm.factories import make_session
 from tests.plan.factories import make_activity, make_db_session, make_goal
 
@@ -78,3 +79,67 @@ def test_adjustment_prompt_lists_ids_and_status():
 
 def test_system_prompt_forbids_raw_values():
     assert "jamais de valeur" in SYSTEM_PROMPT
+
+
+def _segment(index, kind, start_km, d_plus_m):
+    return Segment(
+        kind=kind, start_km=start_km, end_km=start_km + 1, eq_km=1, d_plus_m=d_plus_m, d_minus_m=0,
+        index=index, avg_grade_pct=0, time_s=None, pace_s_km=None, elapsed_s=None, clock=None,
+        target_kind="hr", target_low=None, target_high=None, target_zone=None,
+    )
+
+
+def _race_plan(*, predicted=18720, target=18000):
+    segments = [
+        _segment(0, "montée", 12.4, 450),
+        _segment(1, "plat", 20, 0),
+        _segment(2, "montée", 30.6, 600),
+        _segment(3, "montée", 5, 100),
+        _segment(4, "montée", 8, 50),
+        _segment(5, "montée", 40, 20),
+    ]
+    return RacePlan(
+        distance_km=42, eq_km=50, stops_s=0, predicted_time_s=predicted, target_time_s=target,
+        reference_time_s=target if target is not None else predicted,
+        segments=segments, aid_passages=[], nutrition=[], warnings=[],
+    )
+
+
+def test_race_text_format():
+    assert race_text(_race_plan()) == (
+        "Stratégie jour J (indicative) : temps prévu 5 h 12, visé 5 h 00 ; "
+        "montées clés km 5 (+100 m), km 12 (+450 m) et km 31 (+600 m). "
+        "N'en tenir compte que pour orienter légèrement le contenu de l'affûtage, "
+        "sans modifier la structure ni le volume du plan."
+    )
+
+
+def test_race_text_without_target():
+    text = race_text(_race_plan(target=None))
+    assert "temps prévu 5 h 12" in text
+    assert "visé" not in text
+
+
+def test_race_text_without_prediction_nor_climbs():
+    plan = _race_plan(predicted=None)
+    plan.segments = []
+    text = race_text(plan)
+    assert text.startswith("Stratégie jour J (indicative) : visé 5 h 00. N'en tenir")
+    assert "prévu" not in text and "montées" not in text
+
+
+def test_race_text_none_without_reference():
+    plan = _race_plan(predicted=None, target=None)
+    assert race_text(plan) is None
+
+
+def test_prompts_include_race_text():
+    line = "Stratégie jour J (indicative) : visé 5 h 00."
+    goal = make_goal()
+    gen = build_generation_prompt(goal, ZONES, [], n_weeks=14, gpx_text=None, race_text=line)
+    adj = build_adjustment_prompt(goal, ZONES, 1, [], [], [], [], race_text=line)
+    for p in (gen, adj):
+        assert line in p
+        assert p.index(line) < p.index("Schéma JSON attendu")
+    assert "Stratégie jour J" not in build_generation_prompt(goal, ZONES, [], n_weeks=14, gpx_text=None)
+    assert "Stratégie jour J" not in build_adjustment_prompt(goal, ZONES, 1, [], [], [], [])

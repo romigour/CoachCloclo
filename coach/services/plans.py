@@ -96,7 +96,13 @@ def generate_plan(repo: Repo, garmin: GarminPort, llm: LLMProvider, goal_id: int
         if goal.gpx_summary_json
         else None
     )
-    prompt = build_generation_prompt(goal, zones, recent_history(garmin), n, gpx_text, today=garmin.today())
+    from coach.services.race_strategy import race_line_for_prompt  # import tardif : race_strategy importe ce module
+
+    today = garmin.today()
+    prompt = build_generation_prompt(
+        goal, zones, recent_history(garmin), n, gpx_text, today=today,
+        race_text=race_line_for_prompt(repo, goal, today),
+    )
     pace_available = zones.pace is not None
     plan = ask_structured(
         llm,

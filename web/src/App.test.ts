@@ -9,6 +9,7 @@ let statsCalls = 0;
 let syncInstant = false;
 let syncFails = false;
 let afterSync: (() => void) | null = null;
+let setupBody: Record<string, unknown> | null = null; // null : 404, comme sous `coach start`
 
 const idle = { status: "idle", imported: 0, error: null };
 
@@ -23,13 +24,19 @@ beforeEach(() => {
   syncInstant = false;
   syncFails = false;
   afterSync = null;
+  setupBody = null;
+  localStorage.clear();
   statusBody = { garmin: "ok", llm_mode: "cli", pending_proposal_id: null, goal: plan.goal, has_activities: false, history: idle };
   location.hash = "";
   vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
     const method = init?.method ?? "GET";
     calls.push({ url, method });
     let body: unknown = {};
-    if (url === "/api/status") body = statusBody;
+    if (url === "/api/setup/status") {
+      if (!setupBody) return new Response(JSON.stringify({ code: "not_found", detail: "Not Found" }), { status: 404 });
+      body = setupBody;
+    }
+    else if (url === "/api/status") body = statusBody;
     else if (url === "/api/stats/activities") { statsCalls++; body = { activities: [] }; }
     else if (url === "/api/stats/records") body = { records: [] };
     else if (url === "/api/plan") body = plan;
@@ -208,4 +215,62 @@ test("an import ending in error also reloads the stats", async () => {
   await vi.advanceTimersByTimeAsync(5000);
   expect(statsCalls).toBe(baseline + 1);
   unmount();
+});
+
+const setupOk = { claude_cli: true, claude_auth: true, claude_step: "idle", claude_error: null, garmin: "ok", llm_mode: "cli" };
+
+test("redirige vers l'écran d'accueil si la configuration est incomplète", async () => {
+  setupBody = { ...setupOk, claude_cli: false, claude_auth: false };
+  render(App);
+  await waitFor(() => expect(location.hash).toBe("#/welcome"));
+  expect(await screen.findByText("CoachCloclo utilise ton abonnement Claude")).toBeTruthy();
+});
+
+test("ne montre pas l'écran d'accueil sous coach start (404)", async () => {
+  render(App);
+  await waitFor(() => expect(location.hash).toBe("#/today"));
+});
+
+test("pas de lien Connecte Claude sous coach start (404)", async () => {
+  syncInstant = true;
+  const real = globalThis.fetch;
+  vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) =>
+    url === "/api/sync"
+      ? new Response(JSON.stringify({ code: "llm_unavailable", detail: "Claude n'est pas connecté" }), { status: 503 })
+      : real(url, init)));
+  location.hash = "#/plan";
+  render(App);
+  await screen.findByText("Claude n'est pas connecté");
+  expect(screen.queryByRole("link", { name: "Connecte Claude" })).toBeNull();
+});
+
+test("revient à l'étape Garmin quand la connexion Garmin a expiré", async () => {
+  setupBody = { ...setupOk, garmin: "auth_required" };
+  statusBody = { ...statusBody, garmin: "auth_required" };
+  render(App);
+  await waitFor(() => expect(location.hash).toBe("#/welcome"));
+  expect(await screen.findByLabelText("E-mail Garmin")).toBeTruthy();
+});
+
+test("l'écran d'accueil s'affiche même si /api/status échoue", async () => {
+  setupBody = { ...setupOk, claude_auth: false };
+  const real = globalThis.fetch;
+  vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) =>
+    url === "/api/status" ? new Response("{}", { status: 500 }) : real(url, init)));
+  render(App);
+  await waitFor(() => expect(location.hash).toBe("#/welcome"));
+});
+
+test("propose Connecte Claude quand la génération échoue faute de Claude", async () => {
+  setupBody = { ...setupOk };
+  syncInstant = true;
+  const real = globalThis.fetch;
+  vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) =>
+    url === "/api/sync"
+      ? new Response(JSON.stringify({ code: "llm_unavailable", detail: "Claude n'est pas connecté" }), { status: 503 })
+      : real(url, init)));
+  location.hash = "#/plan";
+  render(App);
+  const link = await screen.findByRole("link", { name: "Connecte Claude" });
+  expect(link.getAttribute("href")).toBe("#/welcome");
 });

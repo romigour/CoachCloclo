@@ -134,6 +134,53 @@ export type Status = {
   history: HistoryState;
 };
 
+/** État de la mise à jour (GET /api/update, présent seulement dans l'appli de bureau). */
+export type UpdateView = {
+  current: string;
+  latest: string | null;
+  available: boolean;
+  state: "idle" | "checking" | "downloading" | "installing" | "failed";
+  progress: number;
+  error: string | null;
+};
+
+/** Mode LAN (GET/POST /api/lan, présent seulement dans l'appli de bureau). */
+export type LanView = { enabled: boolean; has_pin: boolean; addresses: string[]; local: boolean };
+
+/** État de l'écran d'accueil (GET /api/setup/status, présent seulement dans l'appli de bureau). */
+export type SetupStatus = {
+  claude_cli: boolean;
+  claude_auth: boolean;
+  claude_step: "idle" | "installing" | "logging_in" | "failed";
+  claude_error: string | null;
+  garmin: "ok" | "auth_required" | "unavailable";
+  llm_mode: "cli" | "api";
+};
+
+/** Clé `localStorage` : l'utilisateur a passé l'étape Claude. */
+const CLAUDE_SKIPPED_KEY = "coach.claudeSkipped";
+
+export function claudeSkipped(): boolean {
+  try {
+    return localStorage.getItem(CLAUDE_SKIPPED_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+export function skipClaude(): void {
+  try {
+    localStorage.setItem(CLAUDE_SKIPPED_KEY, "1");
+  } catch {
+    // stockage indisponible : le choix ne vaut que pour l'écran en cours
+  }
+}
+
+/** La configuration est terminée : Garmin connecté, et Claude connecté, en mode clé API ou passé. */
+export function setupDone(s: SetupStatus, claudeSkipped: boolean): boolean {
+  return s.garmin === "ok" && (s.llm_mode === "api" || s.claude_auth || claudeSkipped);
+}
+
 export type SettingsView = { llm_mode: "cli" | "api"; anthropic_model: string | null; has_api_key: boolean };
 
 export type SessionSpec = {
@@ -208,6 +255,39 @@ export const api = {
   login: (email: string, password: string) =>
     post<{ status: "ok" | "needs_mfa"; login_id?: string }>("/garmin/login", { email, password }),
   mfa: (login_id: string, code: string) => post<{ status: string }>("/garmin/mfa", { login_id, code }),
+  /** `null` sous `coach start` (pas d'appli de bureau : l'endpoint répond 404). */
+  setupStatus: async (): Promise<SetupStatus | null> => {
+    try {
+      return await get<SetupStatus>("/setup/status");
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 404) return null;
+      throw e;
+    }
+  },
+  /** `null` sous `coach start` (pas d'appli de bureau : l'endpoint répond 404). */
+  update: async (): Promise<UpdateView | null> => {
+    try {
+      return await get<UpdateView>("/update");
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 404) return null;
+      throw e;
+    }
+  },
+  /** `null` sous `coach start` (pas d'appli de bureau : l'endpoint répond 404). */
+  lan: async (): Promise<LanView | null> => {
+    try {
+      return await get<LanView>("/lan");
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 404) return null;
+      throw e;
+    }
+  },
+  setLan: (enabled: boolean, pin?: string) => post<LanView>("/lan", pin === undefined ? { enabled } : { enabled, pin }),
+  checkUpdate: () => post<UpdateView>("/update/check"),
+  installUpdate: () => post<{ status: string }>("/update/install"),
+  version: () => get<{ version: string }>("/version"),
+  installClaude: () => post<{ status: string }>("/setup/claude/install"),
+  loginClaude: () => post<{ status: string }>("/setup/claude/login"),
   settings: () => get<SettingsView>("/settings"),
   saveSettings: (s: { llm_mode: "cli" | "api"; anthropic_api_key?: string; anthropic_model?: string }) =>
     request<SettingsView>("PUT", "/settings", s),

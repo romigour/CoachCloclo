@@ -6,6 +6,7 @@ import subprocess
 from typing import Protocol
 
 from coach.config import Settings, data_dir
+from coach.proc import NO_WINDOW, find_claude
 
 
 class LLMError(Exception):
@@ -74,7 +75,7 @@ class ClaudeCliProvider:
         self.cwd = cwd
 
     def complete(self, system: str, prompt: str) -> str:
-        exe = self.which(self.executable)
+        exe = find_claude(self.which)
         if exe is None:
             raise LLMUnavailable("CLI claude introuvable")
         args = [exe, "-p", "--output-format", "json", "--system-prompt", system,
@@ -84,7 +85,7 @@ class ClaudeCliProvider:
         cwd.mkdir(parents=True, exist_ok=True)
         try:
             proc = self.runner(args, input=prompt, encoding="utf-8", capture_output=True,
-                               timeout=self.timeout_s, cwd=cwd)
+                               timeout=self.timeout_s, cwd=cwd, creationflags=NO_WINDOW)
         except FileNotFoundError as e:
             raise LLMUnavailable("CLI claude introuvable") from e
         except subprocess.TimeoutExpired as e:

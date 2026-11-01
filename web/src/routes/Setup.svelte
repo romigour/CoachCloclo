@@ -2,6 +2,9 @@
   import { onMount } from "svelte";
   import { api, ApiError, type SettingsView, type Status } from "../lib/api";
   import ErrorBanner from "../components/ErrorBanner.svelte";
+  import GarminLogin from "../components/GarminLogin.svelte";
+  import LanSettings from "../components/LanSettings.svelte";
+  import UpdateSettings from "../components/UpdateSettings.svelte";
   import Icon from "../components/Icon.svelte";
 
   let { onchanged, onconnected }: { onchanged?: () => void; onconnected?: () => void } = $props();
@@ -10,12 +13,7 @@
   let settings = $state<SettingsView | null>(null);
   let error = $state<unknown>(null);
 
-  let email = $state("");
-  let password = $state("");
-  let loginId = $state<string | null>(null);
-  let code = $state("");
-  let loginMessage = $state("");
-  let busy = $state(false);
+  let wizard = $state(false); // appli de bureau : l'assistant de configuration existe
 
   let mode = $state<"cli" | "api">("cli");
   let apiKey = $state("");
@@ -32,53 +30,23 @@
       error = e;
     }
   }
-  onMount(load);
+  async function loadWizard() {
+    try {
+      wizard = (await api.setupStatus()) !== null;
+    } catch {
+      wizard = false;
+    }
+  }
+  onMount(() => {
+    load();
+    loadWizard();
+  });
 
   const GARMIN_LABEL = {
     ok: "Connecté",
     auth_required: "Connexion requise",
     unavailable: "Indisponible",
   } as const;
-
-  async function login(e: Event) {
-    e.preventDefault();
-    busy = true;
-    loginMessage = "";
-    error = null;
-    try {
-      const r = await api.login(email, password);
-      password = "";
-      if (r.status === "needs_mfa") loginId = r.login_id ?? null;
-      else await connected();
-    } catch (err) {
-      if (err instanceof ApiError && err.code === "garmin_login_failed") loginMessage = "Identifiants Garmin refusés";
-      else error = err;
-    } finally {
-      busy = false;
-    }
-  }
-
-  async function sendMfa(e: Event) {
-    e.preventDefault();
-    if (!loginId) return;
-    busy = true;
-    loginMessage = "";
-    error = null;
-    try {
-      await api.mfa(loginId, code);
-      loginId = null;
-      code = "";
-      await connected();
-    } catch (err) {
-      if (err instanceof ApiError && err.code === "garmin_login_failed") loginMessage = "Code refusé";
-      else if (err instanceof ApiError && err.code === "mfa_expired") {
-        loginId = null;
-        loginMessage = "Connexion expirée, recommence";
-      } else error = err;
-    } finally {
-      busy = false;
-    }
-  }
 
   async function connected() {
     await load();
@@ -142,29 +110,19 @@
 
 <section class="card stack">
   <h2>Connexion Garmin</h2>
-  {#if loginId}
-    <form class="stack" onsubmit={sendMfa}>
-      <label>
-        Code de vérification (MFA)
-        <input bind:value={code} inputmode="numeric" autocomplete="one-time-code" required />
-      </label>
-      <div class="row"><button class="primary" disabled={busy}>Valider le code</button></div>
-    </form>
-  {:else}
-    <form class="stack" onsubmit={login}>
-      <label>
-        E-mail Garmin
-        <input type="email" bind:value={email} autocomplete="username" required />
-      </label>
-      <label>
-        Mot de passe
-        <input type="password" bind:value={password} autocomplete="current-password" required />
-      </label>
-      <div class="row"><button class="primary" disabled={busy}>Se connecter</button></div>
-    </form>
-  {/if}
-  {#if loginMessage}<p class="error" role="alert">{loginMessage}</p>{/if}
+  <GarminLogin onconnected={connected} />
 </section>
+
+{#if wizard}
+  <section class="card stack">
+    <h2>Assistant de configuration</h2>
+    <p><a href="#/welcome">Assistant de configuration</a> : installer ou reconnecter Claude, puis Garmin.</p>
+  </section>
+{/if}
+
+<UpdateSettings />
+
+<LanSettings />
 
 <section class="card stack">
   <h2>Historique Garmin</h2>

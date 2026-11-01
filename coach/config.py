@@ -36,6 +36,7 @@ class Settings(BaseModel):
     pin_hash: str | None = None
     last_sync_at: datetime | None = None
     proposal_due: bool = False
+    lan_enabled: bool = False
 
 
 def load_settings() -> Settings:

@@ -6,8 +6,9 @@ import pytest
 from fastapi.testclient import TestClient
 
 from coach.api.app import create_app
-from coach.api.deps import hash_pin, verify_pin
+from coach.api.deps import hash_pin, valid_pin, verify_pin
 from coach.config import load_settings, save_settings
+from coach.version import app_version
 from coach.garmin.port import FakeGarminClient, GarminAuthRequired, Metrics
 from coach.llm.provider import FakeLLMProvider, LLMError, LLMUsageLimit
 from coach.plan.models import Activity, Race
@@ -653,3 +654,49 @@ def test_put_race_rank_message_without_pydantic_prefix(make_client, repo):
     r = make_client().put(f"/api/races/{a}", json={"overall_rank": 50, "overall_total": 10})
     assert r.status_code == 422
     assert r.json()["detail"][0]["msg"].startswith("Le classement")
+
+
+def _with_pin():
+    save_settings(load_settings().model_copy(update={"pin_hash": hash_pin("1234")}))
+
+
+def test_lan_loopback_needs_no_pin(make_client):
+    _with_pin()
+    app = make_client(lan=True).app
+    pc = TestClient(app, client=("127.0.0.1", 50000), headers={"X-Coach": "1"})
+    assert pc.get("/api/status").status_code == 200
+
+
+def test_lan_other_client_needs_pin(make_client):
+    _with_pin()
+    r = make_client(lan=True).get("/api/status")
+    assert r.status_code == 401 and r.json()["code"] == "pin_required"
+
+
+def test_lan_toggle_at_runtime(make_client):
+    _with_pin()
+    client = make_client(lan=False)
+    assert client.get("/api/status", headers={"Host": "192.168.1.12:8765"}).status_code == 400
+    client.app.state.lan = True
+    assert client.get("/api/status").status_code == 401
+    assert client.get("/api/status", headers={"Host": "192.168.1.12:8765"}).status_code == 401
+
+
+def test_lan_off_rejects_ip_host(make_client):
+    _with_pin()
+    client = make_client(lan=True)
+    client.app.state.lan = False
+    r = client.get("/api/status", headers={"Host": "192.168.1.12:8765"})
+    assert r.status_code == 400 and r.json()["code"] == "bad_host"
+
+
+def test_version_endpoint(make_client):
+    _with_pin()
+    r = make_client(lan=True).get("/api/version")
+    assert r.status_code == 200 and r.json() == {"version": app_version()}
+
+
+@pytest.mark.parametrize("pin,ok", [("1234", True), ("123456789012", True), ("123", False),
+                                    ("1234567890123", False), ("12a4", False), ("", False)])
+def test_valid_pin(pin, ok):
+    assert valid_pin(pin) is ok

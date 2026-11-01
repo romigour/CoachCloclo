@@ -13,6 +13,7 @@ from coach.config import data_dir, load_settings, tokenstore_dir
 from coach.garmin.client import GarminClient
 from coach.garmin.port import GarminAuthRequired, GarminRateLimited, GarminUnavailable
 from coach.llm.provider import LLMError, LLMUnavailable, LLMUsageLimit, provider_from_settings
+from coach.proc import find_claude
 
 DEFAULT_PORT = 8765
 OFFLINE_DETAIL = "non vérifié (hors ligne)"
@@ -55,7 +56,7 @@ def _check_garminconnect() -> Check:
 
 
 def _check_claude_cli(which) -> Check:
-    path = which("claude")
+    path = find_claude(which)
     if path:
         return Check(name="claude_cli", ok=True, detail=f"trouvé : {path}")
     return Check(name="claude_cli", ok=False, detail="CLI claude introuvable",
@@ -169,11 +170,12 @@ def fix(check: Check, *, runner=subprocess.run, data_path: Path | None = None,
         cmd = _INSTALL_WINDOWS if sys.platform == "win32" else _INSTALL_POSIX
         echo("Installation de Claude Code : " + " ".join(cmd[-1:] if len(cmd) > 2 else cmd))
         try:
+            # chemin terminal : la progression de l'installation reste visible
             return runner(cmd).returncode == 0
         except OSError:
             return False
     if check.name == "claude_auth":
-        exe = which("claude")
+        exe = find_claude(which)
         if exe is None:
             echo("CLI claude introuvable : installe-le d'abord")
             return False

@@ -1,5 +1,6 @@
 import json
 import subprocess
+import sys
 from types import SimpleNamespace
 
 import pytest
@@ -15,6 +16,8 @@ from coach.llm.provider import (
     LLMUsageLimit,
     provider_from_settings,
 )
+
+from coach.proc import NO_WINDOW
 
 
 @pytest.fixture(autouse=True)
@@ -170,3 +173,24 @@ def test_cli_empty_result_is_error(tmp_path):
     for env in ({"is_error": False, "subtype": "success"}, {"is_error": False, "result": None}):
         with pytest.raises(LLMError, match="vide"):
             cli(fake_run(stdout=json.dumps(env)), cwd=tmp_path).complete("s", "p")
+
+
+OK_ENVELOPE = json.dumps({"type": "result", "is_error": False, "result": "ok"})
+
+
+def test_cli_runs_without_window():
+    run = fake_run(stdout=OK_ENVELOPE)
+    cli(run).complete("s", "p")
+    assert run.kwargs["creationflags"] == NO_WINDOW
+
+
+def test_cli_found_in_local_bin_when_not_on_path(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
+    name = "claude.exe" if sys.platform == "win32" else "claude"
+    exe = tmp_path / ".local" / "bin" / name
+    exe.parent.mkdir(parents=True)
+    exe.write_text("")
+    run = fake_run(stdout=OK_ENVELOPE)
+    cli(run, which=lambda n: None).complete("s", "p")
+    assert run.args[0] == str(exe)

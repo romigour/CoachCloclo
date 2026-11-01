@@ -37,6 +37,16 @@ def verify_pin(pin: str, stored: str) -> bool:
     return hmac.compare_digest(actual, expected)
 
 
+def valid_pin(pin: str) -> bool:
+    """Un PIN valide : 4 à 12 chiffres ASCII."""
+    return pin.isascii() and pin.isdigit() and 4 <= len(pin) <= 12
+
+
+def is_loopback(request: Request) -> bool:
+    """Vrai si la requête vient de ce PC (boucle locale)."""
+    return request.client is not None and request.client.host in {"127.0.0.1", "::1"}
+
+
 def get_garmin(request: Request) -> GarminPort:
     """Client Garmin créé à chaque requête (lève GarminAuthRequired sans jetons)."""
     return request.app.state.garmin_factory()

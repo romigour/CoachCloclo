@@ -8,3 +8,5 @@ garmin_tokens.json
 coach/web_dist/
 node_modules/
 .pytest_cache/
+build/
+packaging/windows/Output/

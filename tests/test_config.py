@@ -19,3 +19,7 @@ def test_settings_roundtrip(coach_home):
     s.llm_mode = "api"
     save_settings(s)
     assert load_settings().llm_mode == "api"
+
+
+def test_settings_lan_enabled_default(coach_home):
+    assert load_settings().lan_enabled is False

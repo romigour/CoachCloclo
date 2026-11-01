@@ -6,7 +6,19 @@ La page **Stats** (page d'accueil dès que des activités sont importées) donne
 
 Prochaines idées d'amélioration : voir [ROADMAP.md](ROADMAP.md).
 
-## Installation (une commande)
+## Installation
+
+### Windows (recommandé)
+
+Télécharge `CoachCloclo-Setup-x.y.z.exe` depuis la [dernière release GitHub](https://github.com/romigour/CoachCloclo/releases/latest) et lance-le. L'installateur n'est pas signé : Windows SmartScreen peut afficher un avertissement, clique sur « Informations complémentaires » puis « Exécuter quand même ».
+
+L'installation se fait pour ton compte seulement (aucun droit administrateur) et crée une icône sur le bureau. L'application démarre sans console, ouvre ton navigateur et place une icône près de l'horloge (menu : Ouvrir CoachCloclo, Vérifier les mises à jour, Quitter). Si le port 8765 est occupé, elle utilise un port entre 8766 et 8775.
+
+Au premier lancement, un écran d'accueil installe et connecte Claude (avec ton abonnement) sans passer par un terminal, puis connecte Garmin. Tu peux cliquer sur « Passer pour l'instant » pour l'étape Claude.
+
+Journal : `%LOCALAPPDATA%\CoachCloclo\CoachCloclo\logs\coachcloclo.log`.
+
+### Installation avancée (terminal)
 
 - **Windows (PowerShell)** : `irm https://raw.githubusercontent.com/romigour/CoachCloclo/master/install.ps1 | iex`
 - **macOS / Linux** : `curl -LsSf https://raw.githubusercontent.com/romigour/CoachCloclo/master/install.sh | bash`
@@ -15,12 +27,18 @@ Le script installe `uv` si besoin, installe CoachCloclo à partir de la wheel de
 
 Options : `COACH_SOURCE` (chemin ou URL d'une wheel, à la place de la dernière release), `COACH_INSTALL_NO_START=1` (ne lance pas l'app), `COACH_INSTALL_OFFLINE=1` (doctor sans Claude ni Garmin, pour la CI), `--dry-run` / `-DryRun` ou `COACH_DRY_RUN=1` sous PowerShell (affiche les commandes sans les exécuter).
 
+## Mise à jour
+
+Avec l'installateur Windows, un bandeau « Version x.y.z disponible — Mettre à jour » s'affiche au lancement. Tu peux aussi passer par le menu de l'icône près de l'horloge ou par le bouton dans les Réglages. Un clic télécharge le nouvel installateur, vérifie son SHA-256, l'installe en silence et relance l'application. Le dossier de données n'est touché ni par les mises à jour ni par la désinstallation.
+
+Pour tester une mise à jour sur un fork : `COACH_UPDATE_REPO=owner/repo`.
+
 ## Commandes
 
 - `coach start [--lan] [--port N] [--no-browser]` : lance l'application sur http://127.0.0.1:8765.
 - `coach doctor [--fix] [--offline]` : vérifie l'installation.
 - `coach login-garmin` : (re)connexion à Garmin.
-- `coach update` : réinstalle la wheel de la dernière release GitHub.
+- `coach update` : réinstalle la wheel de la dernière release GitHub (installation par terminal).
 
 La commande `coachcloclo` est un alias de `coach`.
 
@@ -30,9 +48,13 @@ Python (>= 3.12), bibliothèque `garminconnect`, CLI `claude` installé, connexi
 
 ## Mode LAN et PIN
 
-`coach start --lan` écoute sur tout le réseau local (par ex. pour ouvrir l'app depuis ton téléphone). Un PIN de 4 à 12 chiffres est demandé au premier lancement, puis requis pour se connecter. Sans `--lan`, seule ta machine peut accéder à l'app.
+Avec la version installée Windows, le bloc « Accès depuis ton téléphone » des Réglages active l'écoute sur tout le réseau local et permet de définir le PIN (4 à 12 chiffres). Au premier passage, le pare-feu Windows demande une autorisation : coche « Réseaux privés ». Depuis le téléphone, ouvre l'adresse affichée dans ce bloc des Réglages (`http://<ip>:<port>`). Sans le mode LAN, seule ta machine peut accéder à l'app.
 
-Note : depuis un téléphone, via `http://<ip>:8765` en http simple (`--lan`), les navigateurs n'installent pas la PWA et n'enregistrent pas le service worker (contexte sécurisé requis). L'application fonctionne quand même dans le navigateur.
+Cet interrupteur n'existe que dans la version installée Windows : sous `coach start`, le mode LAN s'active avec `coach start --lan` (le PIN se définit à l'invite au premier lancement).
+
+Le PC lui-même n'a plus besoin du PIN (y compris avec `coach start --lan`) ; seul le PC peut activer ou désactiver le mode LAN et changer le PIN.
+
+Note : depuis un téléphone, via `http://<ip>:<port>` en http simple (`--lan`), les navigateurs n'installent pas la PWA et n'enregistrent pas le service worker (contexte sécurisé requis). L'application fonctionne quand même dans le navigateur.
 
 ## Données et tokens
 
@@ -68,11 +90,11 @@ uv build                                        # la wheel embarque coach/web_di
 
 ## Publier une version
 
-Les installeurs récupèrent la wheel de la dernière release GitHub. Pour en publier une, mets à jour `version` dans `pyproject.toml`, puis pousse un tag :
+Les installeurs récupèrent la dernière release GitHub (wheel et installateur Windows). Pour en publier une, mets à jour `version` dans `pyproject.toml`, puis pousse un tag qui vaut `v` + cette version :
 
 ```bash
-git tag v0.1.0
-git push origin v0.1.0
+git tag v0.2.0
+git push origin v0.2.0
 ```
 
-Le workflow `release.yml` compile le front, construit la wheel et l'attache à la release.
+Le workflow `release.yml` a trois jobs : `build` (compile le front et construit la wheel), `windows` (construit `CoachCloclo-Setup-<v>.exe` et son `.sha256`) et `publish` (attache le tout à la release). Un déclenchement manuel (`workflow_dispatch`) construit l'installateur sans rien publier : il est disponible dans l'artefact `installer`.

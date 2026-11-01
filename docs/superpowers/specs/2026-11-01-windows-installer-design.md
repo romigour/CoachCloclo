@@ -1,7 +1,7 @@
 # Installateur Windows, lancement sans terminal et mise à jour intégrée
 
 Date : 2026-11-01
-Statut : design validé, en attente de relecture de la spec
+Statut : implémenté
 
 ## 1. Objectif
 
@@ -105,7 +105,7 @@ endpoints du §4.3. Sous `coach start`, `desktop` vaut `None` et ces endpoints r
 | `POST /api/update/check` | Revérifie maintenant (bouton des Réglages) |
 | `POST /api/update/install` | Télécharge, vérifie et lance l'installateur, puis arrête l'application |
 | `GET /api/lan` | `{enabled, has_pin, addresses: ["http://192.168.1.12:8765", …], local}` |
-| `POST /api/lan` | `{enabled, pin?}` ; refusé (403 `lan_local_only`) si la requête ne vient pas de la boucle locale |
+| `POST /api/lan` | `{enabled, pin?}` ; refusé (403 `local_only`) si la requête ne vient pas de la boucle locale |
 
 Toutes les requêtes `POST` restent soumises au contrôle CSRF existant (`x-coach: 1`).
 
@@ -144,16 +144,20 @@ La vérification « Claude connecté » de l'écran d'accueil utilise `claude au
    Claude ». `POST /api/setup/claude/install` exécute
    `powershell -NoProfile -Command "irm https://claude.ai/install.ps1 | iex"` avec
    `CREATE_NO_WINDOW`. Le front interroge `/api/setup/status` toutes les 2 s (« Installation en
-   cours… »). Échec (code non nul, réseau) : message et bouton « Réessayer ».
+   cours… »). Échec (code non nul, réseau) : message et bouton « Réessayer ». Délai maximal
+   d'installation : 600 s (choix d'implémentation).
 2. **CLI installé, non connecté** : bouton « Se connecter à Claude ».
    `POST /api/setup/claude/login` lance `claude auth login --claudeai` avec `CREATE_NO_WINDOW`
    et une entrée standard fermée ; la page de connexion Anthropic s'ouvre dans le navigateur.
    Le front interroge l'état jusqu'à ce que `claude auth status` indique une connexion. Après
    5 minutes, le processus est arrêté et « Réessayer » s'affiche.
-3. **Repli** : si l'étape 1 du plan (§9) montre que la connexion exige une saisie dans le
+3. **Repli** (non nécessaire, voir résultat ci-dessous) : si l'étape 1 du plan (§9) montre que la connexion exige une saisie dans le
    terminal, le bouton ouvre à la place une fenêtre console (`CREATE_NEW_CONSOLE`) lançant
    `claude auth login --claudeai`, avec un texte dans l'appli : « Une fenêtre va s'ouvrir :
    suis les instructions, elle se fermera toute seule ». C'est la seule console possible.
+   **Résultat du test (2026-11-01, Claude Code 2.1.285)** : `claude auth login --claudeai`
+   sans console ni entrée standard ouvre le navigateur et se termine avec le code 0 une fois
+   la connexion faite. Aucun repli console n'est nécessaire (`LOGIN_NEEDS_CONSOLE = False`).
 4. **« Passer pour l'instant »** : l'écran passe à Garmin. La page Stats fonctionne sans
    Claude ; la génération de plan affiche « Connecte Claude » avec un lien vers cette étape
    (l'écran d'accueil reste accessible depuis les Réglages).

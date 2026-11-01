@@ -8,6 +8,7 @@ Idées d'amélioration, dans l'ordre où elles ont été notées.
 - [x] Mettre le projet sur GitHub ([romigour/CoachCloclo](https://github.com/romigour/CoachCloclo))
 - [x] Installation facile sans cloner le projet : les scripts d'installation récupèrent la wheel de la dernière release GitHub (il reste à publier la première release, voir « Publier une version » dans le README)
 - [x] Page de statistiques globales sur l'ensemble de mes données, avec filtres. Elle doit être belle mais surtout utile. Ajouter mes records sur les distances, les temps de course officiels et les classements si possible
+- [x] Installateur Windows avec mise à jour intégrée (lancement sans terminal, écran d'accueil, mode LAN dans les Réglages)
 
 ## À faire
 

@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 
 from coach.analysis.zones import compute_zones
-from coach.export.garmin_workout import session_to_workout_json
+from coach.export.garmin_workout import flat_steps, session_to_workout_json
 from coach.llm.schemas import RepeatSpec, StepSpec
 from tests.llm.factories import make_session
 
@@ -106,3 +106,47 @@ def test_pace_zone_without_pace_zones_raises():
     zones = ZONES.model_copy(update={"pace": None})
     with pytest.raises(ValueError):
         session_to_workout_json(INTERVALS_SESSION, zones, name="x")
+
+
+def _flat_spec():
+    return make_session(
+        steps=[
+            StepSpec(kind="warmup", duration_s=900),
+            RepeatSpec(
+                repeat=3,
+                steps=[
+                    StepSpec(kind="active", distance_m=400, zone="Z5"),
+                    StepSpec(kind="recovery", distance_m=200),
+                ],
+            ),
+            StepSpec(kind="cooldown", duration_s=600),
+        ]
+    )
+
+
+def test_flat_steps_unrolls_repeats_with_garmin_step_orders():
+    flat = flat_steps(_flat_spec())
+    assert [f.step_order for f in flat] == [1, 3, 4, 3, 4, 3, 4, 5]
+    assert [(f.group, f.iteration, f.position) for f in flat][:3] == [
+        (1, None, 0),
+        (2, 1, 0),
+        (2, 1, 1),
+    ]
+    assert flat[-1].group == 3 and flat[-1].iteration is None
+
+
+def test_flat_steps_orders_match_exported_workout():
+    spec = _flat_spec()
+    workout = session_to_workout_json(spec, ZONES, name="x")
+
+    def executable_orders(steps: list[dict]) -> set[int]:
+        orders: set[int] = set()
+        for s in steps:
+            if s["type"] == "ExecutableStepDTO":
+                orders.add(s["stepOrder"])
+            else:
+                orders |= executable_orders(s["workoutSteps"])
+        return orders
+
+    exported = executable_orders(workout["workoutSegments"][0]["workoutSteps"])
+    assert exported == {f.step_order for f in flat_steps(spec)}

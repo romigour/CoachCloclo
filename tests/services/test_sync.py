@@ -5,7 +5,7 @@ import pytest
 from sqlmodel import select
 
 from coach.config import load_settings
-from coach.garmin.port import ActivitySummary, FakeGarminClient, Metrics
+from coach.garmin.port import ActivitySummary, FakeGarminClient, LapSummary, Metrics
 from coach.llm.provider import FakeLLMProvider, LLMUsageLimit
 from coach.llm.schemas import AdjustmentResponse, Change
 from coach.plan.models import Activity, Proposal
@@ -230,3 +230,32 @@ def test_sync_refreshes_personal_records(repo, coach_home):
     )
     sync(repo, garmin, FakeLLMProvider([]), now=NOW)
     assert [r.kind for r in repo.records()] == ["5k"]
+
+
+def test_sync_fetches_laps_of_matched_activities(repo, coach_home, accepted_plan):
+    free = run_summary(garmin_id=2, d=date(2026, 11, 1))  # hors séance : non rattachée
+    garmin = FakeGarminClient(
+        metrics=METRICS,
+        activities=[run_summary(), free],
+        today=date(2026, 11, 4),
+        laps={1: [LapSummary(index=0, duration_s=600, distance_m=1800)], 2: [LapSummary(index=0, duration_s=60, distance_m=200)]},
+    )
+    sync(repo, garmin, FakeLLMProvider([adjustment_json()]), now=NOW)
+    matched = repo.activity_by_garmin_id(1)
+    assert matched.session_id is not None and len(repo.laps(matched.id)) == 1
+    assert repo.laps(repo.activity_by_garmin_id(2).id) is None
+
+
+def test_sync_survives_laps_error_and_retries_next_time(repo, coach_home, accepted_plan):
+    laps = {1: [LapSummary(index=0, duration_s=600, distance_m=1800)]}
+    garmin = FakeGarminClient(
+        metrics=METRICS, activities=[run_summary()], today=date(2026, 11, 4), laps=laps, fail_on={"activity_laps"}
+    )
+    r = sync(repo, garmin, FakeLLMProvider([adjustment_json()]), now=NOW)
+    assert r.matched == 1
+    activity = repo.activity_by_garmin_id(1)
+    assert repo.laps(activity.id) is None
+
+    garmin.fail_on.clear()
+    sync(repo, garmin, FakeLLMProvider([adjustment_json()]), now=NOW)
+    assert len(repo.laps(activity.id)) == 1

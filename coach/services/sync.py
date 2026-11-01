@@ -20,6 +20,7 @@ from coach.plan.repo import Repo
 from coach.services.activities import store_summaries
 from coach.services.context import recent_history, refresh_snapshot
 from coach.services.history import refresh_records
+from coach.services.laps import fetch_missing_laps
 
 FIRST_SYNC_DAYS = 56
 OVERLAP_DAYS = 2
@@ -66,6 +67,7 @@ def sync(repo: Repo, garmin: GarminPort, llm: LLMProvider, *, now: datetime) -> 
                 s = db.get(Session, sid)
                 s.status = "missed"
                 db.add(s)
+        fetch_missing_laps(repo, garmin)
 
     settings.last_sync_at = now
     if pairs or missed_ids:

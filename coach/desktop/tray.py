@@ -16,7 +16,7 @@ def _chemin_icone() -> Path:
     """Icône embarquée (PyInstaller) ou, à défaut, celle du dépôt."""
     base = getattr(sys, "_MEIPASS", None)
     if base:
-        return Path(base) / "packaging" / "windows" / _NOM_ICONE
+        return Path(base) / _NOM_ICONE
     return Path(__file__).resolve().parents[2] / "packaging" / "windows" / _NOM_ICONE
 
 

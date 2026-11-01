@@ -1,5 +1,5 @@
-import { expect, test } from "vitest";
-import { fmtDuration, isDirty, targetLabel } from "./race";
+import { describe, expect, test } from "vitest";
+import { fmtDuration, fmtTargetTime, isDirty, parseTargetTime, settingsError, targetLabel } from "./race";
 import type { RaceSegment, RaceSettings } from "./api";
 
 const seg = (over: Partial<RaceSegment>): RaceSegment => ({
@@ -29,4 +29,37 @@ test("isDirty detects an aid station change", () => {
   expect(isDirty(a, b)).toBe(false);
   b.aid_stations[0].stop_min = 2;
   expect(isDirty(a, b)).toBe(true);
+});
+
+test("parseTargetTime reads h:mm and h:mm:ss", () => {
+  expect(parseTargetTime("3:45")).toBe(13500);
+  expect(parseTargetTime(" 3:45:30 ")).toBe(13530);
+  expect(parseTargetTime("0:45")).toBe(2700);
+  expect(parseTargetTime("")).toBeNull();
+  for (const bad of ["abc", "3", "3:75", "3:45:75", "0:00", "3:4", "3:45:5"]) expect(parseTargetTime(bad)).toBeNaN();
+});
+
+test("fmtTargetTime round-trips through parseTargetTime", () => {
+  expect(fmtTargetTime(13500)).toBe("3:45");
+  expect(fmtTargetTime(2700)).toBe("0:45");
+  expect(fmtTargetTime(13530)).toBe("3:45:30");
+  for (const s of [13500, 2700, 13530]) expect(parseTargetTime(fmtTargetTime(s))).toBe(s);
+});
+
+describe("settingsError", () => {
+  const ok: RaceSettings = {
+    target_time_s: null, start_time: "08:00", carbs_g_h: 60, water_ml_h: 500, carry_ml: 1000,
+    aid_stations: [{ km: 10, name: "A", kind: "eau", cutoff: null, stop_min: 1 }],
+  };
+  const st = ok.aid_stations[0];
+  test("valid settings", () => expect(settingsError(ok)).toBeNull());
+  test.each([
+    [{ start_time: "" }, "Heure de départ"],
+    [{ carbs_g_h: null as unknown as number }, "Glucides"],
+    [{ water_ml_h: NaN }, "Eau"],
+    [{ carry_ml: 0 }, "Contenance"],
+    [{ aid_stations: [{ ...st, km: NaN }] }, "Ravitaillement 1"],
+    [{ aid_stations: [{ ...st, name: "  " }] }, "Ravitaillement 1"],
+    [{ aid_stations: [{ ...st, stop_min: NaN }] }, "Ravitaillement 1"],
+  ])("%o is refused", (over, msg) => expect(settingsError({ ...ok, ...over })).toContain(msg));
 });

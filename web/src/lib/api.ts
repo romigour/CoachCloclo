@@ -274,6 +274,7 @@ export type RaceView = {
   plan: RacePlan;
   workout_id: number | null;
   export_error: string | null;
+  export_stale: boolean;
 };
 
 export type GoalInput = {

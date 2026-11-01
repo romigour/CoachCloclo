@@ -168,8 +168,12 @@
         <Today {version} {status} onerror={failed} />
       {:else if route === "plan"}
         <Plan {version} onerror={failed} />
-      {:else if route === "race" && status?.goal}
-        <Race goal={status.goal} onerror={failed} />
+      {:else if route === "race"}
+        {#if status?.goal}
+          <Race goal={status.goal} onerror={failed} />
+        {:else}
+          <p class="card">Aucun objectif actif : le jour J se prépare à partir d'un objectif. <a href="#/goal">Créer un objectif</a></p>
+        {/if}
       {:else if route === "stats"}
         <Stats {version} history={status?.history ?? null} onimport={importHistory} />
       {:else if route === "proposal"}

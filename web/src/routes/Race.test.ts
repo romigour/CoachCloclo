@@ -21,7 +21,7 @@ const segments: RaceSegment[] = Array.from({ length: 10 }, (_, i) => ({
 const view = (over: Partial<RaceView> = {}): RaceView => ({
   goal_id: 7, goal_type: "route", race_date: "2026-12-06",
   settings: { target_time_s: null, start_time: "08:00", carbs_g_h: 60, water_ml_h: 500, carry_ml: 1000, aid_stations: [] },
-  basis_date: "2026-10-30", profile: null, workout_id: null, export_error: null,
+  basis_date: "2026-10-30", profile: null, workout_id: null, export_error: null, export_stale: false,
   plan: {
     distance_km: 10, eq_km: 10, stops_s: 0, predicted_time_s: 2880, target_time_s: null, reference_time_s: 2880,
     segments, aid_passages: [], nutrition: [], warnings: [],
@@ -155,4 +155,83 @@ test("reimporting from the GPX posts to reimport", async () => {
   render(Race, { goal: trailGoal });
   await fireEvent.click(await screen.findByRole("button", { name: "Réimporter depuis le GPX" }));
   expect(calls(f)).toContain("POST /api/goals/7/race-plan/reimport");
+});
+
+test("a target time typed as h:mm is read as hours and minutes", async () => {
+  const f = mock();
+  render(Race, { goal });
+  await fireEvent.input(await screen.findByLabelText("Temps visé"), { target: { value: "3:45" } });
+  await fireEvent.click(screen.getByRole("button", { name: "Enregistrer" }));
+  const put = f.mock.calls.find((c) => (c[1] as RequestInit).method === "PUT")!;
+  expect(JSON.parse((put[1] as RequestInit).body as string).target_time_s).toBe(13500);
+});
+
+test("a saved target time is shown as h:mm", async () => {
+  mock(view({ settings: { ...view().settings, target_time_s: 2700 } }));
+  render(Race, { goal });
+  expect(await screen.findByLabelText("Temps visé")).toHaveValue("0:45");
+  expect(screen.queryByText("Modifications non enregistrées")).toBeNull();
+});
+
+test("duplicate warnings and aid stations at the same km render without key clash", async () => {
+  const late = "Barrière hors délai au ravito « Col » avec le temps prédit";
+  const v = trailView();
+  const twin = { ...station, km: 5 };
+  v.settings.aid_stations = [station, twin];
+  v.plan.warnings = [late, late];
+  v.plan.nutrition = [
+    { from_name: "Départ", to_name: "Col", from_km: 0, to_km: 5, duration_s: 1800, carbs_g: 30, water_ml: 250, over_capacity: false },
+    { from_name: "Col", to_name: "Col", from_km: 5, to_km: 5, duration_s: 0, carbs_g: 0, water_ml: 0, over_capacity: false },
+    { from_name: "Col", to_name: "Arrivée", from_km: 5, to_km: 10, duration_s: 1800, carbs_g: 30, water_ml: 250, over_capacity: false },
+  ];
+  mock(v);
+  render(Race, { goal: trailGoal });
+  expect(await screen.findAllByText(late)).toHaveLength(2);
+  expect(within(screen.getByRole("table", { name: "Nutrition" })).getAllByRole("row")).toHaveLength(4);
+});
+
+test("the watch status says whether the sent plan is outdated", async () => {
+  mock(view({ workout_id: 12 }));
+  const { unmount } = render(Race, { goal });
+  expect(await screen.findByText("Envoyé à la montre")).toBeVisible();
+  unmount();
+  mock(view({ workout_id: 12, export_stale: true }));
+  render(Race, { goal });
+  expect(await screen.findByText("Plan modifié depuis l'envoi : renvoie-le à la montre")).toBeVisible();
+  expect(screen.queryByText("Envoyé à la montre")).toBeNull();
+});
+
+test("refreshing is disabled while the draft has unsaved changes", async () => {
+  mock();
+  render(Race, { goal });
+  const refresh = await screen.findByRole("button", { name: "Actualiser" });
+  expect(refresh).toBeEnabled();
+  await fireEvent.input(screen.getByLabelText("Temps visé"), { target: { value: "0:45" } });
+  expect(refresh).toBeDisabled();
+});
+
+test("an emptied aid station km blocks saving with a French message", async () => {
+  const f = mock(trailView());
+  render(Race, { goal: trailGoal });
+  await fireEvent.input(await screen.findByLabelText("Km du ravitaillement 1"), { target: { value: "" } });
+  expect(screen.getByRole("alert")).toHaveTextContent("Ravitaillement 1");
+  const save = screen.getByRole("button", { name: "Enregistrer" });
+  expect(save).toBeDisabled();
+  await fireEvent.click(save);
+  expect(calls(f).some((c) => c.startsWith("PUT"))).toBe(false);
+});
+
+test("a new aid station stays before the finish", async () => {
+  const f = mock(trailView());
+  render(Race, { goal: trailGoal });
+  await fireEvent.click(await screen.findByRole("button", { name: "Ajouter un ravitaillement" }));
+  expect(screen.getByLabelText("Km du ravitaillement 2")).toHaveValue(9.9);
+  await fireEvent.click(screen.getByRole("button", { name: "Enregistrer" }));
+  expect(calls(f)).toContain("PUT /api/goals/7/race-plan");
+});
+
+test("the trail header labels the elevation gain as computed from the profile", async () => {
+  mock(trailView());
+  render(Race, { goal: trailGoal });
+  expect(await screen.findByText("D+ (profil)")).toBeVisible();
 });

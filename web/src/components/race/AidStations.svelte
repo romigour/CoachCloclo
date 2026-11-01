@@ -4,12 +4,14 @@
   let {
     stations,
     passages,
+    distanceKm,
     canReimport = true,
     onchange,
     onreimport,
   }: {
     stations: AidStation[];
     passages: AidPassage[];
+    distanceKm: number;
     canReimport?: boolean;
     onchange: (stations: AidStation[]) => void;
     onreimport: () => void;
@@ -35,7 +37,8 @@
   const remove = (i: number) => onchange(stations.filter((_, j) => j !== i));
   function add() {
     const last = stations.at(-1)?.km ?? 0;
-    onchange([...stations, { km: Math.round((last + 5) * 10) / 10, name: "Ravitaillement", kind: "complet", cutoff: null, stop_min: DEFAULT_STOP.complet }]);
+    const km = Math.round(Math.min(last + 5, distanceKm - 0.1) * 10) / 10; // jamais à l'arrivée ni au-delà
+    onchange([...stations, { km, name: "Ravitaillement", kind: "complet", cutoff: null, stop_min: DEFAULT_STOP.complet }]);
   }
 </script>
 
@@ -64,7 +67,7 @@
         {@const p = passageFor(st, i)}
         <tr>
           <td><input class="num" type="number" step="0.1" min="0" aria-label="Km du ravitaillement {i + 1}" value={st.km} oninput={(e) => patch(i, { km: e.currentTarget.valueAsNumber })} /></td>
-          <td><input aria-label="Nom du ravitaillement {i + 1}" value={st.name} oninput={(e) => patch(i, { name: e.currentTarget.value })} /></td>
+          <td><input aria-label="Nom du ravitaillement {i + 1}" maxlength="60" value={st.name} oninput={(e) => patch(i, { name: e.currentTarget.value })} /></td>
           <td>
             <select aria-label="Type du ravitaillement {i + 1}" value={st.kind} onchange={(e) => setKind(i, e.currentTarget.value as AidStation["kind"])}>
               <option value="eau">eau</option>

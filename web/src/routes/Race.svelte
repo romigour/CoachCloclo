@@ -1,7 +1,7 @@
 <script lang="ts">
   import { api, type Goal, type RaceSettings, type RaceView } from "../lib/api";
-  import { fmtDuration, isDirty, targetLabel } from "../lib/race";
-  import { fmtClock, fmtDay, fmtNumber, fmtPace, parseClock } from "../lib/stats/format";
+  import { fmtDuration, fmtTargetTime, isDirty, parseTargetTime, settingsError, targetLabel } from "../lib/race";
+  import { fmtClock, fmtDay, fmtNumber, fmtPace } from "../lib/stats/format";
   import ErrorBanner from "../components/ErrorBanner.svelte";
   import ElevationProfile from "../components/race/ElevationProfile.svelte";
   import AidStations from "../components/race/AidStations.svelte";
@@ -14,23 +14,25 @@
   let error = $state<unknown>(null);
   let busy = $state<"load" | "save" | "refresh" | "export" | "reimport" | null>(null);
 
-  const parsedTarget = $derived(parseClock(targetText));
+  const parsedTarget = $derived(parseTargetTime(targetText));
   const targetInvalid = $derived(parsedTarget !== null && !(parsedTarget > 0)); // NaN ou 0
   const current = $derived<RaceSettings | null>(
     draft ? { ...draft, target_time_s: parsedTarget !== null && parsedTarget > 0 ? parsedTarget : null } : null,
   );
   const dirty = $derived(!!view && !!current && (targetInvalid || isDirty(view.settings, current)));
+  const formError = $derived(current ? settingsError(current) : null);
 
   const plan = $derived(view?.plan ?? null);
   const shownTime = $derived(plan ? (plan.target_time_s ?? plan.predicted_time_s) : null);
   const avgPace = $derived(plan && shownTime ? shownTime / plan.distance_km : null);
   const dPlus = $derived(plan?.segments.reduce((sum, s) => sum + s.d_plus_m, 0) ?? 0);
   const sent = $derived(!!view && view.workout_id !== null && !view.export_error);
+  const stale = $derived(sent && !!view?.export_stale);
 
   function apply(v: RaceView) {
     view = v;
     draft = structuredClone(v.settings);
-    targetText = v.settings.target_time_s ? fmtClock(v.settings.target_time_s) : "";
+    targetText = v.settings.target_time_s ? fmtTargetTime(v.settings.target_time_s) : "";
   }
 
   async function run(kind: NonNullable<typeof busy>, call: () => Promise<RaceView>) {
@@ -48,7 +50,7 @@
 
   const load = () => run("load", () => api.racePlan(goal.id));
   const save = () => {
-    if (targetInvalid || !current) return;
+    if (targetInvalid || formError || !current) return;
     return run("save", () => api.saveRacePlan(goal.id, current));
   };
   const refresh = () => run("refresh", () => api.refreshRacePlan(goal.id));
@@ -78,12 +80,12 @@
         <p class="big">{plan.predicted_time_s ? fmtDuration(plan.predicted_time_s) : "—"}</p>
         <p class="meta">
           Données du {fmtDay(view.basis_date)}
-          <button type="button" onclick={refresh} disabled={busy !== null}>Actualiser</button>
+          <button type="button" onclick={refresh} disabled={busy !== null || dirty}>Actualiser</button>
         </p>
       </div>
       <div>
         <label for="race-target">Temps visé</label>
-        <input id="race-target" bind:value={targetText} placeholder="h:mm:ss" inputmode="numeric" aria-invalid={targetInvalid} />
+        <input id="race-target" bind:value={targetText} placeholder="h:mm" inputmode="numeric" aria-invalid={targetInvalid} />
       </div>
       <div>
         <label for="race-start">Heure de départ</label>
@@ -95,18 +97,18 @@
       </div>
       {#if view.goal_type === "trail"}
         <div>
-          <p class="meta">D+</p>
+          <p class="meta">D+ (profil)</p>
           <p class="big">{fmtNumber(dPlus)} m</p>
         </div>
       {/if}
     </div>
 
     {#if targetInvalid}
-      <p class="error" role="alert">Temps visé invalide : saisis une durée au format h:mm:ss (ex. 3:45:00).</p>
+      <p class="error" role="alert">Temps visé invalide : saisis une durée au format h:mm ou h:mm:ss (ex. 3:45 pour 3 h 45).</p>
     {/if}
     {#if plan.warnings.length}
       <ul class="warnings" aria-label="Avertissements">
-        {#each plan.warnings as w (w)}<li>{w}</li>{/each}
+        {#each plan.warnings as w, i (i)}<li>{w}</li>{/each}
       </ul>
     {/if}
   </section>
@@ -153,6 +155,7 @@
       <h2>Ravitaillements</h2>
       <AidStations
         stations={draft.aid_stations}
+        distanceKm={plan.distance_km}
         passages={plan.aid_passages}
         canReimport={busy === null && !dirty}
         onchange={(s) => (draft!.aid_stations = s)}
@@ -182,7 +185,7 @@
             <tr><th>Tronçon</th><th>Km</th><th>Durée</th><th>Glucides</th><th>Eau</th><th>Alerte</th></tr>
           </thead>
           <tbody>
-            {#each plan.nutrition as leg (leg.from_km)}
+            {#each plan.nutrition as leg, i (i)}
               <tr>
                 <td>{leg.from_name} → {leg.to_name}</td>
                 <td>{fmtNumber(leg.from_km, 1)} → {fmtNumber(leg.to_km, 1)}</td>
@@ -199,10 +202,15 @@
   {/if}
 
   <div class="row actions">
+    {#if formError}<span class="error" role="alert">{formError}</span>{/if}
     {#if dirty}<span class="meta" role="status">Modifications non enregistrées</span>{/if}
-    <button type="button" class="primary" onclick={save} disabled={busy !== null || !dirty}>Enregistrer</button>
+    <button type="button" class="primary" onclick={save} disabled={busy !== null || !dirty || !!formError}>Enregistrer</button>
     <button type="button" onclick={exportToWatch} disabled={busy !== null || dirty}>Envoyer à la montre</button>
-    {#if sent}<span class="meta" role="status">Envoyé à la montre</span>{/if}
+    {#if stale}
+      <span class="meta" role="status">Plan modifié depuis l'envoi : renvoie-le à la montre</span>
+    {:else if sent}
+      <span class="meta" role="status">Envoyé à la montre</span>
+    {/if}
     {#if view.export_error}<span class="error" role="alert">Échec de l'envoi : {view.export_error}</span>{/if}
   </div>
 {/if}

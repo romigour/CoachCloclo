@@ -274,3 +274,12 @@ test("propose Connecte Claude quand la génération échoue faute de Claude", as
   const link = await screen.findByRole("link", { name: "Connecte Claude" });
   expect(link.getAttribute("href")).toBe("#/welcome");
 });
+
+test("la page Jour J sans objectif actif renvoie vers l'objectif", async () => {
+  statusBody = { ...statusBody, goal: null };
+  location.hash = "#/race";
+  render(App);
+  const link = await screen.findByRole("link", { name: "Créer un objectif" });
+  expect(link).toHaveAttribute("href", "#/goal");
+  expect(screen.getByText(/Aucun objectif actif/)).toBeVisible();
+});

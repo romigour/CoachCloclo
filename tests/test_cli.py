@@ -1,3 +1,4 @@
+import pytest
 from typer.testing import CliRunner
 
 import coach.cli as cli
@@ -89,6 +90,7 @@ def test_update_without_uv(monkeypatch):
 
 def test_update_runs_uv(monkeypatch):
     seen = []
+    monkeypatch.setattr(cli.sys, "platform", "linux")
     monkeypatch.setattr(cli.shutil, "which", lambda n: "/uv")
     monkeypatch.setattr(cli, "latest_wheel_url", lambda: "https://x/coachcloclo-0.1.0-py3-none-any.whl")
     monkeypatch.setattr(cli.subprocess, "run",
@@ -96,6 +98,38 @@ def test_update_runs_uv(monkeypatch):
     assert runner.invoke(cli.app, ["update"]).exit_code == 0
     assert seen == [["/uv", "tool", "install", "--force", "--python", "3.12",
                      "https://x/coachcloclo-0.1.0-py3-none-any.whl"]]
+
+
+def test_update_windows_hands_off_after_exit(monkeypatch):
+    seen = []
+    monkeypatch.setattr(cli.sys, "platform", "win32")
+    monkeypatch.setattr(cli.shutil, "which", lambda n: "/uv")
+    monkeypatch.setattr(cli, "latest_wheel_url", lambda: "https://x/c.whl")
+    monkeypatch.setattr(cli, "running_coach_processes", lambda: [])
+    monkeypatch.setattr(cli, "update_after_exit", seen.append)
+    monkeypatch.setattr(cli.subprocess, "run", lambda *a, **kw: pytest.fail("uv lancé depuis le venv"))
+    r = runner.invoke(cli.app, ["update"])
+    assert r.exit_code == 0, r.output
+    assert seen == [["/uv", "tool", "install", "--force", "--python", "3.12", "https://x/c.whl"]]
+    assert "nouvelle fenêtre" in r.output
+
+
+def test_update_windows_refuses_while_coach_runs(monkeypatch):
+    monkeypatch.setattr(cli.sys, "platform", "win32")
+    monkeypatch.setattr(cli.shutil, "which", lambda n: "/uv")
+    monkeypatch.setattr(cli, "latest_wheel_url", lambda: "https://x/c.whl")
+    monkeypatch.setattr(cli, "running_coach_processes", lambda: [(11824, "coach.exe start")])
+    monkeypatch.setattr(cli, "update_after_exit", lambda install: pytest.fail("mise à jour lancée"))
+    r = runner.invoke(cli.app, ["update"])
+    assert r.exit_code == 1 and "11824" in r.output and "coach.exe start" in r.output
+
+
+def test_running_coach_processes_excludes_self(monkeypatch):
+    out = (f"{cli.os.getpid()}\tcoach.exe update\n{cli.os.getppid()}\tcoach.exe update\n"
+           "11824\tcoach.exe start\n")
+    monkeypatch.setattr(cli.subprocess, "run",
+                        lambda *a, **kw: type("R", (), {"stdout": out})())
+    assert cli.running_coach_processes() == [(11824, "coach.exe start")]
 
 
 def test_update_without_release(monkeypatch):

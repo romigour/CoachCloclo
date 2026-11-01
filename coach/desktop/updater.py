@@ -169,7 +169,7 @@ class Updater:
         try:
             self._tmp_dir.mkdir(parents=True, exist_ok=True)
             self._download(info.installer_url, exe, self._progression)
-            attendu = self._fetch_text(info.sha256_url).split()[0].lower()
+            attendu = self._fetch_text(info.sha256_url).lstrip("﻿").split()[0].lower()
             if _sha256(exe) != attendu:
                 self._supprimer(exe)
                 self._echec("Le fichier téléchargé est corrompu, réessaie")
@@ -177,11 +177,15 @@ class Updater:
             with self._lock:
                 self._state = "installing"
             self._spawn([str(exe), *INSTALLER_ARGS])
-        except (OSError, IndexError) as e:
+        except Exception as e:
+            _log.exception("Mise à jour : échec du téléchargement ou de l'installation")
             self._supprimer(exe)
             self._echec(f"Échec de la mise à jour : {e}")
             return
-        on_exit()
+        try:
+            on_exit()
+        except Exception:
+            _log.exception("Mise à jour : l'arrêt de l'application a échoué")
 
     @staticmethod
     def _supprimer(chemin: Path) -> None:
@@ -214,7 +218,7 @@ def _fetch_json(url: str) -> dict:
 
 def _fetch_text(url: str) -> str:
     with _ouvrir(url) as r:
-        return r.read().decode("utf-8")
+        return r.read().decode("utf-8-sig")
 
 
 def _download(url: str, dest: Path, progress: Callable[[int], None]) -> None:

@@ -1,6 +1,5 @@
 import hashlib
 import threading
-from pathlib import Path
 
 import pytest
 
@@ -69,7 +68,7 @@ class Env:
         self.exited += 1
 
 
-def make(tmp_path=Path("."), current="0.2.0", release=RELEASE, content=b"exe", sha=None, download=None):
+def make(tmp_path, current="0.2.0", release=RELEASE, content=b"exe", sha=None, download=None):
     if sha is None:
         sha = sha_text(content)
     return Env(tmp_path, current, release, content, sha, download)
@@ -265,3 +264,41 @@ def test_progress_reported(tmp_path):
     env.updater.check()
     env.updater.install(env.on_exit)
     assert seen == [50, 100]
+
+
+def test_install_unexpected_error_fails_and_allows_retry(tmp_path):
+    calls = []
+
+    def boom(url, dest, progress):
+        dest.write_bytes(b"partiel")
+        if not calls:
+            calls.append(1)
+            raise RuntimeError("imprévu")
+        dest.write_bytes(b"exe")
+
+    env = make(tmp_path, download=boom)
+    env.updater.check()
+    env.updater.install(env.on_exit)
+    v = env.updater.view()
+    assert v["state"] == "failed" and v["error"] and env.exited == 0
+    assert not (tmp_path / "tmp" / "CoachCloclo-Setup-0.3.0.exe").exists()
+    env.updater.install(env.on_exit)
+    assert env.updater.view()["state"] == "installing" and env.exited == 1
+
+
+def test_install_sha_with_bom(tmp_path):
+    env = make(tmp_path, sha="﻿" + sha_text(b"exe"))
+    env.updater.check()
+    env.updater.install(env.on_exit)
+    assert env.exited == 1
+
+
+def test_install_on_exit_error_is_logged(tmp_path):
+    env = make(tmp_path)
+    env.updater.check()
+
+    def bad():
+        raise RuntimeError("zut")
+
+    env.updater.install(bad)
+    assert env.updater.view()["state"] == "installing"

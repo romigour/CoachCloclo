@@ -185,3 +185,18 @@ def test_clock_wraps_after_midnight():
 @pytest.mark.parametrize("t,z", [(5000, "Z4"), (10000, "Z3"), (14400, "Z3"), (20000, "Z2")])
 def test_race_hr_zone(t, z):
     assert race_hr_zone(t) == z
+
+
+def test_cutoff_before_start_is_next_day():
+    st = STATION.model_copy(update={"cutoff": "02:00"})
+    p = plan(trail=True, settings=RaceSettings(start_time="22:00", aid_stations=[st]))
+    a = p.aid_passages[0].predicted
+    assert (a.clock, a.margin_min, a.status) == ("22:24", 216, "ok")
+    assert LATE.format("Col") not in p.warnings
+
+
+def test_negative_margin_floored():
+    st = STATION.model_copy(update={"cutoff": "08:28"})  # arrivée visée 08:28:30
+    p = plan(trail=True, settings=RaceSettings(aid_stations=[st], target_time_s=3600))
+    t = p.aid_passages[0].target
+    assert (t.margin_min, t.status) == (-1, "hors délai")

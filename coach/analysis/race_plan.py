@@ -1,7 +1,7 @@
 """Stratégie du jour J : coût de pente, prédiction, segments, passages et nutrition. Module pur."""
 
 from datetime import date
-from math import ceil
+from math import ceil, floor
 from typing import Literal, get_args
 
 from pydantic import BaseModel, Field
@@ -343,14 +343,19 @@ class _Timing:
 
 def _passage(elapsed: float, start_s: int, cutoff: str | None) -> Passage:
     """Passage à un ravito ; marge et statut seulement si une barrière est saisie."""
-    margin_s = None if cutoff is None else _hhmm_s(cutoff) - (start_s + elapsed)
+    margin_s = None
+    if cutoff is not None:
+        cutoff_s = _hhmm_s(cutoff)
+        if cutoff_s < start_s:  # barrière avant l'heure de départ : c'est le lendemain
+            cutoff_s += _DAY_MIN * 60
+        margin_s = cutoff_s - (start_s + elapsed)
     status = None
     if margin_s is not None:
         status = "hors délai" if margin_s < 0 else "ok" if margin_s > _TIGHT_MARGIN_S else "serré"
     return Passage(
         elapsed_s=round(elapsed),
         clock=_clock(start_s, elapsed),
-        margin_min=None if margin_s is None else round(margin_s / 60),
+        margin_min=None if margin_s is None else floor(margin_s / 60),  # -30 s → -1, jamais 0 hors délai
         status=status,
     )
 

@@ -1,10 +1,12 @@
+import sqlite3
 from datetime import date
 
 import pytest
 
 from coach.garmin.port import LapSummary
 from coach.llm.schemas import RepeatSpec, StepSpec
-from coach.plan.models import Activity, AthleteSnapshot, Proposal, Session
+from coach.plan.models import Activity, AthleteSnapshot, Goal, Proposal, Session
+from coach.plan.repo import Repo, make_engine
 from tests.llm.factories import make_session
 from tests.plan.factories import make_activity, make_db_session, make_goal
 
@@ -157,3 +159,47 @@ def test_laps_absent_then_saved_then_replaced(repo):
 def test_activity_of_session(repo):
     a = repo.add(make_activity(session_id=7))
     assert repo.activity_of_session(7).id == a.id and repo.activity_of_session(8) is None
+
+
+def _old_schema_db(path):
+    """Base à l'ancien schéma : table goal sans les colonnes du temps visé, stratégie avec temps."""
+    con = sqlite3.connect(path)
+    con.executescript("""
+        CREATE TABLE goal (id INTEGER PRIMARY KEY, created_at DATETIME, type VARCHAR, distance_km FLOAT,
+            d_plus_m INTEGER, race_date DATE, sessions_per_week INTEGER, gpx_path VARCHAR,
+            gpx_summary_json VARCHAR, status VARCHAR, plan_start DATE, plan_accepted BOOLEAN);
+        INSERT INTO goal VALUES (1, '2026-11-01', 'route', 21.1, 0, '2027-02-07', 4, NULL, NULL, 'active', '2026-11-02', 1);
+        INSERT INTO goal VALUES (2, '2026-10-01', 'route', 10, 0, '2026-12-07', 3, NULL, NULL, 'archived', '2026-10-05', 1);
+        CREATE TABLE racestrategy (id INTEGER PRIMARY KEY, goal_id INTEGER, settings_json VARCHAR,
+            basis_json VARCHAR, garmin_workout_id INTEGER, garmin_schedule_id INTEGER,
+            pending_old_workout_id INTEGER, pending_old_schedule_id INTEGER, export_error VARCHAR);
+        INSERT INTO racestrategy (goal_id, settings_json, basis_json) VALUES (1, '{"target_time_s": 6600}', '{}');
+    """)
+    con.commit()
+    con.close()
+
+
+def test_migration_adds_columns_and_copies_strategy_target(tmp_path):
+    path = tmp_path / "old.db"
+    _old_schema_db(path)
+    repo = Repo(make_engine(path))
+    goal = repo.active_goal()
+    assert goal.target_time_s == 6600 and goal.target_source == "user"
+    with repo.transaction() as db:
+        archived = db.get(Goal, 2)
+    assert archived.target_time_s is None and archived.target_source is None
+
+
+def test_migration_is_idempotent(tmp_path):
+    path = tmp_path / "old.db"
+    _old_schema_db(path)
+    repo = Repo(make_engine(path))
+    goal = repo.active_goal()
+    goal.target_time_s = 7000
+    repo.update(goal)
+    assert Repo(make_engine(path)).active_goal().target_time_s == 7000
+
+
+def test_new_goal_has_no_target(repo):
+    g = repo.add(make_goal())
+    assert g.target_time_s is None and g.target_source is None

@@ -41,6 +41,8 @@ class Goal(SQLModel, table=True):
     status: str = "active"  # "active" | "archived"
     plan_start: dt.date
     plan_accepted: bool = False
+    target_time_s: int | None = None
+    target_source: str | None = None  # "user" | "claude"
 
 
 class Session(SQLModel, table=True):

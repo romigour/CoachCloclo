@@ -1,11 +1,13 @@
 """Dépôt SQLite : accès aux données du plan."""
 
+import json
 from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import date
 from pathlib import Path
 
 from pydantic import TypeAdapter
+from sqlalchemy import text
 from sqlalchemy.engine import Engine
 from sqlmodel import Session as DbSession
 from sqlmodel import SQLModel, create_engine, delete, select
@@ -31,7 +33,26 @@ def make_engine(path: Path) -> Engine:
     """Moteur SQLite sur `path` ; crée les tables si besoin."""
     engine = create_engine(f"sqlite:///{path}")
     SQLModel.metadata.create_all(engine)
+    _migrate(engine)
     return engine
+
+
+def _migrate(engine: Engine) -> None:
+    """Met à niveau une base existante : colonnes du temps visé de `goal`, reprises de la stratégie."""
+    with engine.begin() as conn:
+        columns = {row[1] for row in conn.execute(text("PRAGMA table_info(goal)"))}
+        if "target_time_s" in columns:
+            return
+        conn.execute(text("ALTER TABLE goal ADD COLUMN target_time_s INTEGER"))
+        conn.execute(text("ALTER TABLE goal ADD COLUMN target_source VARCHAR"))
+        rows = conn.execute(text("SELECT goal_id, settings_json FROM racestrategy")).all()
+        for goal_id, settings_json in rows:
+            target = json.loads(settings_json).get("target_time_s")
+            if target:
+                conn.execute(
+                    text("UPDATE goal SET target_time_s = :t, target_source = 'user' WHERE id = :id"),
+                    {"t": target, "id": goal_id},
+                )
 
 
 class Repo:

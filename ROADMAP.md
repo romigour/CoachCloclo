@@ -11,6 +11,10 @@ Idées d'amélioration, dans l'ordre où elles ont été notées.
 - [x] Installateur Windows avec mise à jour intégrée (lancement sans terminal, écran d'accueil, mode LAN dans les Réglages)
 - [x] Demander des idées de fonctionnalités pour la suite de l'application (ajoutées ci-dessous)
 - [x] Stratégie du jour J : prédiction de temps, allure ou temps par segment à partir du GPX (montées, descentes), plan de ravitaillement et barrières horaires en trail, export sur la montre
+- [x] Icône des Réglages en engrenage
+- [x] Choix du thème Auto / Clair / Sombre dans les Réglages
+- [x] Nouveau logo (« C » en virage de piste) décliné en favicon, PWA et icône Windows
+- [x] Allure min/km (ou plage de FC en bpm) à côté des zones dans le détail des séances
 
 ## À faire
 
@@ -28,10 +32,6 @@ Idées d'amélioration, dans l'ordre où elles ont été notées.
 - [ ] Bilan de fin de préparation à l'archivage de l'objectif : prévu contre réalisé, progression des métriques, temps visé contre temps réel ; contexte réutilisé pour la préparation suivante
 - [ ] Discuter avec le coach : question libre avec le contexte du plan, la réponse pouvant proposer un ajustement à valider
 - [ ] Rappel de la séance du jour par une notification Windows (icône près de l'horloge)
-- [ ] Revoir l'icône des Réglages
-- [ ] Créer un mode clair / sombre
-- [ ] Revoir le logo et l'icône de l'application
-- [ ] Ajouter l'allure en min/km dans le détail des séances, en plus des zones
 - [ ] Vérifier le fonctionnement des propositions de Claude : comment sont construites et appliquées ses mises à jour du programme ?
 - [ ] Revoir le design pour éviter le défilement sur PC
 - [ ] Ajouter des objectifs secondaires

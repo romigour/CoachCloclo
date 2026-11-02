@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/svelte";
+import { fireEvent, render, screen } from "@testing-library/svelte";
 import { afterEach, expect, test, vi } from "vitest";
 import Today from "./Today.svelte";
 import type { Plan, Session } from "../lib/api";
@@ -40,4 +40,11 @@ test("once the week is over, it says so", async () => {
   mock();
   render(Today, { today: "2026-10-31" });
   expect(await screen.findByRole("heading", { name: "Repos aujourd'hui" })).toBeVisible();
+});
+
+test("Signaler un imprévu opens the event dialog", async () => {
+  mock();
+  render(Today, { today: "2026-10-30" });
+  await fireEvent.click(await screen.findByRole("button", { name: "Signaler un imprévu" }));
+  expect(screen.getByRole("dialog", { name: "Signaler un imprévu" })).toBeVisible();
 });

@@ -1,11 +1,12 @@
 <script lang="ts">
   import { api, type Activity, type Plan } from "../lib/api";
   import { formatDate, formatDay, todayIso } from "../lib/dates";
-  import { currentWeek, focusSession, sessionDate } from "../lib/week";
+  import { currentWeek, focusSession, openSessions, sessionDate } from "../lib/week";
   import ErrorBanner from "../components/ErrorBanner.svelte";
   import Calendar from "../components/Calendar.svelte";
   import SessionCard from "../components/SessionCard.svelte";
   import Icon from "../components/Icon.svelte";
+  import EventDialog from "../components/EventDialog.svelte";
 
   let {
     version = 0,
@@ -52,6 +53,8 @@
       .catch(() => (activities = []));
   });
 
+  let declaring = $state(false);
+
   function fail(e: unknown) {
     error = e;
     report?.(e);
@@ -68,9 +71,26 @@
     {/if}
     <h1>Programme</h1>
   </div>
+  {#if plan?.goal?.plan_accepted}
+    <button onclick={() => (declaring = true)}>Signaler un imprévu</button>
+  {/if}
 </header>
 
 <ErrorBanner {error} onpin={load} />
+
+{#if declaring && plan?.goal}
+  <EventDialog
+    goal={plan.goal}
+    weeks={plan.weeks}
+    sessions={openSessions(plan.weeks, today)}
+    {today}
+    onclose={() => (declaring = false)}
+    onproposal={() => {
+      declaring = false;
+      location.hash = "#/proposal";
+    }}
+  />
+{/if}
 
 {#if plan}
   {#if !plan.goal}

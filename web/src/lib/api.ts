@@ -177,7 +177,35 @@ export type HistoryState = {
 };
 
 export type Week = { week_index: number; week_monday: string; sessions: Session[] };
-export type Plan = { goal: Goal | null; weeks: Week[] };
+export type EventKind = "unavailable" | "injury" | "light_week" | "fatigue";
+
+/** Imprévu déclaré (GET /api/goals/{id}/events). */
+export type CoachEvent = {
+  id: number;
+  kind: EventKind;
+  start_date: string;
+  end_date: string | null;
+  max_sessions: number | null;
+  days: string[] | null;
+  session_id: number | null;
+  note: string | null;
+};
+
+/** Corps de POST /api/goals/{id}/events. */
+export type EventInput = {
+  kind: EventKind;
+  start_date?: string;
+  end_date?: string;
+  max_sessions?: number;
+  days?: string[];
+  session_id?: number;
+  note?: string;
+};
+
+/** L'imprévu est enregistré même si Claude échoue : `proposal_id` est alors nul et `error` renseigné. */
+export type EventResult = { event_id: number; proposal_id: number | null; error: string | null };
+
+export type Plan = { goal: Goal | null; weeks: Week[]; open_injury?: CoachEvent | null };
 
 export type Status = {
   garmin: "ok" | "auth_required" | "unavailable";
@@ -470,5 +498,10 @@ export const api = {
   statsRecords: () => get<{ records: PersonalRecord[] }>("/stats/records"),
   saveRace: (activityId: number, race: Partial<RaceInfo>) => request<StatActivity>("PUT", `/races/${activityId}`, race),
   removeRace: (activityId: number) => del<{ status: string }>(`/races/${activityId}`),
+  createEvent: (goalId: number, body: EventInput) => post<EventResult>(`/goals/${goalId}/events`, body),
+  requestAdjustment: (goalId: number) => post<{ proposal_id: number }>(`/goals/${goalId}/adjust`),
+  events: (goalId: number) => get<CoachEvent[]>(`/goals/${goalId}/events`),
+  deleteEvent: (id: number) => del<{ status: string }>(`/events/${id}`),
+  resumeInjury: (id: number, date: string) => post<EventResult>(`/events/${id}/resume`, { date }),
   importHistory: () => post<{ status: string }>("/history/import"),
 };

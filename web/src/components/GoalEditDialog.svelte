@@ -3,6 +3,8 @@
   import { api, type Goal } from "../lib/api";
   import { addDays, todayIso } from "../lib/dates";
   import { fmtTargetTime, parseTargetTime } from "../lib/race";
+  import { WEEKDAYS } from "../lib/dates";
+  import AvailabilityFields, { availabilityValid } from "./AvailabilityFields.svelte";
   import ErrorBanner from "./ErrorBanner.svelte";
 
   let {
@@ -16,6 +18,10 @@
   const initialTime = untrack(() => (goal.target_time_s != null ? fmtTargetTime(goal.target_time_s) : ""));
   let date = $state(untrack(() => goal.race_date));
   let time = $state(initialTime);
+  const initialDays = untrack(() => goal.available_days ?? [...WEEKDAYS]);
+  const initialLongRun = untrack(() => goal.long_run_day ?? "");
+  let days = $state([...initialDays]);
+  let longRunDay = $state(initialLongRun);
   let busy = $state(false);
   let error = $state<unknown>(null);
 
@@ -24,15 +30,22 @@
   const timeChanged = $derived(time.trim() !== initialTime);
   const timeInvalid = $derived(timeChanged && !Number.isFinite(parseTargetTime(time)));
   const dateChanged = $derived(date !== goal.race_date);
-  const canSave = $derived(!busy && !!date && (dateChanged || timeChanged) && !timeInvalid);
+  const daysChanged = $derived(days.length !== initialDays.length || days.some((d) => !initialDays.includes(d)));
+  const longRunChanged = $derived(longRunDay !== initialLongRun);
+  const daysOk = $derived(availabilityValid(days, goal.sessions_per_week));
+  const canSave = $derived(
+    !busy && !!date && (dateChanged || timeChanged || daysChanged || longRunChanged) && !timeInvalid && daysOk,
+  );
 
   async function submit() {
     busy = true;
     error = null;
     try {
-      const body: { race_date?: string; target_time?: string } = {};
+      const body: { race_date?: string; target_time?: string; available_days?: string[]; long_run_day?: string } = {};
       if (dateChanged) body.race_date = date;
       if (timeChanged) body.target_time = time.trim();
+      if (daysChanged) body.available_days = days;
+      if (longRunChanged) body.long_run_day = longRunDay; // "" = retirer le jour
       const r = await api.updateGoal(goal.id, body);
       onsaved?.(r.proposal_id);
     } catch (e) {
@@ -55,6 +68,7 @@
       <input type="text" inputmode="numeric" placeholder="1:50" bind:value={time} aria-invalid={timeInvalid} />
     </label>
     {#if timeInvalid}<span class="hint" role="alert">Temps visé invalide : format attendu h:mm, ex. 1:50</span>{/if}
+    <AvailabilityFields bind:days bind:longRunDay perWeek={goal.sessions_per_week} />
     <p class="meta">Pour changer la distance ou le type de course, crée un nouvel objectif.</p>
     {#if busy}<p class="meta" role="status">Claude ajuste ton plan… (cela peut prendre une minute)</p>{/if}
     <ErrorBanner {error} />

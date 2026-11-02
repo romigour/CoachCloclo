@@ -71,6 +71,8 @@ export type Goal = {
   gpx_summary: Record<string, unknown> | null;
   target_time_s: number | null;
   target_source: "user" | "claude" | null;
+  available_days: string[];
+  long_run_day: string | null;
 };
 
 export type Activity = {
@@ -338,6 +340,8 @@ export type GoalInput = {
   sessions_per_week: number;
   target_time?: string;
   gpx?: File | null;
+  available_days?: string[];
+  long_run_day?: string;
 };
 
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
@@ -429,9 +433,14 @@ export const api = {
     f.set("sessions_per_week", String(g.sessions_per_week));
     if (g.target_time) f.set("target_time", g.target_time);
     if (g.gpx) f.set("gpx", g.gpx);
+    if (g.available_days) f.set("available_days", g.available_days.join(","));
+    if (g.long_run_day) f.set("long_run_day", g.long_run_day);
     return post<Goal>("/goals", f);
   },
-  updateGoal: (goalId: number, body: { race_date?: string; target_time?: string }) =>
+  updateGoal: (
+    goalId: number,
+    body: { race_date?: string; target_time?: string; available_days?: string[]; long_run_day?: string },
+  ) =>
     patch<{ goal: Goal; proposal_id: number }>(`/goals/${goalId}`, body),
   generate: (goalId: number) => post<{ summary: string; weeks: number }>(`/goals/${goalId}/generate`),
   accept: (goalId: number) => post<{ status: string }>(`/goals/${goalId}/accept`),

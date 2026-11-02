@@ -487,6 +487,17 @@ def test_free_activities_of_last_days(make_client, repo):
     assert client.get("/api/activities/free?days=0").status_code == 422
 
 
+def test_free_activities_of_bike_sport(make_client, repo):
+    from datetime import date
+
+    client = make_client()
+    ride = repo.add(Activity(garmin_activity_id=31, date=date.today(), type_key="road_biking", duration_s=3600.0))
+    repo.add(Activity(garmin_activity_id=32, date=date.today(), type_key="running"))
+    assert [r["id"] for r in client.get("/api/activities/free?days=7&sport=bike").json()] == [ride.id]
+    assert [r["type_key"] for r in client.get("/api/activities/free?days=7").json()] == ["running"]
+    assert client.get("/api/activities/free?days=7&sport=swim").status_code == 422
+
+
 def test_activities_respects_host_and_pin(make_client):
     client = make_client()
     assert client.get("/api/activities?week=1", headers={"Host": "evil.example"}).status_code == 400

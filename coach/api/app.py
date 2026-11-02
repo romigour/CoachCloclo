@@ -19,7 +19,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, ValidationError, model_validator
 from sqlmodel import select
 
-from coach.analysis.compliance import RUNNING_TYPES
+from coach.analysis.compliance import activity_types_for
 from coach.analysis.gpx import GpxError
 from coach.api.desktop_routes import desktop_router
 from coach.api.deps import get_garmin, get_llm, is_loopback, verify_pin
@@ -594,10 +594,13 @@ def create_app(
         return [_activity_row(a) for a in repo.activities_since(monday) if a.date <= sunday]
 
     @api.get("/activities/free")
-    def get_free_activities(days: Annotated[int, Query(ge=1, le=90)], repo: RepoDep):
-        """Courses des `days` derniers jours rattachées à aucune séance, la plus récente d'abord."""
+    def get_free_activities(
+        days: Annotated[int, Query(ge=1, le=90)], repo: RepoDep, sport: Literal["run", "bike"] = "run"
+    ):
+        """Activités du `sport` (course par défaut) des `days` derniers jours, rattachées à aucune séance."""
         since = date.today() - timedelta(days=days)
-        free = [a for a in repo.activities_since(since) if a.session_id is None and a.type_key in RUNNING_TYPES]
+        types = activity_types_for(sport)
+        free = [a for a in repo.activities_since(since) if a.session_id is None and a.type_key in types]
         return [_activity_row(a) for a in reversed(free)]
 
     @api.post("/activities/{activity_id}/match")

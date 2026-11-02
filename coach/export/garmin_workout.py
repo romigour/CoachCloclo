@@ -12,6 +12,7 @@ from coach.llm.schemas import RepeatSpec, SessionSpec, StepSpec
 _PACE_ZONES = frozenset(get_args(PaceZoneName))
 
 _SPORT_RUNNING = {"sportTypeId": 1, "sportTypeKey": "running"}
+_SPORT_CYCLING = {"sportTypeId": 2, "sportTypeKey": "cycling"}
 _STEP_TYPES = {
     "warmup": {"stepTypeId": 1, "stepTypeKey": "warmup"},
     "cooldown": {"stepTypeId": 2, "stepTypeKey": "cooldown"},
@@ -128,13 +129,14 @@ def session_to_workout_json(session: SessionSpec, zones: Zones, *, name: str) ->
             }
         return _step(node.item, node.order, zones)
 
+    sport = _SPORT_CYCLING if session.sport == "bike" else _SPORT_RUNNING
     return {
         "workoutName": name,
-        "sportType": dict(_SPORT_RUNNING),
+        "sportType": dict(sport),
         "workoutSegments": [
             {
                 "segmentOrder": 1,
-                "sportType": dict(_SPORT_RUNNING),
+                "sportType": dict(sport),
                 "workoutSteps": [convert(n) for n in _number_steps(session.steps)],
             }
         ],

@@ -10,7 +10,7 @@ from coach.analysis.zones import Zones
 from coach.llm.schemas import AdjustmentResponse, PlanResponse, Weekday
 from coach.plan.calendar import week_of
 from coach.plan.constraints import PlanConstraints
-from coach.plan.models import Activity, Goal, Session
+from coach.plan.models import Activity, Event, Goal, Session
 
 HISTORY_WEEKS = 8
 HISTORY_MAX_LINES = 60
@@ -195,6 +195,47 @@ def _availability_text(c: PlanConstraints) -> str:
     return text + " Ne place aucune séance un autre jour."
 
 
+def _fmt_date(d: dt.date) -> str:
+    return d.strftime("%d/%m/%Y")
+
+
+FATIGUE_DAYS = 14  # une fatigue signalée plus tôt n'est plus d'actualité
+
+
+def _event_line(e: Event, c: PlanConstraints) -> str:
+    note = f" : {e.note}" if e.note else ""
+    if e.kind == "unavailable":
+        return f"- indisponible du {_fmt_date(e.start_date)} au {_fmt_date(e.end_date)}{note}"
+    if e.kind == "injury":
+        if e.end_date is None:
+            return f"- blessure/maladie depuis le {_fmt_date(e.start_date)} (reprise non connue){note}"
+        return f"- blessure/maladie du {_fmt_date(e.start_date)} au {_fmt_date(e.end_date)}{note}"
+    if e.kind == "light_week":
+        if c.plan_start is not None:
+            label = f"semaine {(e.start_date - c.plan_start).days // 7 + 1}"
+        else:
+            label = f"semaine du {_fmt_date(e.start_date)}"
+        text = f"- semaine allégée ({label}) : {e.max_sessions} séance{'s' if (e.max_sessions or 0) > 1 else ''} au plus"
+        if e.days() is not None:
+            text += f", jours possibles {', '.join(e.days())}"
+        return text + note
+    return f"- fatigue signalée le {_fmt_date(e.start_date)}{note}"
+
+
+def _events_text(c: PlanConstraints) -> str | None:
+    """Imprévus en cours ou à venir et fatigues récentes, par date de début ; None s'il n'y en a pas."""
+
+    def relevant(e: Event) -> bool:
+        if e.kind == "fatigue":
+            return 0 <= (c.today - e.start_date).days <= FATIGUE_DAYS
+        return e.end_date is None or e.end_date >= c.today
+
+    events = sorted((e for e in c.events if relevant(e)), key=lambda e: e.start_date)
+    if not events:
+        return None
+    return "Imprévus :\n" + "\n".join(_event_line(e, c) for e in events)
+
+
 def _today_text(goal: Goal, today: dt.date) -> str:
     """« Aujourd'hui : mercredi 4 novembre 2026 (semaine 1). »"""
     week = week_of(goal, today)
@@ -251,6 +292,7 @@ def build_generation_prompt(
     parts = [
         _goal_text(goal, generation=True) + (" " + _today_text(goal, today) if today is not None else ""),
         *([_availability_text(constraints)] if constraints is not None else []),
+        *([t] if constraints is not None and (t := _events_text(constraints)) else []),
         f"Construis un plan de {n_weeks} semaines, avec au plus {goal.sessions_per_week} séances "
         f"par semaine ({goal.sessions_per_week} séances). Aujourd'hui correspond à la semaine 1 ; "
         f"la dernière semaine se termine à la course. Numérote les semaines de 1 à {n_weeks} "
@@ -317,6 +359,7 @@ def build_adjustment_prompt(
         _goal_text(goal),
         *([change_note] if change_note else []),
         *([_availability_text(constraints)] if constraints is not None else []),
+        *([t] if constraints is not None and (t := _events_text(constraints)) else []),
         f"Nous sommes en semaine {current_week} du plan, à raison de {goal.sessions_per_week} séances "
         "maximum par semaine. Analyse les séances réalisées et manquées, puis propose des ajustements "
         "pour les séances à venir (liste vide si aucun changement n'est utile).",

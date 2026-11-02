@@ -7,6 +7,7 @@ from coach.garmin.port import LapSummary
 from coach.llm.prompts import SYSTEM_PROMPT, build_adjustment_prompt, build_generation_prompt, race_text
 from coach.llm.schemas import RepeatSpec, StepSpec
 from coach.plan.constraints import PlanConstraints
+from coach.plan.models import Event
 from tests.llm.factories import make_session
 from tests.plan.factories import make_activity, make_db_session, make_goal
 
@@ -297,3 +298,63 @@ def test_availability_block_omits_long_run_when_unset():
     c = PlanConstraints(available_days=("mardi", "jeudi"), long_run_day=None, today=date(2026, 11, 2))
     p = build_generation_prompt(make_goal(), ZONES, [], n_weeks=14, gpx_text=None, constraints=c)
     assert "Jours possibles : mardi, jeudi." in p and "Sortie longue" not in p
+
+
+def _events_prompt(*events, today=date(2026, 11, 2)):
+    c = PlanConstraints(
+        available_days=("mardi", "samedi"), long_run_day=None, today=today,
+        events=tuple(events), plan_start=date(2026, 10, 19),
+    )
+    return build_generation_prompt(make_goal(), ZONES, [], n_weeks=14, gpx_text=None, constraints=c)
+
+
+def test_events_block_formats_each_kind():
+    p = _events_prompt(
+        Event(goal_id=1, kind="unavailable", start_date=date(2026, 11, 5), end_date=date(2026, 11, 12), note="voyage"),
+        Event(goal_id=1, kind="injury", start_date=date(2026, 11, 3), note="genou"),
+        Event(
+            goal_id=1, kind="light_week", start_date=date(2026, 11, 2), end_date=date(2026, 11, 8),
+            max_sessions=2, days_json='["mardi", "samedi"]',
+        ),
+        Event(goal_id=1, kind="fatigue", start_date=date(2026, 11, 2), note="jambes lourdes"),
+    )
+    assert "Imprévus :" in p
+    assert "- indisponible du 05/11/2026 au 12/11/2026 : voyage" in p
+    assert "- blessure/maladie depuis le 03/11/2026 (reprise non connue) : genou" in p
+    assert "- semaine allégée (semaine 3) : 2 séances au plus, jours possibles mardi, samedi" in p
+    assert "- fatigue signalée le 02/11/2026 : jambes lourdes" in p
+    # après les disponibilités, ordre chronologique
+    assert p.index("Disponibilités") < p.index("Imprévus :")
+    assert p.index("fatigue signalée") < p.index("blessure/maladie") < p.index("indisponible du")
+
+
+def test_events_block_omits_optional_parts():
+    p = _events_prompt(
+        Event(goal_id=1, kind="unavailable", start_date=date(2026, 11, 5), end_date=date(2026, 11, 12)),
+        Event(goal_id=1, kind="light_week", start_date=date(2026, 11, 2), end_date=date(2026, 11, 8), max_sessions=1),
+    )
+    assert "- indisponible du 05/11/2026 au 12/11/2026" + "\n" in p + "\n"
+    assert "- semaine allégée (semaine 3) : 1 séance au plus" in p
+    assert "jours possibles" not in p.split("Imprévus :")[1].split("\n\n")[0]
+
+
+def test_events_block_excludes_past_and_old_fatigue():
+    p = _events_prompt(
+        Event(goal_id=1, kind="unavailable", start_date=date(2026, 10, 20), end_date=date(2026, 10, 25), note="passé"),
+        Event(goal_id=1, kind="fatigue", start_date=date(2026, 10, 10), note="ancienne"),
+    )
+    assert "Imprévus" not in p
+
+
+def test_events_block_keeps_fatigue_within_14_days():
+    p = _events_prompt(Event(goal_id=1, kind="fatigue", start_date=date(2026, 10, 19), note="limite"))
+    assert "- fatigue signalée le 19/10/2026 : limite" in p
+
+
+def test_adjustment_prompt_includes_events_block():
+    c = PlanConstraints(
+        available_days=("mardi",), long_run_day=None, today=date(2026, 11, 2),
+        events=(Event(goal_id=1, kind="injury", start_date=date(2026, 11, 3)),),
+    )
+    p = build_adjustment_prompt(make_goal(), ZONES, 1, [], [], [], [], constraints=c)
+    assert "- blessure/maladie depuis le 03/11/2026 (reprise non connue)" in p

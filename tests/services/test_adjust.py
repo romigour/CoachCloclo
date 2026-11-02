@@ -6,7 +6,7 @@ from sqlmodel import select
 from coach.analysis.zones import compute_zones
 from coach.llm.provider import FakeLLMProvider, LLMInvalidResponse
 from coach.llm.schemas import AdjustmentResponse
-from coach.plan.models import Proposal
+from coach.plan.models import Event, Proposal
 from coach.services.adjust import ask_adjustment, save_proposal
 from tests.services.test_sync import METRICS, accepted_plan, adjustment_json, fake_garmin  # noqa: F401
 
@@ -55,3 +55,19 @@ def test_ask_adjustment_uses_received_goal_constraints(repo, coach_home, fake_ga
         ask_adjustment(repo, fake_garmin, llm, edited, _zones(), repo.sessions(accepted_plan.id), TODAY)
     assert "Jours possibles : jeudi, samedi, dimanche" in llm.calls[0]
     assert "n'est pas un jour possible" in llm.calls[1]
+
+
+def test_ask_adjustment_retries_when_session_falls_in_stored_unavailability(
+    repo, coach_home, fake_garmin, accepted_plan
+):
+    """Les imprévus enregistrés en base sont transmis à Claude et contrôlés (séances de la semaine 2 gardées)."""
+    repo.add(Event(
+        goal_id=accepted_plan.id, kind="unavailable", start_date=date(2026, 11, 9), end_date=date(2026, 11, 15),
+    ))
+    llm = FakeLLMProvider([adjustment_json(), adjustment_json()])
+    with pytest.raises(LLMInvalidResponse):
+        ask_adjustment(
+            repo, fake_garmin, llm, accepted_plan, _zones(), repo.sessions(accepted_plan.id), TODAY,
+        )
+    assert "- indisponible du 09/11/2026 au 15/11/2026" in llm.calls[0]
+    assert "tombe pendant indisponibilité du 09/11 au 15/11" in llm.calls[1]

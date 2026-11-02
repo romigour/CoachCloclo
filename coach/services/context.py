@@ -45,8 +45,9 @@ def refresh_snapshot(repo: Repo, garmin: GarminPort) -> tuple[AthleteSnapshot, Z
 
 
 def load_constraints(repo: Repo, goal: Goal, today: date) -> PlanConstraints:
-    """Contraintes de disponibilité de l'objectif (les imprévus seront lus ici par la tâche 9)."""
-    return PlanConstraints.of(goal, today)
+    """Contraintes de disponibilité de l'objectif, imprévus enregistrés compris."""
+    events = repo.events(goal.id) if goal.id is not None else []
+    return PlanConstraints.of(goal, today, events)
 
 
 def recent_history(garmin: GarminPort) -> list[Activity]:

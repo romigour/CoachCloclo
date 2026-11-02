@@ -8,11 +8,11 @@ afterEach(() => vi.unstubAllGlobals());
 const goal: Goal = {
   id: 3, type: "route", distance_km: 21.1, d_plus_m: 0, race_date: "2026-12-06", sessions_per_week: 3,
   plan_start: "2026-10-26", plan_accepted: true, gpx_summary: null, target_time_s: null, target_source: null,
-  available_days: ["lundi", "mercredi", "samedi"], long_run_day: null,
+  available_days: ["lundi", "mercredi", "samedi"], long_run_day: null, include_bike: false,
 };
 const session = (id: number, title: string): Session => ({
   id, order: id, type: "EF", title, description: "", target_kind: "pace", status: "todo", suggested_day: "mercredi",
-  scheduled_date: null, chaining_note: null, sync_error: null, steps: [],
+  sport: "run", scheduled_date: null, chaining_note: null, sync_error: null, steps: [],
 });
 const sessions = [session(7, "Endurance 50 min"), session(8, "Seuil 3 × 10 min")];
 const weeks: Week[] = [

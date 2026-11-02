@@ -11,8 +11,9 @@
   let {
     days = $bindable(),
     longRunDay = $bindable(),
+    includeBike = $bindable(false),
     perWeek,
-  }: { days: string[]; longRunDay: string; perWeek: number } = $props();
+  }: { days: string[]; longRunDay: string; includeBike?: boolean; perWeek: number } = $props();
 
   const cap = (d: string) => d.charAt(0).toUpperCase() + d.slice(1);
 
@@ -46,6 +47,11 @@
       <option value={d}>{cap(d)}</option>
     {/each}
   </select>
+</label>
+
+<label class="day">
+  <input type="checkbox" bind:checked={includeBike} />
+  <span>Inclure du vélo (endurance douce, en remplacement de séances faciles)</span>
 </label>
 
 <style>

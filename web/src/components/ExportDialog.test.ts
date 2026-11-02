@@ -5,7 +5,7 @@ import type { Session } from "../lib/api";
 
 const session: Session = {
   id: 7, order: 1, type: "seuil", title: "Seuil 3x10", description: "", target_kind: "pace",
-  status: "todo", suggested_day: "jeudi", scheduled_date: null, chaining_note: null, steps: [], sync_error: null,
+  status: "todo", suggested_day: "jeudi", sport: "run", scheduled_date: null, chaining_note: null, steps: [], sync_error: null,
 };
 
 const calls: { url: string; method: string; body?: string; headers?: Record<string, string> }[] = [];

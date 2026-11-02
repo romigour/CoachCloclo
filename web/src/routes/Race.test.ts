@@ -10,6 +10,7 @@ afterEach(() => vi.unstubAllGlobals());
 const goal: Goal = {
   id: 7, type: "route", distance_km: 10, d_plus_m: 0, race_date: "2026-12-06", sessions_per_week: 3,
   plan_start: "2026-10-26", plan_accepted: true, gpx_summary: null, target_time_s: null, target_source: null,
+  available_days: ["lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche"], long_run_day: null, include_bike: false,
 };
 
 const segments: RaceSegment[] = Array.from({ length: 10 }, (_, i) => ({

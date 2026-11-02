@@ -26,6 +26,7 @@
   let perWeek = $state(4);
   let days = $state<string[]>([...WEEKDAYS]);
   let longRunDay = $state("");
+  let includeBike = $state(false);
   let gpx = $state<File | null>(null);
   let targetMode = $state<"claude" | "user">("claude");
   const daysOk = $derived(availabilityValid(days, perWeek));
@@ -94,6 +95,7 @@
         gpx,
         available_days: days,
         long_run_day: longRunDay || undefined,
+        include_bike: includeBike,
       });
       await generate(goal);
     } catch (err) {
@@ -239,7 +241,7 @@
         </div>
       </fieldset>
 
-      <AvailabilityFields bind:days bind:longRunDay {perWeek} />
+      <AvailabilityFields bind:days bind:longRunDay bind:includeBike {perWeek} />
 
       <fieldset>
         <legend>Temps visé</legend>

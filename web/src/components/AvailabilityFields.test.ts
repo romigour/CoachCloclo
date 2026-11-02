@@ -33,3 +33,11 @@ test("availabilityValid compares days with sessions per week", () => {
   expect(availabilityValid(["lundi", "mardi"], 3)).toBe(false);
   expect(availabilityValid(["lundi", "mardi", "jeudi"], 3)).toBe(true);
 });
+
+test("the bike checkbox is unchecked by default and toggles includeBike", async () => {
+  open();
+  const box = screen.getByRole("checkbox", { name: /Inclure du vélo/ }) as HTMLInputElement;
+  expect(box.checked).toBe(false);
+  await fireEvent.click(box);
+  expect(box.checked).toBe(true);
+});

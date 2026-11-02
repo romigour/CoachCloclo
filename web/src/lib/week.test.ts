@@ -4,7 +4,7 @@ import type { Session, Week } from "./api";
 
 const s = (id: number, suggested_day: Session["suggested_day"], extra: Partial<Session> = {}): Session => ({
   id, order: id, type: "EF", title: `S${id}`, description: "", target_kind: "pace", status: "todo",
-  suggested_day, scheduled_date: null, chaining_note: null, steps: [], sync_error: null, ...extra,
+  suggested_day, sport: "run", scheduled_date: null, chaining_note: null, steps: [], sync_error: null, ...extra,
 });
 
 const week = (idx: number, monday: string, sessions: Session[]): Week => ({ week_index: idx, week_monday: monday, sessions });

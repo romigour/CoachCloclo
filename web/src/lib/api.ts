@@ -53,6 +53,7 @@ export type Session = {
   target_kind: "pace" | "hr";
   status: SessionStatus;
   suggested_day: Weekday;
+  sport: "run" | "bike";
   scheduled_date: string | null;
   chaining_note: string | null;
   steps: (Step | StepGroup)[];
@@ -73,6 +74,7 @@ export type Goal = {
   target_source: "user" | "claude" | null;
   available_days: string[];
   long_run_day: string | null;
+  include_bike: boolean;
 };
 
 export type Activity = {
@@ -370,6 +372,7 @@ export type GoalInput = {
   gpx?: File | null;
   available_days?: string[];
   long_run_day?: string;
+  include_bike?: boolean;
 };
 
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
@@ -463,11 +466,12 @@ export const api = {
     if (g.gpx) f.set("gpx", g.gpx);
     if (g.available_days) f.set("available_days", g.available_days.join(","));
     if (g.long_run_day) f.set("long_run_day", g.long_run_day);
+    if (g.include_bike) f.set("include_bike", "true");
     return post<Goal>("/goals", f);
   },
   updateGoal: (
     goalId: number,
-    body: { race_date?: string; target_time?: string; available_days?: string[]; long_run_day?: string },
+    body: { race_date?: string; target_time?: string; available_days?: string[]; long_run_day?: string; include_bike?: boolean },
   ) =>
     patch<{ goal: Goal; proposal_id: number }>(`/goals/${goalId}`, body),
   generate: (goalId: number) => post<{ summary: string; weeks: number }>(`/goals/${goalId}/generate`),
@@ -487,7 +491,8 @@ export const api = {
   activities: (week: number) => get<Activity[]>(`/activities?week=${week}`),
   zones: () => get<Zones | null>("/zones"),
   comparison: (sessionId: number) => get<Comparison>(`/sessions/${sessionId}/comparison`),
-  freeActivities: (days: number) => get<Activity[]>(`/activities/free?days=${days}`),
+  freeActivities: (days: number, sport: "run" | "bike" = "run") =>
+    get<Activity[]>(`/activities/free?days=${days}&sport=${sport}`),
   match: (activityId: number, sessionId: number | null) =>
     post<{ status: string }>(`/activities/${activityId}/match`, { session_id: sessionId }),
   sync: () => post<Record<string, unknown>>("/sync"),

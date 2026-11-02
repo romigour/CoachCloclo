@@ -8,6 +8,7 @@
   import { fmtClock } from "../lib/stats/format";
   import { formatSteps } from "../lib/steps";
   import { currentZones } from "../lib/zones.svelte";
+  import Icon from "./Icon.svelte";
   import ExportDialog from "./ExportDialog.svelte";
   import IntensityProfile from "./IntensityProfile.svelte";
 
@@ -78,7 +79,7 @@
     if (!correcting) return;
     candidates = null;
     try {
-      const free = await api.freeActivities(FREE_DAYS);
+      const free = await api.freeActivities(FREE_DAYS, session.sport);
       candidates = matched ? [matched, ...free] : free;
     } catch (e) {
       correcting = false;
@@ -128,7 +129,10 @@
 
 <article class="session stack">
   <div class="row spread">
-    <span class="chip">{TYPE_LABEL[session.type] ?? session.type}</span>
+    <span class="row tight">
+      <span class="chip">{TYPE_LABEL[session.type] ?? session.type}</span>
+      {#if session.sport === "bike"}<span class="chip"><Icon name="bike" size={14} /> Vélo</span>{/if}
+    </span>
     {#if !readonly}
       <span class="pill {session.status}">{STATUS_LABEL[session.status]}</span>
     {/if}

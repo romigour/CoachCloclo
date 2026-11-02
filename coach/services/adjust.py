@@ -7,6 +7,7 @@ from sqlmodel import Session as DbSession, select
 
 from coach.analysis.laps import StepComparison
 from coach.analysis.zones import Zones
+from coach.config import load_settings, save_settings
 from coach.garmin.port import GarminPort
 from coach.llm.client import ask_structured
 from coach.llm.prompts import SYSTEM_PROMPT, build_adjustment_prompt
@@ -16,7 +17,7 @@ from coach.plan.calendar import n_weeks, week_of
 from coach.plan.constraints import constraint_errors, planned_after_adjustment
 from coach.plan.models import Activity, Goal, Proposal, Session
 from coach.plan.repo import Repo
-from coach.services.context import load_constraints, recent_history
+from coach.services.context import load_constraints, recent_history, refresh_snapshot
 from coach.services.laps import session_comparison
 from coach.services.race_strategy import race_line_for_prompt
 
@@ -93,3 +94,27 @@ def save_proposal(db: DbSession, adj: AdjustmentResponse) -> int:
     db.add(proposal)
     db.flush()
     return proposal.id
+
+
+def request_adjustment(
+    repo: Repo, garmin: GarminPort, llm: LLMProvider, goal_id: int, note: str | None = None
+) -> int:
+    """Demande un ajustement à Claude, l'enregistre en proposition et renvoie son id.
+
+    Les imprévus enregistrés sont transmis par `ask_adjustment` ; `note` décrit ce qui vient de changer.
+    """
+    from coach.services.plans import GoalError, _get_goal  # import tardif : plans importe ce module
+
+    goal = _get_goal(repo, goal_id)
+    if not goal.plan_accepted:
+        raise GoalError("Le plan de l'objectif doit être validé")
+    _, zones = refresh_snapshot(repo, garmin)
+    adj = ask_adjustment(
+        repo, garmin, llm, goal, zones, repo.sessions(goal_id), garmin.today(), change_note=note
+    )
+    with repo.transaction() as db:
+        proposal_id = save_proposal(db, adj)
+    settings = load_settings()
+    settings.proposal_due = False
+    save_settings(settings)
+    return proposal_id

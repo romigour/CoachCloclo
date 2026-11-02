@@ -6,12 +6,15 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from coach.garmin.port import GarminPort
+from coach.llm.provider import LLMError, LLMProvider
 from coach.llm.schemas import Weekday
 from coach.plan import calendar
-from coach.plan.models import Event, Goal
+from coach.plan.models import Event, Goal, Session
 from coach.plan.repo import Repo
 from coach.services import CoachError
-from coach.services.plans import normalize_days
+from coach.services.adjust import request_adjustment
+from coach.services.plans import _get_goal, normalize_days
 
 
 class EventError(CoachError):
@@ -87,3 +90,97 @@ def build_event(repo: Repo, goal: Goal, data: EventInput, today: date) -> Event:
         session_id=session_id,
         note=data.note,
     )
+
+
+class EventResult(BaseModel):
+    event_id: int
+    proposal_id: int | None
+    error: str | None
+
+
+_DEFAULT_ERROR = "Claude n'a pas pu proposer d'ajustement, réessaie"
+
+
+def _fmt(d: date) -> str:
+    return d.strftime("%d/%m/%Y")
+
+
+def event_note(event: Event) -> str:
+    """Description française de l'imprévu, transmise à Claude comme `change_note`."""
+    extra = f" ({event.note})" if event.note else ""
+    if event.kind == "unavailable":
+        text = f"indisponible du {_fmt(event.start_date)} au {_fmt(event.end_date)}"
+    elif event.kind == "injury":
+        text = (
+            f"blessure : arrêt depuis le {_fmt(event.start_date)}"
+            if event.end_date is None
+            else f"blessure : arrêt du {_fmt(event.start_date)} au {_fmt(event.end_date)}"
+        )
+    elif event.kind == "light_week":
+        days = event.days()
+        text = f"semaine allégée du {_fmt(event.start_date)} : {event.max_sessions} séance(s) au maximum"
+        if days:
+            text += f", jours possibles : {', '.join(days)}"
+    else:
+        text = "fatigue signalée aujourd'hui" + (", une séance a été ratée" if event.session_id else "")
+    return f"L'athlète signale un imprévu : {text}{extra}. Adapte les séances à venir en conséquence."
+
+
+def _ask(repo: Repo, garmin: GarminPort, llm: LLMProvider, event_id: int, goal_id: int, note: str) -> EventResult:
+    """Demande l'ajustement ; un échec de Claude laisse l'imprévu enregistré."""
+    try:
+        proposal_id = request_adjustment(repo, garmin, llm, goal_id, note)
+    except LLMError as e:
+        return EventResult(event_id=event_id, proposal_id=None, error=str(e) or _DEFAULT_ERROR)
+    return EventResult(event_id=event_id, proposal_id=proposal_id, error=None)
+
+
+def create_event(repo: Repo, garmin: GarminPort, llm: LLMProvider, goal_id: int, data: EventInput) -> EventResult:
+    """Enregistre l'imprévu puis demande l'ajustement à Claude."""
+    goal = _get_goal(repo, goal_id)
+    if not goal.plan_accepted:
+        raise EventError("Le plan de l'objectif doit être validé")
+    event = build_event(repo, goal, data, garmin.today())
+    with repo.transaction() as db:
+        if event.session_id is not None:  # fatigue : la séance ratée n'est plus à faire
+            s = db.get(Session, event.session_id)
+            if s is not None and s.status in ("todo", "exported"):
+                s.status = "missed"
+                db.add(s)
+        db.add(event)
+        db.flush()
+        event_id = event.id
+    return _ask(repo, garmin, llm, event_id, goal_id, event_note(event))
+
+
+def delete_event(repo: Repo, event_id: int) -> None:
+    """Supprime l'imprévu ; aucun ajustement (le front propose de recalculer le plan)."""
+    with repo.transaction() as db:
+        event = db.get(Event, event_id)
+        if event is None:
+            raise EventError("Imprévu introuvable")
+        db.delete(event)
+
+
+def resume_injury(
+    repo: Repo, garmin: GarminPort, llm: LLMProvider, event_id: int, resume_date: date
+) -> EventResult:
+    """Clôt un arrêt ouvert et demande une reprise progressive à Claude."""
+    with repo.transaction() as db:
+        event = db.get(Event, event_id)
+        if event is None:
+            raise EventError("Imprévu introuvable")
+        if event.kind != "injury" or event.end_date is not None:
+            raise EventError("Cet imprévu n'est pas un arrêt en cours")
+        if resume_date < event.start_date:
+            raise EventError("La reprise doit être après le début de l'arrêt")
+        event.end_date = max(resume_date - timedelta(days=1), event.start_date)
+        days = (resume_date - event.start_date).days
+        goal_id, reason = event.goal_id, event.note
+        db.add(event)
+    detail = f" ({reason})" if reason else ""
+    note = (
+        f"Reprise après {days} jours d'arrêt{detail} : "
+        "reprise progressive, volume et intensité réduits les premières semaines."
+    )
+    return _ask(repo, garmin, llm, event_id, goal_id, note)

@@ -3,10 +3,24 @@ from datetime import date
 import pytest
 from pydantic import ValidationError
 
-from coach.plan.models import Event
+from sqlmodel import select
+
+from coach.config import load_settings, save_settings
+from coach.llm.provider import FakeLLMProvider
+from coach.plan.models import Event, Proposal
 from coach.services import CoachError
-from coach.services.events import EventError, EventInput, build_event
+from coach.services.adjust import request_adjustment
+from coach.services.events import (
+    EventError,
+    EventInput,
+    build_event,
+    create_event,
+    delete_event,
+    event_note,
+    resume_injury,
+)
 from tests.plan.factories import make_db_session, make_goal
+from tests.services.test_sync import accepted_plan, adjustment_json, draft_plan, fake_garmin  # noqa: F401
 
 TODAY = date(2026, 11, 3)
 
@@ -162,3 +176,125 @@ def test_input_validation():
         EventInput(kind="nope")
     with pytest.raises(ValidationError):
         EventInput(kind="fatigue", days=["funday"])
+
+
+# --- déclarer, supprimer, reprendre ------------------------------------------------------------
+
+
+def _statuses(repo):
+    with repo.transaction() as db:
+        return {p.id: p.status for p in db.exec(select(Proposal)).all()}
+
+
+def test_create_event_produces_pending_proposal(repo, coach_home, fake_garmin, accepted_plan):
+    llm = FakeLLMProvider([adjustment_json(analysis="Un"), adjustment_json(analysis="Deux")])
+    data = EventInput(kind="unavailable", start_date=date(2026, 11, 16), end_date=date(2026, 11, 18))
+    first = create_event(repo, fake_garmin, llm, accepted_plan.id, data)
+    second = create_event(repo, fake_garmin, llm, accepted_plan.id, data)
+    assert first.error is None and second.error is None
+    assert _statuses(repo) == {first.proposal_id: "stale", second.proposal_id: "pending"}
+    assert "indisponible du 16/11/2026 au 18/11/2026" in llm.calls[0]
+    assert len(repo.events(accepted_plan.id)) == 2
+
+
+def test_create_event_requires_accepted_plan(repo, coach_home, fake_garmin, draft_plan):
+    data = EventInput(kind="unavailable", start_date=date(2026, 11, 16), end_date=date(2026, 11, 18))
+    with pytest.raises(EventError, match="Le plan de l'objectif doit être validé"):
+        create_event(repo, fake_garmin, FakeLLMProvider([]), draft_plan.id, data)
+    assert repo.events(draft_plan.id) == []
+
+
+def test_create_event_keeps_event_when_claude_fails(repo, coach_home, fake_garmin, accepted_plan):
+    data = EventInput(kind="unavailable", start_date=date(2026, 11, 16), end_date=date(2026, 11, 18))
+    result = create_event(repo, fake_garmin, FakeLLMProvider([]), accepted_plan.id, data)
+    assert result.proposal_id is None and result.error
+    assert [e.id for e in repo.events(accepted_plan.id)] == [result.event_id]
+
+
+def test_request_adjustment_after_failure_succeeds(repo, coach_home, fake_garmin, accepted_plan):
+    data = EventInput(kind="unavailable", start_date=date(2026, 11, 16), end_date=date(2026, 11, 18))
+    create_event(repo, fake_garmin, FakeLLMProvider([]), accepted_plan.id, data)
+    settings = load_settings()
+    settings.proposal_due = True
+    save_settings(settings)
+    proposal_id = request_adjustment(repo, fake_garmin, FakeLLMProvider([adjustment_json()]), accepted_plan.id)
+    assert repo.pending_proposal().id == proposal_id
+    assert load_settings().proposal_due is False
+
+
+def test_fatigue_marks_session_missed(repo, coach_home, fake_garmin, accepted_plan):
+    sessions = repo.sessions(accepted_plan.id)
+    exported = next(s for s in sessions if s.status == "exported")
+    todo = next(s for s in sessions if s.status == "todo")
+    llm = FakeLLMProvider([adjustment_json(), adjustment_json()])
+    for s in (exported, todo):
+        create_event(repo, fake_garmin, llm, accepted_plan.id, EventInput(kind="fatigue", session_id=s.id))
+        assert repo.session(s.id).status == "missed"
+    assert "fatigue" in llm.calls[0]
+
+
+def test_fatigue_with_invalid_session_changes_nothing(repo, coach_home, fake_garmin, accepted_plan):
+    data = EventInput(kind="fatigue", session_id=999)
+    with pytest.raises(EventError):
+        create_event(repo, fake_garmin, FakeLLMProvider([]), accepted_plan.id, data)
+    assert repo.events(accepted_plan.id) == []
+
+
+def test_resume_injury_sets_end_and_asks_progressive_return(repo, coach_home, fake_garmin, accepted_plan):
+    injury = repo.add(Event(goal_id=accepted_plan.id, kind="injury", start_date=date(2026, 10, 30), note="genou"))
+    llm = FakeLLMProvider([adjustment_json()])
+    result = resume_injury(repo, fake_garmin, llm, injury.id, date(2026, 11, 2))
+    assert result.proposal_id is not None and result.error is None
+    assert repo.open_injury(accepted_plan.id) is None
+    assert repo.events(accepted_plan.id)[0].end_date == date(2026, 11, 1)
+    assert "Reprise après 3 jours d'arrêt (genou)" in llm.calls[-1]
+    assert "reprise progressive" in llm.calls[-1]
+
+
+def test_resume_injury_same_day_keeps_end_at_start(repo, coach_home, fake_garmin, accepted_plan):
+    injury = repo.add(Event(goal_id=accepted_plan.id, kind="injury", start_date=date(2026, 11, 4)))
+    resume_injury(repo, fake_garmin, FakeLLMProvider([adjustment_json()]), injury.id, date(2026, 11, 4))
+    assert repo.events(accepted_plan.id)[0].end_date == date(2026, 11, 4)
+
+
+def test_resume_injury_rejects_invalid(repo, coach_home, fake_garmin, accepted_plan):
+    injury = repo.add(Event(goal_id=accepted_plan.id, kind="injury", start_date=date(2026, 11, 4)))
+    closed = repo.add(
+        Event(goal_id=accepted_plan.id, kind="injury", start_date=date(2026, 10, 1), end_date=date(2026, 10, 5))
+    )
+    with pytest.raises(EventError, match="La reprise doit être après le début de l'arrêt"):
+        resume_injury(repo, fake_garmin, FakeLLMProvider([]), injury.id, date(2026, 11, 3))
+    with pytest.raises(EventError):
+        resume_injury(repo, fake_garmin, FakeLLMProvider([]), closed.id, date(2026, 11, 3))
+    with pytest.raises(EventError, match="Imprévu introuvable"):
+        resume_injury(repo, fake_garmin, FakeLLMProvider([]), 999, date(2026, 11, 3))
+    assert repo.open_injury(accepted_plan.id).id == injury.id
+
+
+def test_resume_injury_keeps_end_when_claude_fails(repo, coach_home, fake_garmin, accepted_plan):
+    injury = repo.add(Event(goal_id=accepted_plan.id, kind="injury", start_date=date(2026, 11, 1)))
+    result = resume_injury(repo, fake_garmin, FakeLLMProvider([]), injury.id, date(2026, 11, 4))
+    assert result.proposal_id is None and result.error
+    assert repo.open_injury(accepted_plan.id) is None
+
+
+def test_delete_event(repo, accepted_plan):
+    e = repo.add(
+        Event(goal_id=accepted_plan.id, kind="unavailable", start_date=date(2026, 11, 9), end_date=date(2026, 11, 9))
+    )
+    delete_event(repo, e.id)
+    assert repo.events(accepted_plan.id) == []
+    with pytest.raises(EventError, match="Imprévu introuvable"):
+        delete_event(repo, e.id)
+
+
+def test_event_note_describes_each_kind():
+    base = {"goal_id": 1, "start_date": date(2026, 11, 9)}
+    assert "indisponible du 09/11/2026 au 11/11/2026 (voyage)" in event_note(
+        Event(kind="unavailable", end_date=date(2026, 11, 11), note="voyage", **base)
+    )
+    assert "arrêt depuis le 09/11/2026" in event_note(Event(kind="injury", **base))
+    assert "2 séance(s) au maximum, jours possibles : mardi, samedi" in event_note(
+        Event(kind="light_week", max_sessions=2, days_json='["mardi", "samedi"]', **base)
+    )
+    assert "fatigue" in event_note(Event(kind="fatigue", **base))

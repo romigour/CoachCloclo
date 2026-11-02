@@ -70,7 +70,13 @@ def sync(repo: Repo, garmin: GarminPort, llm: LLMProvider, *, now: datetime) -> 
     save_settings(settings)
 
     proposal_id = None
-    if goal is not None and goal.plan_accepted and settings.proposal_due:
+    # arrêt en cours : pas de proposition ; `proposal_due` reste vrai jusqu'à la reprise ou la suppression
+    if (
+        goal is not None
+        and goal.plan_accepted
+        and settings.proposal_due
+        and repo.open_injury(goal.id) is None
+    ):
         proposal_id = _propose(repo, garmin, llm, goal, zones, pairs, missed_ids, today)
         settings.proposal_due = False
         save_settings(settings)

@@ -6,7 +6,7 @@ import pytest
 from coach.analysis.zones import compute_zones
 from coach.garmin.port import FakeGarminClient, GarminAuthRequired, GarminUnavailable
 from coach.llm.schemas import Change
-from coach.plan.models import AthleteSnapshot, Goal, Proposal
+from coach.plan.models import AthleteSnapshot, Event, Goal, Proposal
 from coach.services import CoachError
 from coach.services.garmin_export import (
     ExportError,
@@ -508,3 +508,15 @@ def test_failed_replacement_then_past_date_then_unschedule_leaves_no_orphan(repo
     sync(repo, g, FakeLLMProvider([]), now=datetime(2026, 11, 20, 9))
     assert g.workouts == {} and g.schedules == {} and g.calendar == {}
     assert repo.session(s.id).status == "missed"
+
+
+def test_export_check_warns_during_event(repo, fake_garmin, goal):
+    s = repo.add(make_db_session(goal.id, week_index=3))
+    repo.add(Event(goal_id=goal.id, kind="unavailable", start_date=D, end_date=D))
+    repo.add(Event(goal_id=goal.id, kind="injury", start_date=date(2026, 11, 9)))  # arrêt ouvert
+    warnings = check_export(repo, s.id, D)
+    assert "Pendant ton imprévu : indisponibilité du 10/11 au 10/11" in warnings
+    assert "Pendant ton imprévu : arrêt depuis le 09/11" in warnings
+    # avant le début de l'arrêt ouvert, rien ne bloque
+    earlier = repo.add(make_db_session(goal.id, week_index=2))
+    assert not any("imprévu" in w for w in check_export(repo, earlier.id, date(2026, 11, 3)))

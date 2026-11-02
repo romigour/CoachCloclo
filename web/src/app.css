@@ -104,7 +104,7 @@ ul.plain { list-style: none; padding: 0; margin: 0; }
   .sidebar { flex: 0 0 240px; position: sticky; top: 0; height: 100vh; }
 }
 .brand { display: flex; align-items: center; gap: 10px; padding: 0 8px; font-family: var(--font-display); font-size: 17px; font-weight: 800; }
-.brand-mark { width: 30px; height: 30px; border-radius: 8px; background: var(--accent); color: var(--accent-text); display: grid; place-items: center; }
+.brand-mark { width: 30px; height: 30px; flex: none; }
 .nav { display: flex; flex-direction: column; gap: 2px; }
 .nav a {
   display: flex; align-items: center; gap: 12px; padding: 0 12px; min-height: 40px; border-radius: 10px;

@@ -105,6 +105,13 @@ def test_export_returns_48h_warning(repo, fake_garmin, goal):
     assert check_export(repo, b.id, date(2026, 11, 14)) == []
 
 
+def test_check_export_warns_outside_available_days(repo, fake_garmin):
+    g = repo.add(make_goal(available_days_json='["mardi", "jeudi", "dimanche"]'))
+    s = repo.add(make_db_session(g.id, week_index=3))
+    assert "Jour hors de tes disponibilités" in check_export(repo, s.id, date(2026, 11, 9))  # lundi
+    assert "Jour hors de tes disponibilités" not in check_export(repo, s.id, D)  # mardi
+
+
 def test_check_export_writes_nothing(repo, fake_garmin, session_w3):
     assert check_export(repo, session_w3.id, D) == []
     assert fake_garmin.calls == [] and repo.session(session_w3.id).status == "todo"

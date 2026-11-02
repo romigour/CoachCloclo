@@ -158,6 +158,8 @@ def _goal_dict(goal: Goal) -> dict:
         "plan_accepted": goal.plan_accepted,
         "target_time_s": goal.target_time_s,
         "target_source": goal.target_source,
+        "available_days": goal.available_days(),
+        "long_run_day": goal.long_run_day,
         "gpx_summary": json.loads(goal.gpx_summary_json) if goal.gpx_summary_json else None,
     }
 
@@ -401,14 +403,21 @@ def create_app(
         sessions_per_week: Annotated[int, Form()],
         d_plus_m: Annotated[int, Form()] = 0,
         target_time: Annotated[str | None, Form()] = None,
+        available_days: Annotated[str | None, Form()] = None,
+        long_run_day: Annotated[str | None, Form()] = None,
         gpx: Annotated[UploadFile | None, File()] = None,
     ):
         target_time_s = parse_target_time(target_time) if target_time else None
         raw = gpx.file.read(MAX_GPX_BYTES + 1) if gpx is not None else None
         if raw is not None and len(raw) > MAX_GPX_BYTES:
             return _error(413, "too_large", "Fichier GPX trop volumineux (10 Mo maximum)")
+        days = {}  # absent : GoalInput garde ses 7 jours par défaut
+        if available_days:
+            days["available_days"] = [d.strip() for d in available_days.split(",") if d.strip()]
         try:
             data = GoalInput(
+                **days,
+                long_run_day=long_run_day or None,
                 type=type,
                 distance_km=distance_km,
                 d_plus_m=d_plus_m,

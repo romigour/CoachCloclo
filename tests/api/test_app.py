@@ -239,6 +239,59 @@ def test_export_check_returns_warnings(make_client):
     assert r.status_code == 422
 
 
+def test_post_goal_available_days(make_client):
+    client = make_client()
+    r = _create_goal(client, available_days="mardi,jeudi,dimanche", long_run_day="dimanche")
+    assert r.status_code == 200
+    assert r.json()["available_days"] == ["mardi", "jeudi", "dimanche"]
+    assert r.json()["long_run_day"] == "dimanche"
+    assert _create_goal(make_client()).json()["available_days"][0] == "lundi"  # absent : 7 jours
+
+
+def test_post_goal_invalid_available_day(make_client):
+    r = _create_goal(make_client(), available_days="mardi,lunid,dimanche")
+    assert r.status_code == 422 and r.json()["code"] == "invalid"
+
+
+def test_post_goal_too_few_available_days(make_client):
+    r = _create_goal(make_client(), available_days="mardi,jeudi")
+    assert r.status_code == 422
+
+
+def test_plan_exposes_available_days(make_client):
+    client = make_client(llm=FakeLLMProvider([valid_plan_json(14, 3)]))
+    goal = _create_goal(client, available_days="mardi,jeudi,dimanche").json()
+    client.post(f"/api/goals/{goal['id']}/generate")
+    client.post(f"/api/goals/{goal['id']}/accept")
+    assert client.get("/api/plan").json()["goal"]["available_days"] == ["mardi", "jeudi", "dimanche"]
+
+
+def test_patch_goal_available_days(make_client):
+    client = make_client(llm=FakeLLMProvider([valid_plan_json(14, 3), adjustment_json(), adjustment_json()]))
+    goal = _accepted_goal(client)
+    r = client.patch(
+        f"/api/goals/{goal['id']}",
+        json={"available_days": ["mardi", "jeudi", "dimanche"], "long_run_day": "dimanche"},
+    )
+    assert r.status_code == 200
+    assert r.json()["goal"]["available_days"] == ["mardi", "jeudi", "dimanche"]
+    assert r.json()["goal"]["long_run_day"] == "dimanche"
+    r = client.patch(f"/api/goals/{goal['id']}", json={"long_run_day": ""})
+    assert r.status_code == 200 and r.json()["goal"]["long_run_day"] is None
+
+
+def test_export_check_warns_on_unavailable_day(make_client):
+    client = make_client(llm=FakeLLMProvider([valid_plan_json(14, 3)]))
+    goal = _create_goal(client, available_days="mardi,jeudi,dimanche").json()
+    client.post(f"/api/goals/{goal['id']}/generate")
+    client.post(f"/api/goals/{goal['id']}/accept")
+    sid = client.get("/api/plan").json()["weeks"][0]["sessions"][0]["id"]
+    r = client.get(f"/api/sessions/{sid}/export-check", params={"date": "2026-11-02"})  # lundi
+    assert "Jour hors de tes disponibilités" in r.json()["warnings"]
+    r = client.get(f"/api/sessions/{sid}/export-check", params={"date": "2026-11-03"})  # mardi
+    assert "Jour hors de tes disponibilités" not in r.json()["warnings"]
+
+
 def test_export_and_unschedule(make_client, fake_garmin):
     client = make_client(llm=FakeLLMProvider([valid_plan_json(14, 3)]))
     goal = _create_goal(client).json()

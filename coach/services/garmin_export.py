@@ -24,7 +24,7 @@ from coach.garmin.port import (
 )
 from coach.llm.schemas import Change
 from coach.plan import calendar
-from coach.plan.models import Goal, Proposal, Session
+from coach.plan.models import ALL_DAYS, Goal, Proposal, Session
 from coach.plan.repo import Repo
 from coach.services import CoachError
 
@@ -32,6 +32,7 @@ _GARMIN_ERRORS = (GarminUnavailable, GarminAuthRequired, GarminRateLimited)
 _EARLY_ERRORS = (GarminAuthRequired, GarminRateLimited)
 _CHANGES = TypeAdapter(list[Change])
 _PENDING_MSG = "Synchronisation Garmin en cours"
+_UNAVAILABLE_DAY = "Jour hors de tes disponibilités"
 
 
 class ExportError(CoachError):
@@ -74,7 +75,10 @@ def _check_not_past(garmin: GarminPort, d: date) -> None:
 
 
 def _warnings(repo: Repo, session: Session, d: date) -> list[str]:
-    return hard_session_warnings(session, d, repo.sessions(session.goal_id))
+    warnings = hard_session_warnings(session, d, repo.sessions(session.goal_id))
+    if ALL_DAYS[d.weekday()] not in _goal(repo, session).available_days():
+        warnings.append(_UNAVAILABLE_DAY)
+    return warnings
 
 
 def _name(session: Session) -> str:

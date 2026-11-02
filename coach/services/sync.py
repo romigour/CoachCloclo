@@ -1,28 +1,21 @@
 """Synchro Garmin : import des activités, rattachement, séances manquées, proposition."""
 
-import json
 from datetime import date, datetime, timedelta
 
 from pydantic import BaseModel
-from sqlmodel import select
 
-from coach.analysis.laps import StepComparison
 from coach.analysis.compliance import mark_missed, match_activities
 from coach.analysis.zones import Zones
 from coach.config import load_settings, save_settings
 from coach.garmin.port import GarminPort
-from coach.llm.client import ask_structured
-from coach.llm.prompts import SYSTEM_PROMPT, build_adjustment_prompt
 from coach.llm.provider import LLMProvider
-from coach.llm.schemas import AdjustmentResponse, validate_adjustment
-from coach.plan.calendar import n_weeks, week_of
-from coach.plan.models import Activity, Goal, Proposal, Session
+from coach.plan.models import Activity, Goal, Session
 from coach.plan.repo import Repo
 from coach.services.activities import store_summaries
-from coach.services.context import recent_history, refresh_snapshot
+from coach.services.adjust import ask_adjustment, save_proposal
+from coach.services.context import refresh_snapshot
 from coach.services.history import refresh_records
-from coach.services.laps import fetch_missing_laps, session_comparison
-from coach.services.race_strategy import race_line_for_prompt
+from coach.services.laps import fetch_missing_laps
 
 FIRST_SYNC_DAYS = 56
 OVERLAP_DAYS = 2
@@ -106,50 +99,8 @@ def _propose(
         acts = {aid: db.get(Activity, aid) for _, aid in pairs}
     done = [(by_id[sid], acts[aid]) for sid, aid in pairs]
     missed = [by_id[sid] for sid in missed_ids]
-    current_week = week_of(goal, today)
-    upcoming = [s for s in sessions if s.status in ("todo", "exported") and s.week_index >= current_week]
-    counts: dict[int, int] = {}
-    for s in (x for x in sessions if not x.pending_removal):
-        counts[s.week_index] = counts.get(s.week_index, 0) + 1
-    editable = {s.id for s in upcoming}
-    week_of_session = {s.id: s.week_index for s in sessions}
-    pace_available = zones.pace is not None
-
-    comparisons = {}
-    for s, _ in done:
-        comparison = session_comparison(repo, s, zones)
-        if isinstance(comparison, StepComparison):
-            comparisons[s.id] = comparison
-    prompt = build_adjustment_prompt(
-        goal, zones, current_week, done, missed, upcoming, recent_history(garmin),
-        comparisons,
-        race_text=race_line_for_prompt(repo, goal, today),
-    )
-    adj = ask_structured(
-        llm,
-        SYSTEM_PROMPT,
-        prompt,
-        AdjustmentResponse,
-        validate=lambda a: validate_adjustment(
-            a,
-            editable_ids=editable,
-            current_week=current_week,
-            n_weeks=n_weeks(goal.plan_start, goal.race_date),
-            sessions_per_week=goal.sessions_per_week,
-            counts_by_week=counts,
-            pace_available=pace_available,
-            week_of_session=week_of_session,
-            exported_ids={s.id for s in upcoming if s.status == "exported"},
-        ),
+    adj = ask_adjustment(
+        repo, garmin, llm, goal, zones, sessions, today, done=done, missed=missed
     )
     with repo.transaction() as db:
-        for old in db.exec(select(Proposal).where(Proposal.status == "pending")).all():
-            old.status = "stale"
-            db.add(old)
-        proposal = Proposal(
-            analysis=adj.analysis,
-            changes_json=json.dumps([c.model_dump() for c in adj.changes]),
-        )
-        db.add(proposal)
-        db.flush()
-        return proposal.id
+        return save_proposal(db, adj)

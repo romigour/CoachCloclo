@@ -8,6 +8,7 @@
   import Calendar from "../components/Calendar.svelte";
   import SessionCard from "../components/SessionCard.svelte";
   import Icon from "../components/Icon.svelte";
+  import GoalEditDialog from "../components/GoalEditDialog.svelte";
 
   let { onchanged, today = todayIso() }: { onchanged?: () => void; today?: string } = $props();
 
@@ -35,6 +36,7 @@
   let busy = $state("");
   let error = $state<unknown>(null);
   let selected = $state<number | null>(null);
+  let editing = $state(false);
 
   const weeksLeft = $derived(raceDate && raceDate > today ? Math.ceil(daysUntil(today, raceDate) / 7) : null);
   const selection = $derived.by(() => {
@@ -119,6 +121,12 @@
     } finally {
       busy = "";
     }
+  }
+
+  function edited() {
+    editing = false;
+    onchanged?.();
+    location.hash = "#/proposal";
   }
 
   function pickFile(e: Event) {
@@ -264,6 +272,8 @@
         <section class="card stack">
           <h3>Objectif en cours</h3>
           <p>{goalLabel(active)} · course le {formatDate(active.race_date)}</p>
+          {#if goalTimeLabel(active)}<p class="meta">{goalTimeLabel(active)}</p>{/if}
+          <div class="row"><button type="button" onclick={() => (editing = true)}>Modifier</button></div>
           <p class="meta">Un nouvel objectif remplacera ce plan.</p>
         </section>
       {/if}
@@ -285,4 +295,8 @@
       </section>
     </aside>
   </div>
+{/if}
+
+{#if editing && active}
+  <GoalEditDialog goal={active} {today} onclose={() => (editing = false)} onsaved={edited} />
 {/if}

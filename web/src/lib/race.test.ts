@@ -22,7 +22,7 @@ test("targetLabel for pace and heart-rate targets", () => {
 
 test("isDirty detects an aid station change", () => {
   const a: RaceSettings = {
-    target_time_s: null, start_time: "08:00", carbs_g_h: 60, water_ml_h: 500, carry_ml: 1000,
+    start_time: "08:00", carbs_g_h: 60, water_ml_h: 500, carry_ml: 1000,
     aid_stations: [{ km: 10, name: "A", kind: "eau", cutoff: null, stop_min: 1 }],
   };
   const b = structuredClone(a);
@@ -48,7 +48,7 @@ test("fmtTargetTime round-trips through parseTargetTime", () => {
 
 describe("settingsError", () => {
   const ok: RaceSettings = {
-    target_time_s: null, start_time: "08:00", carbs_g_h: 60, water_ml_h: 500, carry_ml: 1000,
+    start_time: "08:00", carbs_g_h: 60, water_ml_h: 500, carry_ml: 1000,
     aid_stations: [{ km: 10, name: "A", kind: "eau", cutoff: null, stop_min: 1 }],
   };
   const st = ok.aid_stations[0];

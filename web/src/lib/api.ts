@@ -261,7 +261,6 @@ export type HrZone = "Z1" | "Z2" | "Z3" | "Z4" | "Z5";
 export type AidStation = { km: number; name: string; kind: "eau" | "complet"; cutoff: string | null; stop_min: number };
 
 export type RaceSettings = {
-  target_time_s: number | null;
   start_time: string;
   carbs_g_h: number;
   water_ml_h: number;

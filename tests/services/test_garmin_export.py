@@ -520,3 +520,9 @@ def test_export_check_warns_during_event(repo, fake_garmin, goal):
     # avant le début de l'arrêt ouvert, rien ne bloque
     earlier = repo.add(make_db_session(goal.id, week_index=2))
     assert not any("imprévu" in w for w in check_export(repo, earlier.id, date(2026, 11, 3)))
+
+
+def test_apply_proposal_modify_copies_sport(repo, fake_garmin, session_w3):
+    p = proposal_of(repo, modify(session_w3.id, sport="bike"))
+    apply_proposal(repo, fake_garmin, p.id)
+    assert repo.session(session_w3.id).sport == "bike"

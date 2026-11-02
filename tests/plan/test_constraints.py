@@ -303,3 +303,8 @@ def test_fatigue_does_not_block():
 
 def test_constraints_of_goal_carries_plan_start():
     assert PlanConstraints.of(make_goal(), TODAY).plan_start == date(2026, 10, 26)
+
+
+def test_constraints_of_reads_include_bike():
+    assert PlanConstraints.of(make_goal(), date(2026, 11, 2)).include_bike is False
+    assert PlanConstraints.of(make_goal(include_bike=True), date(2026, 11, 2)).include_bike is True

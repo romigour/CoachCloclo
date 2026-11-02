@@ -1073,3 +1073,17 @@ def test_post_adjust_llm_limit_maps_to_429(make_client):
     limited = make_client(llm=LimitedLLM())
     r = limited.post(f"/api/goals/{goal['id']}/adjust")
     assert r.status_code == 429 and r.json()["code"] == "llm_limit"
+
+
+def test_goal_include_bike_roundtrip(make_client):
+    client = make_client(llm=FakeLLMProvider([valid_plan_json(14, 3), adjustment_json()]))
+    assert _create_goal(make_client()).json()["include_bike"] is False
+    goal = _create_goal(client, include_bike="true").json()
+    assert goal["include_bike"] is True
+    client.post(f"/api/goals/{goal['id']}/generate")
+    client.post(f"/api/goals/{goal['id']}/accept")
+    plan = client.get("/api/plan").json()
+    assert plan["goal"]["include_bike"] is True
+    assert all(s["sport"] == "run" for w in plan["weeks"] for s in w["sessions"])
+    r = client.patch(f"/api/goals/{goal['id']}", json={"include_bike": False})
+    assert r.status_code == 200 and r.json()["goal"]["include_bike"] is False

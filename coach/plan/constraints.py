@@ -25,12 +25,11 @@ class PlanConstraints:
 
     @classmethod
     def of(cls, goal: Goal, today: date, events: Sequence["Event"] = ()) -> "PlanConstraints":
-        # include_bike : pas encore porté par Goal (tâche 14), désactivé en attendant
         return cls(
             available_days=tuple(goal.available_days()),
             long_run_day=goal.long_run_day,
             today=today,
-            include_bike=False,
+            include_bike=goal.include_bike,
             events=tuple(events),
             plan_start=goal.plan_start,
         )

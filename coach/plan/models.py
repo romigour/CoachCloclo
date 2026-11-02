@@ -49,6 +49,7 @@ class Goal(SQLModel, table=True):
     target_source: str | None = None  # "user" | "claude"
     available_days_json: str = ALL_DAYS_JSON
     long_run_day: str | None = None
+    include_bike: bool = False
 
     def available_days(self) -> list[str]:
         return json.loads(self.available_days_json)
@@ -62,6 +63,7 @@ class Session(SQLModel, table=True):
     suggested_day: str
     chaining_note: str | None = None
     type: str
+    sport: str = "run"  # "run" | "bike"
     target_kind: str  # "pace" | "hr"
     title: str
     description: str
@@ -88,6 +90,7 @@ class Session(SQLModel, table=True):
             title=self.title,
             description=self.description,
             chaining_note=self.chaining_note,
+            sport=self.sport,
             steps=_STEPS.validate_json(self.steps_json),
         )
 
@@ -100,6 +103,7 @@ class Session(SQLModel, table=True):
             suggested_day=spec.suggested_day,
             chaining_note=spec.chaining_note,
             type=spec.type,
+            sport=spec.sport,
             target_kind=spec.target_kind,
             title=spec.title,
             description=spec.description,

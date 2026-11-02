@@ -346,7 +346,7 @@ def apply_proposal(repo: Repo, garmin: GarminPort, proposal_id: int) -> list[int
                 fresh = Session.from_spec(c.session, goal_id=s.goal_id)
                 for f in (
                     "week_index", "order", "suggested_day", "chaining_note", "type",
-                    "target_kind", "title", "description", "steps_json",
+                    "sport", "target_kind", "title", "description", "steps_json",
                 ):  # fmt: skip
                     setattr(s, f, getattr(fresh, f))
                 s.est_duration_min = s.est_distance_km = None

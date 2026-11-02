@@ -260,3 +260,14 @@ def test_adjustment_rejects_week_beyond_plan():
         pace_available=True, n_weeks=14,
     )
     assert any("semaine 15, au-delà de la dernière semaine du plan (14)" in e for e in errs)
+
+
+def test_session_sport_defaults_to_run_and_old_change_loads():
+    assert make_session().sport == "run"
+    assert make_session(sport="bike").sport == "bike"
+    old = make_session().model_dump(mode="json")
+    del old["sport"]  # ancienne proposition en base : sans champ sport
+    change = Change.model_validate({"op": "modify", "session_id": 1, "session": old, "reason": "r"})
+    assert change.session.sport == "run"
+    with pytest.raises(ValidationError):
+        make_session(sport="swim")

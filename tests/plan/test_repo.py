@@ -275,3 +275,29 @@ def test_open_injury(repo):
     injury.end_date = date(2026, 11, 12)
     repo.update(injury)
     assert repo.open_injury(1) is None
+
+
+def test_migrate_adds_sport_and_include_bike_to_0_5_0_db(tmp_path):
+    path = tmp_path / "v050.db"
+    con = sqlite3.connect(path)
+    con.executescript("""
+        CREATE TABLE goal (id INTEGER PRIMARY KEY, created_at DATETIME, type VARCHAR, distance_km FLOAT,
+            d_plus_m INTEGER, race_date DATE, sessions_per_week INTEGER, gpx_path VARCHAR,
+            gpx_summary_json VARCHAR, status VARCHAR, plan_start DATE, plan_accepted BOOLEAN,
+            target_time_s INTEGER, target_source VARCHAR);
+        INSERT INTO goal VALUES (1, '2026-11-01', 'route', 21.1, 0, '2027-02-07', 4, NULL, NULL, 'active',
+            '2026-11-02', 1, 6600, 'user');
+        CREATE TABLE session (id INTEGER PRIMARY KEY, goal_id INTEGER, week_index INTEGER, "order" INTEGER,
+            suggested_day VARCHAR, chaining_note VARCHAR, type VARCHAR, target_kind VARCHAR, title VARCHAR,
+            description VARCHAR, steps_json VARCHAR, est_duration_min FLOAT, est_distance_km FLOAT,
+            status VARCHAR, scheduled_date DATE, garmin_workout_id INTEGER, garmin_schedule_id INTEGER,
+            sync_error VARCHAR, pending_old_workout_id INTEGER, pending_old_schedule_id INTEGER,
+            pending_removal BOOLEAN);
+        INSERT INTO session VALUES (1, 1, 1, 1, 'mardi', NULL, 'EF', 'hr', 't', 'd', '[]', NULL, NULL,
+            'todo', NULL, NULL, NULL, NULL, NULL, NULL, 0);
+    """)
+    con.commit()
+    con.close()
+    repo = Repo(make_engine(path))
+    assert repo.active_goal().include_bike is False
+    assert repo.sessions(1)[0].sport == "run"

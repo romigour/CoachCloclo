@@ -74,6 +74,9 @@ def _migrate(engine: Engine) -> None:
                 "long_run_day": "VARCHAR",
             },
         )
+        # sport des séances et option vélo de l'objectif
+        _add_columns(conn, "session", {"sport": "VARCHAR NOT NULL DEFAULT 'run'"})
+        _add_columns(conn, "goal", {"include_bike": "BOOLEAN NOT NULL DEFAULT 0"})
 
 
 class Repo:

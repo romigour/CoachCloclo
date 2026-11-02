@@ -162,6 +162,7 @@ def _goal_dict(goal: Goal) -> dict:
         "target_source": goal.target_source,
         "available_days": goal.available_days(),
         "long_run_day": goal.long_run_day,
+        "include_bike": goal.include_bike,
         "gpx_summary": json.loads(goal.gpx_summary_json) if goal.gpx_summary_json else None,
     }
 
@@ -184,6 +185,7 @@ def _session_dict(s: Session) -> dict:
         "id": s.id,
         "order": s.order,
         "type": s.type,
+        "sport": s.sport,
         "title": s.title,
         "description": s.description,
         "target_kind": s.target_kind,
@@ -420,6 +422,7 @@ def create_app(
         target_time: Annotated[str | None, Form()] = None,
         available_days: Annotated[str | None, Form()] = None,
         long_run_day: Annotated[str | None, Form()] = None,
+        include_bike: Annotated[bool, Form()] = False,
         gpx: Annotated[UploadFile | None, File()] = None,
     ):
         target_time_s = parse_target_time(target_time) if target_time else None
@@ -433,6 +436,7 @@ def create_app(
             data = GoalInput(
                 **days,
                 long_run_day=long_run_day or None,
+                include_bike=include_bike,
                 type=type,
                 distance_km=distance_km,
                 d_plus_m=d_plus_m,

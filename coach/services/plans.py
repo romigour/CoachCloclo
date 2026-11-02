@@ -44,6 +44,7 @@ class GoalInput(BaseModel):
     target_time_s: int | None = Field(None, gt=0)
     available_days: list[Weekday] = Field(default_factory=lambda: list(ALL_DAYS))
     long_run_day: Weekday | None = None
+    include_bike: bool = False
 
 
 def normalize_days(days: list[str]) -> list[str]:
@@ -103,6 +104,7 @@ def create_goal(repo: Repo, garmin: GarminPort, data: GoalInput) -> Goal:
         target_source="user" if data.target_time_s else "claude",
         available_days_json=json.dumps(available_days),
         long_run_day=data.long_run_day,
+        include_bike=data.include_bike,
         gpx_summary_json=summary.model_dump_json() if summary is not None else None,
     )
     path = None
@@ -189,6 +191,7 @@ class GoalUpdate(BaseModel):
     target_time: str | None = None
     available_days: list[Weekday] | None = None
     long_run_day: Weekday | Literal[""] | None = None  # "" : plus de jour imposé
+    include_bike: bool | None = None
 
 
 def update_goal(
@@ -235,6 +238,9 @@ def update_goal(
             long_run_day = new_day
             update["long_run_day"] = new_day
             notes.append(f"sortie longue le {new_day}" if new_day else "plus de jour imposé pour la sortie longue")
+    if data.include_bike is not None and data.include_bike != goal.include_bike:
+        update["include_bike"] = data.include_bike
+        notes.append("vélo autorisé" if data.include_bike else "plus de vélo")
     check_availability(available_days, long_run_day, goal.sessions_per_week)
     if not update:
         raise GoalError("Aucune modification")

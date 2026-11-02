@@ -139,6 +139,24 @@ class Proposal(SQLModel, table=True):
     status: str = "pending"  # pending | accepted | rejected | stale
 
 
+class Event(SQLModel, table=True):
+    """Imprévu déclaré par l'athlète (spec 3.2) : indisponibilité, blessure, semaine allégée, fatigue."""
+
+    id: int | None = Field(default=None, primary_key=True)
+    goal_id: int = Field(index=True)
+    created_at: dt.datetime = Field(default_factory=_now)
+    kind: str  # "unavailable" | "injury" | "light_week" | "fatigue"
+    start_date: dt.date
+    end_date: dt.date | None = None  # None seulement pour un arrêt (injury) en cours
+    max_sessions: int | None = None  # light_week seulement
+    days_json: str | None = None  # light_week seulement : jours possibles cette semaine-là
+    session_id: int | None = None  # fatigue seulement : séance ratée
+    note: str | None = None
+
+    def days(self) -> list[str] | None:
+        return None if self.days_json is None else json.loads(self.days_json)
+
+
 class Race(SQLModel, table=True):
     id: int | None = Field(default=None, primary_key=True)
     activity_id: int = Field(unique=True, index=True)

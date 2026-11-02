@@ -5,7 +5,7 @@ import pytest
 
 from coach.garmin.port import LapSummary
 from coach.llm.schemas import RepeatSpec, StepSpec
-from coach.plan.models import Activity, AthleteSnapshot, Goal, Proposal, Session
+from coach.plan.models import Activity, AthleteSnapshot, Event, Goal, Proposal, Session
 from coach.plan.repo import Repo, make_engine
 from tests.llm.factories import make_session
 from tests.plan.factories import make_activity, make_db_session, make_goal
@@ -250,3 +250,28 @@ def test_migrate_adds_availability_to_old_goal(tmp_path):
 def test_migrate_availability_is_idempotent(tmp_path):
     make_engine(tmp_path / "t.db")
     make_engine(tmp_path / "t.db")  # pas d'exception
+
+
+def test_events_most_recent_first(repo):
+    old = repo.add(Event(goal_id=1, kind="unavailable", start_date=date(2026, 11, 2), end_date=date(2026, 11, 4)))
+    new = repo.add(Event(goal_id=1, kind="unavailable", start_date=date(2026, 11, 9), end_date=date(2026, 11, 10)))
+    same = repo.add(Event(goal_id=1, kind="fatigue", start_date=date(2026, 11, 9), end_date=date(2026, 11, 9)))
+    repo.add(Event(goal_id=2, kind="fatigue", start_date=date(2026, 12, 1), end_date=date(2026, 12, 1)))
+    assert [e.id for e in repo.events(1)] == [same.id, new.id, old.id]
+
+
+def test_event_days_roundtrip(repo):
+    e = repo.add(Event(goal_id=1, kind="light_week", start_date=date(2026, 11, 2), days_json='["mardi", "jeudi"]'))
+    assert repo.events(1)[0].days() == ["mardi", "jeudi"]
+    assert e.id and Event(goal_id=1, kind="injury", start_date=date(2026, 11, 2)).days() is None
+
+
+def test_open_injury(repo):
+    assert repo.open_injury(1) is None
+    repo.add(Event(goal_id=1, kind="unavailable", start_date=date(2026, 11, 2), end_date=date(2026, 11, 3)))
+    injury = repo.add(Event(goal_id=1, kind="injury", start_date=date(2026, 11, 5)))
+    assert repo.open_injury(1).id == injury.id
+    assert repo.open_injury(2) is None
+    injury.end_date = date(2026, 11, 12)
+    repo.update(injury)
+    assert repo.open_injury(1) is None

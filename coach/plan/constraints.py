@@ -10,7 +10,7 @@ from coach.plan.calendar import suggested_date
 from coach.plan.models import Goal, Session
 
 if TYPE_CHECKING:
-    from coach.plan.models import Event  # créé par la tâche 6
+    from coach.plan.models import Event
 
 
 @dataclass(frozen=True)

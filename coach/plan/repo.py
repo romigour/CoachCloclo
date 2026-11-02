@@ -18,6 +18,7 @@ from coach.plan.models import (
     Activity,
     ActivityLaps,
     AthleteSnapshot,
+    Event,
     Goal,
     PersonalRecord,
     Proposal,
@@ -123,6 +124,26 @@ class Repo:
         stmt = stmt.order_by(Session.week_index, Session.order)
         with self._open() as db:
             return list(db.exec(stmt))
+
+    def events(self, goal_id: int) -> list[Event]:
+        """Imprévus de l'objectif, le plus récent d'abord."""
+        stmt = (
+            select(Event)
+            .where(Event.goal_id == goal_id)
+            .order_by(Event.start_date.desc(), Event.id.desc())
+        )
+        with self._open() as db:
+            return list(db.exec(stmt))
+
+    def open_injury(self, goal_id: int) -> Event | None:
+        """Arrêt en cours (blessure sans date de fin), s'il y en a un."""
+        stmt = (
+            select(Event)
+            .where(Event.goal_id == goal_id, Event.kind == "injury", Event.end_date == None)  # noqa: E711
+            .order_by(Event.id.desc())
+        )
+        with self._open() as db:
+            return db.exec(stmt).first()
 
     def session(self, id: int) -> Session:
         with self._open() as db:

@@ -10,7 +10,14 @@ from coach.llm.provider import FakeLLMProvider, LLMInvalidResponse
 from coach.plan.models import Goal
 from coach.services import CoachError
 from coach.services.context import refresh_snapshot
-from coach.services.plans import GoalError, GoalInput, accept_plan, create_goal, generate_plan
+from coach.services.plans import (
+    GoalError,
+    GoalInput,
+    accept_plan,
+    create_goal,
+    generate_plan,
+    parse_target_time,
+)
 from tests.llm.factories import valid_plan_json
 from tests.plan.factories import make_db_session
 
@@ -159,3 +166,54 @@ def test_unknown_or_archived_goal_rejected(repo, fake_garmin):
             generate_plan(repo, fake_garmin, llm, bad)
         with pytest.raises(GoalError, match="introuvable ou archivé"):
             accept_plan(repo, bad)
+
+
+def test_parse_target_time():
+    assert parse_target_time("3:45") == 13500 and parse_target_time("1:05:30") == 3930
+    for bad in ("", "3h45", "3:75", "0:00"):
+        with pytest.raises(GoalError):
+            parse_target_time(bad)
+
+
+def test_create_goal_with_user_time(repo, fake_garmin):
+    g = create_goal(repo, fake_garmin, goal_input(target_time_s=18000))
+    assert (g.target_time_s, g.target_source) == (18000, "user")
+
+
+def test_create_goal_without_time_is_claude_mode(repo, fake_garmin):
+    g = create_goal(repo, fake_garmin, goal_input())
+    assert (g.target_time_s, g.target_source) == (None, "claude")
+
+
+def test_create_goal_rejects_implausible_time(repo, fake_garmin):
+    with pytest.raises(GoalError, match="invraisemblable"):
+        create_goal(repo, fake_garmin, goal_input(target_time_s=3600))  # 42 km en 1 h
+    assert repo.active_goal() is None
+
+
+def test_generate_saves_claude_estimate(repo, fake_garmin):
+    goal = _goal(repo, fake_garmin)
+    generate_plan(repo, fake_garmin, FakeLLMProvider([valid_plan_json(14, 3, estimated_time_s=19800)]), goal.id)
+    assert repo.active_goal().target_time_s == 19800
+
+
+def test_regenerate_reestimates(repo, fake_garmin):
+    goal = _goal(repo, fake_garmin)
+    generate_plan(repo, fake_garmin, FakeLLMProvider([valid_plan_json(14, 3, estimated_time_s=19800)]), goal.id)
+    generate_plan(repo, fake_garmin, FakeLLMProvider([valid_plan_json(14, 3, estimated_time_s=20400)]), goal.id)
+    g = repo.active_goal()
+    assert (g.target_time_s, g.target_source) == (20400, "claude")
+
+
+def test_generate_keeps_user_time(repo, fake_garmin):
+    goal = create_goal(repo, fake_garmin, goal_input(target_time_s=18000))
+    generate_plan(repo, fake_garmin, FakeLLMProvider([valid_plan_json(14, 3, estimated_time_s=1)]), goal.id)
+    g = repo.active_goal()
+    assert (g.target_time_s, g.target_source) == (18000, "user")
+
+
+def test_generate_claude_mode_requires_estimate(repo, fake_garmin):
+    goal = _goal(repo, fake_garmin)
+    llm = FakeLLMProvider([valid_plan_json(14, 3, estimated_time_s=None)] * 2)
+    with pytest.raises(LLMInvalidResponse):
+        generate_plan(repo, fake_garmin, llm, goal.id)

@@ -102,6 +102,21 @@ def _create_goal(client, **over):
     return client.post("/api/goals", data={**GOAL_FORM, **over})
 
 
+def test_post_goal_with_target_time(make_client):
+    r = _create_goal(make_client(), target_time="1:50")
+    assert r.status_code == 200
+    assert (r.json()["target_time_s"], r.json()["target_source"]) == (6600, "user")
+
+
+def test_post_goal_empty_target_time_is_claude_mode(make_client):
+    r = _create_goal(make_client(), target_time="")
+    assert (r.json()["target_time_s"], r.json()["target_source"]) == (None, "claude")
+
+
+def test_post_goal_bad_target_time(make_client):
+    assert _create_goal(make_client(), target_time="abc").status_code == 422
+
+
 def test_status_reports_auth_required(make_client):
     r = make_client(garmin="auth").get("/api/status")
     assert r.status_code == 200

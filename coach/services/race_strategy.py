@@ -16,14 +16,12 @@ from coach.plan.models import Goal, RaceStrategy
 from coach.plan.repo import Repo
 from coach.services import CoachError
 from coach.services.context import zones_from_metrics
-from coach.services.plans import _get_goal
+from coach.services.plans import MIN_PACE_S_KM, TOO_FAST, _get_goal
 
 MAX_PROFILE_POINTS = 500
 _GARMIN_ERRORS = (GarminUnavailable, GarminAuthRequired, GarminRateLimited)
 _NO_FILE = "Fichier GPX introuvable : découpage sans profil"
 _IGNORED = "Ravito « {} » au-delà de la distance : ignoré"
-_TOO_FAST = "Temps visé invraisemblable : allure moyenne plus rapide que 2:30/km (format attendu h:mm, ex. 3:45)"
-_MIN_PACE_S_KM = 150
 _NAME_MAX = 60
 
 
@@ -122,8 +120,8 @@ def _compute(
         )
     except ValueError as exc:
         raise CoachError(str(exc)) from exc
-    if strict and settings.target_time_s is not None and settings.target_time_s < _MIN_PACE_S_KM * distance:
-        raise CoachError(_TOO_FAST)
+    if strict and settings.target_time_s is not None and settings.target_time_s < MIN_PACE_S_KM * distance:
+        raise CoachError(TOO_FAST)
     plan.warnings.extend(_IGNORED.format(st.name) for st in beyond)
     if goal.gpx_path and data is None:
         plan.warnings.append(_NO_FILE)

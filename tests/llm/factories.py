@@ -22,7 +22,9 @@ def make_session(**overrides) -> SessionSpec:
     return SessionSpec(**data)
 
 
-def make_plan(n_weeks: int, per_week: list[int], target_kind: str = "hr") -> PlanResponse:
+def make_plan(
+    n_weeks: int, per_week: list[int], target_kind: str = "hr", estimated_time_s: int | None = None
+) -> PlanResponse:
     """Plan de `n_weeks` semaines avec `per_week[i]` séances (orders 1..k) en semaine i+1."""
     weeks = [
         WeekSpec(
@@ -35,9 +37,9 @@ def make_plan(n_weeks: int, per_week: list[int], target_kind: str = "hr") -> Pla
         )
         for w in range(1, n_weeks + 1)
     ]
-    return PlanResponse(summary="Plan de test", weeks=weeks)
+    return PlanResponse(summary="Plan de test", weeks=weeks, estimated_time_s=estimated_time_s)
 
 
-def valid_plan_json(n_weeks: int, per_week: int) -> str:
+def valid_plan_json(n_weeks: int, per_week: int, estimated_time_s: int | None = 19800) -> str:
     """JSON d'un plan valide de `n_weeks` semaines à `per_week` séances."""
-    return make_plan(n_weeks, [per_week] * n_weeks).model_dump_json()
+    return make_plan(n_weeks, [per_week] * n_weeks, estimated_time_s=estimated_time_s).model_dump_json()

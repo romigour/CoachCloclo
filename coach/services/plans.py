@@ -19,7 +19,7 @@ from coach.plan.models import Goal, Session
 from coach.plan.repo import Repo
 from coach.services import CoachError
 from coach.services.context import recent_history, refresh_snapshot
-from coach.services.garmin_export import mark_for_cleanup
+from coach.services.garmin_export import mark_for_cleanup, sync_marked
 
 MIN_DAYS_BEFORE_RACE = 14
 _NOT_FOUND = "Objectif introuvable ou archivé"
@@ -212,6 +212,7 @@ def update_goal(
         repo, garmin, llm, edited, zones, [s for s in sessions if s.id not in removed_ids], today,
         change_note=note,
     )
+    to_clean: list[int] = []
     with repo.transaction() as db:
         g = db.get(Goal, goal_id)
         if g is None or g.status != "active":
@@ -227,8 +228,11 @@ def update_goal(
                 db.delete(s)
             elif s.status == "exported":
                 mark_for_cleanup(s, removal=True)
+                to_clean.append(s.id)
                 db.add(s)
         proposal_id = save_proposal(db, adj)
+    # Retire les séances de la montre ; un échec Garmin les laisse en `sync_error` (à relancer).
+    sync_marked(repo, garmin, sorted(to_clean), zones)
     return g, proposal_id
 
 

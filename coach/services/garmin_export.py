@@ -226,6 +226,15 @@ def _sync(repo: Repo, garmin: GarminPort, session_id: int, zones: Zones | None, 
     return True
 
 
+def sync_marked(repo: Repo, garmin: GarminPort, session_ids: list[int], zones: Zones | None) -> list[int]:
+    """Synchronise Garmin les séances marquées par `mark_for_cleanup`, après commit.
+
+    Une erreur Garmin laisse la séance en `sync_error` sans interrompre les autres ;
+    renvoie les ids des séances restées en `sync_error`.
+    """
+    return [sid for sid in session_ids if not _sync(repo, garmin, sid, zones, early=False)]
+
+
 def retry_sync_error(repo: Repo, garmin: GarminPort, session_id: int) -> None:
     """Relance l'étape Garmin qui avait échoué pour une séance en `sync_error`."""
     session = _get(repo, session_id)
@@ -343,8 +352,4 @@ def apply_proposal(repo: Repo, garmin: GarminPort, proposal_id: int) -> list[int
         proposal.status = "accepted"
         db.add(proposal)
 
-    failed = []
-    for sid in to_sync:
-        if not _sync(repo, garmin, sid, zones, early=False):
-            failed.append(sid)
-    return failed
+    return sync_marked(repo, garmin, to_sync, zones)

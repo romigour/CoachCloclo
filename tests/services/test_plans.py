@@ -233,7 +233,8 @@ def monday_garmin():
 
 
 def _accepted_goal(repo, garmin, **overrides) -> Goal:
-    """Objectif validé (14 semaines, 3 séances par semaine) ; séance 1 des semaines 13-14 exportée."""
+    """Objectif validé (14 semaines, 3 séances par semaine) ; séance 1 des semaines 13-14 exportée
+    (planifiée sur le faux Garmin)."""
     goal = create_goal(repo, garmin, goal_input(**overrides))
     for w in range(1, 15):
         for o in (1, 2, 3):
@@ -242,6 +243,9 @@ def _accepted_goal(repo, garmin, **overrides) -> Goal:
                 s.status = "exported"
                 s.scheduled_date = date(2026, 11, 3) + timedelta(weeks=w - 1)  # mardi
                 s.garmin_workout_id, s.garmin_schedule_id = 100 + w, 200 + w
+                garmin.workouts[100 + w] = {}
+                garmin.schedules[200 + w] = (100 + w, s.scheduled_date)
+                garmin.calendar.setdefault(s.scheduled_date, []).append(200 + w)
             repo.add(s)
     accept_plan(repo, goal.id)
     return repo.active_goal()
@@ -264,7 +268,7 @@ def test_update_goal_target_only(repo, monday_garmin):
         "L'athlète a modifié son objectif : temps visé 5 h 30 au lieu de 5 h 00. "
         "Adapte les séances à venir en conséquence."
     ) in llm.calls[0]
-    assert len(repo.sessions(goal.id)) == 42
+    assert len(repo.sessions(goal.id)) == 42 and monday_garmin.calls == []
 
 
 def test_update_goal_target_without_previous(repo, monday_garmin):
@@ -281,11 +285,11 @@ def test_update_goal_earlier_date_removes_weeks(repo, monday_garmin):
     llm = FakeLLMProvider([adjustment_json()])
     update_goal(repo, monday_garmin, llm, goal.id, GoalUpdate(race_date=date(2027, 1, 24)))
     assert repo.active_goal().race_date == date(2027, 1, 24)
-    late = [s for s in repo.sessions(goal.id) if s.week_index > 12]
-    assert len(late) == 2 and all(s.pending_removal and s.status == "sync_error" for s in late)
-    assert {(s.pending_old_workout_id, s.pending_old_schedule_id) for s in late} == {(113, 213), (114, 214)}
-    assert all(s.garmin_workout_id is None for s in late)
-    assert len(repo.sessions(goal.id)) == 38
+    # todo des semaines 13-14 supprimées ; exportées retirées de la montre puis supprimées
+    assert max(s.week_index for s in repo.sessions(goal.id)) == 12
+    assert len(repo.sessions(goal.id)) == 36
+    assert monday_garmin.calls == ["unschedule", "delete_workout"] * 2
+    assert monday_garmin.workouts == {} and monday_garmin.schedules == {} and monday_garmin.calendar == {}
     assert "course déplacée du 07/02/2027 au 24/01/2027" in llm.calls[0]
     assert "| semaine 12 |" in llm.calls[0] and "| semaine 13 |" not in llm.calls[0]
 
@@ -298,7 +302,8 @@ def test_update_goal_date_in_current_week(repo, monday_garmin):
     )
     sessions = repo.sessions(goal.id)
     assert [s.week_index for s in sessions if s.status == "todo"] == [1, 1, 1]
-    assert [s.week_index for s in sessions if s.pending_removal] == [13, 14]
+    assert [s.week_index for s in sessions] == [1, 1, 1]
+    assert monday_garmin.workouts == {} and monday_garmin.schedules == {}
 
 
 def test_update_goal_removes_exported_after_race_day(repo, monday_garmin):
@@ -309,10 +314,27 @@ def test_update_goal_removes_exported_after_race_day(repo, monday_garmin):
         GoalUpdate(race_date=date(2027, 1, 25)),
     )
     week13 = repo.sessions(goal.id, week_index=13)
-    assert [(s.order, s.status, s.pending_removal) for s in week13] == [
-        (1, "sync_error", True), (2, "todo", False), (3, "todo", False),  # sans date : conservées
-    ]
-    assert [s.pending_removal for s in repo.sessions(goal.id, week_index=14)] == [True]
+    assert [(s.order, s.status) for s in week13] == [(2, "todo"), (3, "todo")]  # sans date : conservées
+    assert repo.sessions(goal.id, week_index=14) == []
+    assert monday_garmin.workouts == {} and monday_garmin.schedules == {}
+
+
+def test_update_goal_garmin_failure_keeps_edit(repo, monday_garmin):
+    goal = _accepted_goal(repo, monday_garmin)
+    monday_garmin.fail_on = {"delete_workout"}
+    _, pid = update_goal(
+        repo, monday_garmin, FakeLLMProvider([adjustment_json()]), goal.id,
+        GoalUpdate(race_date=date(2027, 1, 24)),
+    )
+    assert repo.active_goal().race_date == date(2027, 1, 24)
+    assert _proposals(repo) == [(pid, "pending")]
+    late = [s for s in repo.sessions(goal.id) if s.week_index > 12]
+    assert len(late) == 2
+    for s in late:
+        assert (s.status, s.pending_removal) == ("sync_error", True)
+        assert s.sync_error.startswith("Synchronisation Garmin échouée")
+        assert s.pending_old_schedule_id is None and s.pending_old_workout_id is not None
+    assert monday_garmin.schedules == {} and set(monday_garmin.workouts) == {113, 114}
 
 
 def test_update_goal_later_date_allows_new_weeks(repo, monday_garmin):
@@ -323,7 +345,7 @@ def test_update_goal_later_date_allows_new_weeks(repo, monday_garmin):
     assert len(llm.calls) == 1
     with repo.transaction() as db:
         assert json.loads(db.get(Proposal, pid).changes_json)[0]["session"]["week_index"] == 16
-    assert len(repo.sessions(goal.id)) == 42 and not any(s.pending_removal for s in repo.sessions(goal.id))
+    assert len(repo.sessions(goal.id)) == 42 and monday_garmin.calls == []
 
 
 def test_update_goal_makes_pending_stale(repo, monday_garmin):

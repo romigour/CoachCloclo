@@ -8,6 +8,15 @@
     <link rel="icon" href="/icon-192.png" />
     <link rel="apple-touch-icon" href="/icon-192.png" />
     <title>CoachCloclo</title>
+    <script>
+      // thème posé avant le premier affichage, même règle que src/lib/theme.svelte.ts
+      (function () {
+        var c;
+        try { c = localStorage.getItem("coach.theme"); } catch (e) {}
+        var dark = c === "dark" || (c !== "light" && window.matchMedia("(prefers-color-scheme: dark)").matches);
+        document.documentElement.dataset.theme = dark ? "dark" : "light";
+      })();
+    </script>
   </head>
   <body>
     <div id="app"></div>

@@ -5,6 +5,7 @@
   import GarminLogin from "../components/GarminLogin.svelte";
   import LanSettings from "../components/LanSettings.svelte";
   import UpdateSettings from "../components/UpdateSettings.svelte";
+  import ThemeSettings from "../components/ThemeSettings.svelte";
   import Icon from "../components/Icon.svelte";
 
   let { onchanged, onconnected }: { onchanged?: () => void; onconnected?: () => void } = $props();
@@ -119,6 +120,8 @@
     <p><a href="#/welcome">Assistant de configuration</a> : installer ou reconnecter Claude, puis Garmin.</p>
   </section>
 {/if}
+
+<ThemeSettings />
 
 <UpdateSettings />
 

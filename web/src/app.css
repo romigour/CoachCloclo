@@ -33,40 +33,40 @@
 
   --font-display: "Manrope Variable", "Segoe UI Variable Display", "Segoe UI", system-ui, sans-serif;
   --font-text: "Inter Variable", "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
-  color-scheme: light dark;
+  color-scheme: light;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #141615;
-    --surface: #1c1f1e;
-    --sunken: #242826;
-    --border: #323735;
-    --divider: #2a2e2c;
-    --text: #e8eae8;
-    --text-2: #c4c9c6;
-    --muted: #9aa29e;
-    --accent: #6fb5a2;
-    --accent-strong: #8fcbbb;
-    --accent-soft: #1f3530;
-    --accent-text: #0e1a17;
-    --todo: #e9c27c;
-    --todo-soft: #3a2f17;
-    --danger: #f0a083;
-    --danger-soft: #3d241b;
-    --z1: #2c4a42;
-    --z2: #3f6e62;
-    --z3: #5e9f8d;
-    --z4: #8cc4b4;
-    --z5: #c4e3da;
-    --fam-run: #22987c;
-    --fam-trail: #c88034;
-    --fam-bike: #6c72e6;
-    --fam-swim: #1aa0c4;
-    --fam-strength: #c75b80;
-    --fam-walk: #7ea12f;
-    --fam-other: #7d8480;
-  }
+/* thème effectif posé par lib/theme.svelte.ts (et le script inline d'index.html) */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #141615;
+  --surface: #1c1f1e;
+  --sunken: #242826;
+  --border: #323735;
+  --divider: #2a2e2c;
+  --text: #e8eae8;
+  --text-2: #c4c9c6;
+  --muted: #9aa29e;
+  --accent: #6fb5a2;
+  --accent-strong: #8fcbbb;
+  --accent-soft: #1f3530;
+  --accent-text: #0e1a17;
+  --todo: #e9c27c;
+  --todo-soft: #3a2f17;
+  --danger: #f0a083;
+  --danger-soft: #3d241b;
+  --z1: #2c4a42;
+  --z2: #3f6e62;
+  --z3: #5e9f8d;
+  --z4: #8cc4b4;
+  --z5: #c4e3da;
+  --fam-run: #22987c;
+  --fam-trail: #c88034;
+  --fam-bike: #6c72e6;
+  --fam-swim: #1aa0c4;
+  --fam-strength: #c75b80;
+  --fam-walk: #7ea12f;
+  --fam-other: #7d8480;
 }
 
 * { box-sizing: border-box; }

@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 
 import pytest
@@ -48,6 +48,11 @@ def make_goal(repo, garmin, *, kind="trail", distance_km=10, gpx="trail_wpt.gpx"
     return create_goal(repo, garmin, data)
 
 
+def set_target(repo, goal, seconds, source="user"):
+    goal.target_time_s, goal.target_source = seconds, source
+    return repo.update(goal)
+
+
 def test_first_read_creates_with_waypoints(repo, coach_home, garmin):
     goal = make_goal(repo, garmin)
     view = get_race_view(repo, garmin, goal.id)
@@ -70,10 +75,9 @@ def test_save_then_read(repo, coach_home, garmin):
     goal = make_goal(repo, garmin)
     get_race_view(repo, garmin, goal.id)
     stations = [AidStation(km=7, name="B"), AidStation(km=3, name="A")]
-    saved = save_settings(repo, garmin, goal.id, RaceSettings(target_time_s=3600, aid_stations=stations))
+    saved = save_settings(repo, garmin, goal.id, RaceSettings(aid_stations=stations))
     assert [s.name for s in saved.settings.aid_stations] == ["A", "B"]
     view = get_race_view(repo, garmin, goal.id)
-    assert view.settings.target_time_s == 3600
     assert [s.name for s in view.settings.aid_stations] == ["A", "B"]
 
 
@@ -86,7 +90,8 @@ def test_station_beyond_gpx_distance_rejected(repo, coach_home, garmin):
 
 def test_target_below_stops_rejected(repo, coach_home, garmin):
     goal = make_goal(repo, garmin)
-    settings = RaceSettings(target_time_s=60, aid_stations=[AidStation(km=5, name="X", stop_min=3)])
+    set_target(repo, goal, 60)
+    settings = RaceSettings(aid_stations=[AidStation(km=5, name="X", stop_min=3)])
     with pytest.raises(CoachError, match="arrêts"):
         save_settings(repo, garmin, goal.id, settings)
 
@@ -189,10 +194,9 @@ def test_race_line_for_prompt_ignores_broken_strategy(repo, coach_home, garmin):
     goal = make_goal(repo, garmin)
     get_race_view(repo, garmin, goal.id)
     strategy = repo.race_strategy(goal.id)
-    strategy.settings_json = RaceSettings(
-        target_time_s=60, aid_stations=[AidStation(km=5, name="X", stop_min=3)]
-    ).model_dump_json()
+    strategy.settings_json = RaceSettings(aid_stations=[AidStation(km=5, name="X", stop_min=3)]).model_dump_json()
     repo.update(strategy)
+    goal = set_target(repo, goal, 60)
     with pytest.raises(CoachError):
         race_plan_for(repo, goal, garmin.today())
     assert race_line_for_prompt(repo, goal, garmin.today()) is None
@@ -228,15 +232,6 @@ def test_station_beyond_distance_ignored_on_read(repo, coach_home, garmin):
         save_settings(repo, garmin, goal.id, view.settings)
 
 
-def test_target_faster_than_floor_rejected(repo, coach_home, garmin):
-    goal = make_goal(repo, garmin)
-    with pytest.raises(CoachError, match="2:30/km"):
-        save_settings(repo, garmin, goal.id, RaceSettings(target_time_s=225))  # « 3:45 » lu en m:ss
-    with pytest.raises(CoachError, match="2:30/km"):
-        save_settings(repo, garmin, goal.id, RaceSettings(target_time_s=1450))
-    assert save_settings(repo, garmin, goal.id, RaceSettings(target_time_s=1600)).settings.target_time_s == 1600
-
-
 def test_export_stale_after_changes(repo, coach_home, garmin):
     goal = make_goal(repo, garmin)
     assert get_race_view(repo, garmin, goal.id).export_stale is False
@@ -244,7 +239,39 @@ def test_export_stale_after_changes(repo, coach_home, garmin):
     assert view.export_stale is False
     assert get_race_view(repo, garmin, goal.id).export_stale is False
     assert save_settings(repo, garmin, goal.id, view.settings).export_stale is False  # réglages identiques
-    assert save_settings(repo, garmin, goal.id, RaceSettings(target_time_s=4000)).export_stale is True
+    assert save_settings(repo, garmin, goal.id, RaceSettings(start_time="07:00")).export_stale is True
     assert export_race(repo, garmin, goal.id).export_stale is False
     garmin._metrics = Metrics(hr_max=190, hr_rest=50, pred_10k_s=2400)
     assert refresh_basis(repo, garmin, goal.id).export_stale is True
+
+
+def test_view_uses_goal_target(repo, coach_home, garmin):
+    goal = set_target(repo, make_goal(repo, garmin), 3600, "claude")
+    view = get_race_view(repo, garmin, goal.id)
+    assert view.plan.target_time_s == 3600 and view.plan.reference_time_s == 3600
+    assert (view.target_time_s, view.target_source) == (3600, "claude")
+
+
+def test_old_settings_with_target_still_load(repo, coach_home, garmin):
+    goal = set_target(repo, make_goal(repo, garmin), 3600)
+    get_race_view(repo, garmin, goal.id)
+    strategy = repo.race_strategy(goal.id)
+    strategy.settings_json = '{"target_time_s": 999, "start_time": "08:00"}'
+    repo.update(strategy)
+    view = get_race_view(repo, garmin, goal.id)
+    assert view.plan.target_time_s == 3600 and view.target_time_s == 3600
+
+
+def test_export_stale_after_goal_date_change(repo, coach_home, garmin):
+    goal = make_goal(repo, garmin)
+    assert export_race(repo, garmin, goal.id).export_stale is False
+    goal.race_date += timedelta(days=7)
+    repo.update(goal)
+    assert get_race_view(repo, garmin, goal.id).export_stale is True
+
+
+def test_export_stale_after_goal_target_change(repo, coach_home, garmin):
+    goal = make_goal(repo, garmin)
+    assert export_race(repo, garmin, goal.id).export_stale is False
+    set_target(repo, goal, 3600)
+    assert get_race_view(repo, garmin, goal.id).export_stale is True

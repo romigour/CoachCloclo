@@ -852,9 +852,10 @@ def test_race_plan_routes(make_client):
     assert r.status_code == 422
     assert any("cutoff" in e["loc"] for e in r.json()["detail"])
 
-    r = client.put(url, json={"target_time_s": 18000})
+    r = client.put(url, json={"start_time": "07:30"})
     assert r.status_code == 200
-    assert r.json()["settings"]["target_time_s"] == 18000
+    assert r.json()["settings"]["start_time"] == "07:30"
+    assert r.json()["target_time_s"] is None
 
     assert client.post(f"{url}/refresh").status_code == 200
     assert client.post(f"{url}/reimport").status_code == 200

@@ -16,7 +16,7 @@ from coach.plan.models import Goal, RaceStrategy
 from coach.plan.repo import Repo
 from coach.services import CoachError
 from coach.services.context import zones_from_metrics
-from coach.services.plans import MIN_PACE_S_KM, TOO_FAST, _get_goal
+from coach.services.plans import _get_goal
 
 MAX_PROFILE_POINTS = 500
 _GARMIN_ERRORS = (GarminUnavailable, GarminAuthRequired, GarminRateLimited)
@@ -32,6 +32,8 @@ class RaceView(BaseModel):
     goal_type: Literal["route", "trail"]
     race_date: date
     settings: RaceSettings
+    target_time_s: int | None
+    target_source: str | None
     basis_date: date
     profile: list[tuple[float, float]] | None
     plan: RacePlan
@@ -76,9 +78,10 @@ def _fmt_km(km: float) -> str:
     return f"{round(km, 2):g}".replace(".", ",")
 
 
-def _fingerprint(strategy: RaceStrategy) -> str:
-    """Empreinte des réglages et de la base : change dès que le plan envoyé est périmé."""
-    return hashlib.sha256(f"{strategy.settings_json}|{strategy.basis_json}".encode()).hexdigest()
+def _fingerprint(strategy: RaceStrategy, goal: Goal) -> str:
+    """Empreinte des réglages, de la base, de la date et du temps visé : change dès que le plan envoyé est périmé."""
+    raw = f"{strategy.settings_json}|{strategy.basis_json}|{goal.race_date}|{goal.target_time_s}"
+    return hashlib.sha256(raw.encode()).hexdigest()
 
 
 def _downsample(points: list[ProfilePoint]) -> list[tuple[float, float]]:
@@ -117,11 +120,10 @@ def _compute(
             basis=basis,
             settings=settings,
             today=today,
+            target_time_s=goal.target_time_s,
         )
     except ValueError as exc:
         raise CoachError(str(exc)) from exc
-    if strict and settings.target_time_s is not None and settings.target_time_s < MIN_PACE_S_KM * distance:
-        raise CoachError(TOO_FAST)
     plan.warnings.extend(_IGNORED.format(st.name) for st in beyond)
     if goal.gpx_path and data is None:
         plan.warnings.append(_NO_FILE)
@@ -137,12 +139,14 @@ def _view(strategy: RaceStrategy, goal: Goal, today: date) -> RaceView:
         goal_type=goal.type,
         race_date=goal.race_date,
         settings=RaceSettings.model_validate_json(strategy.settings_json),
+        target_time_s=goal.target_time_s,
+        target_source=goal.target_source,
         basis_date=RaceBasis.model_validate_json(strategy.basis_json).captured_on,
         profile=_downsample(prof) if prof else None,
         plan=plan,
         workout_id=strategy.garmin_workout_id,
         export_error=strategy.export_error,
-        export_stale=strategy.garmin_workout_id is not None and strategy.exported_hash != _fingerprint(strategy),
+        export_stale=strategy.garmin_workout_id is not None and strategy.exported_hash != _fingerprint(strategy, goal),
     )
 
 
@@ -212,7 +216,7 @@ def race_line_for_prompt(repo: Repo, goal: Goal, today: date) -> str | None:
 
 # --- export vers la montre -------------------------------------------------------------------
 
-_NO_REFERENCE = "Pas de temps de référence : saisis un temps visé"
+_NO_REFERENCE = "Pas de temps de référence : fixe un temps visé sur l'objectif"
 
 
 def _cleanup_old(repo: Repo, garmin: GarminPort, strategy: RaceStrategy) -> RaceStrategy:
@@ -264,7 +268,7 @@ def export_race(repo: Repo, garmin: GarminPort, goal_id: int) -> RaceView:
     strategy.pending_old_schedule_id = strategy.garmin_schedule_id
     strategy.garmin_workout_id, strategy.garmin_schedule_id = workout_id, schedule_id
     strategy.export_error = None
-    strategy.exported_hash = _fingerprint(strategy)
+    strategy.exported_hash = _fingerprint(strategy, goal)
     strategy = repo.update(strategy)
     try:
         strategy = _cleanup_old(repo, garmin, strategy)

@@ -8,6 +8,7 @@
   import SessionCard from "../components/SessionCard.svelte";
   import Icon from "../components/Icon.svelte";
   import EventDialog from "../components/EventDialog.svelte";
+  import InjuryBanner from "../components/InjuryBanner.svelte";
 
   let {
     version = 0,
@@ -48,6 +49,10 @@
   });
 
   let declaring = $state(false);
+
+  function goProposal() {
+    location.hash = "#/proposal";
+  }
 
   function fail(e: unknown) {
     error = e;
@@ -96,6 +101,7 @@
   {:else if !plan.goal.plan_accepted}
     <p class="card">Ton plan n'est pas encore validé. <a href="#/goal">Relire le brouillon</a></p>
   {:else}
+    <InjuryBanner injury={plan.open_injury ?? null} goalId={plan.goal.id} {today} onproposal={goProposal} onresumed={load} />
     <section class="week-strip" aria-label="Semaine en cours">
       {#each strip as d (d.date)}
         {@const s = d.sessions[0]}

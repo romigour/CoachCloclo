@@ -26,7 +26,8 @@ test("distance presets fill the distance field", async () => {
 
 const mkGoal = (extra = {}) => ({
   id: 1, type: "route", distance_km: 21.1, d_plus_m: 0, race_date: "2027-03-01", sessions_per_week: 4,
-  plan_start: "2027-01-01", plan_accepted: false, gpx_summary: null, target_time_s: null, target_source: null, ...extra,
+  plan_start: "2027-01-01", plan_accepted: false, gpx_summary: null, target_time_s: null, target_source: null,
+  available_days: ["lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche"], long_run_day: null, ...extra,
 });
 
 function fillBase() {
@@ -97,4 +98,52 @@ test("draft shows the Claude estimate right after generation, without remount", 
   fillBase();
   await fireEvent.submit(screen.getByRole("button", { name: "Générer le plan avec Claude" }).closest("form")!);
   expect(await screen.findByText(/Temps estimé par Claude : 1 h 52/)).toBeInTheDocument();
+});
+
+test("creation sends the chosen available days and long run day", async () => {
+  const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+    if (init?.method === "POST" && url.endsWith("/goals")) return new Response(JSON.stringify(mkGoal()), { status: 200 });
+    if (url.endsWith("/generate")) return new Response(JSON.stringify({ summary: "ok", weeks: 8 }), { status: 200 });
+    return new Response(JSON.stringify({ goal: null, weeks: [] }), { status: 200 });
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  render(Goal);
+  for (const d of ["Lundi", "Mercredi", "Vendredi", "Samedi"]) await fireEvent.click(screen.getByRole("checkbox", { name: d }));
+  await fireEvent.change(screen.getByLabelText("Jour de la sortie longue"), { target: { value: "dimanche" } });
+  fillBase();
+  await fireEvent.submit(screen.getByRole("button", { name: "Générer le plan avec Claude" }).closest("form")!);
+  await vi.waitFor(() => {
+    const post = fetchMock.mock.calls.find(([u, i]) => String(u).endsWith("/goals") && (i as RequestInit)?.method === "POST");
+    expect(post).toBeTruthy();
+    const body = (post![1] as RequestInit).body as FormData;
+    expect(body.get("available_days")).toBe("mardi,jeudi,dimanche");
+    expect(body.get("long_run_day")).toBe("dimanche");
+  });
+});
+
+test("creation sends include_bike when the option is ticked", async () => {
+  const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+    if (init?.method === "POST" && url.endsWith("/goals")) return new Response(JSON.stringify(mkGoal()), { status: 200 });
+    if (url.endsWith("/generate")) return new Response(JSON.stringify({ summary: "ok", weeks: 8 }), { status: 200 });
+    return new Response(JSON.stringify({ goal: null, weeks: [] }), { status: 200 });
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  render(Goal);
+  await fireEvent.click(screen.getByRole("checkbox", { name: /Inclure du vélo/ }));
+  fillBase();
+  await fireEvent.submit(screen.getByRole("button", { name: "Générer le plan avec Claude" }).closest("form")!);
+  await vi.waitFor(() => {
+    const post = fetchMock.mock.calls.find(([u, i]) => String(u).endsWith("/goals") && (i as RequestInit)?.method === "POST");
+    expect(post).toBeTruthy();
+    expect(((post![1] as RequestInit).body as FormData).get("include_bike")).toBe("true");
+  });
+});
+
+test("creation is disabled with fewer days than sessions per week", async () => {
+  noPlan();
+  render(Goal);
+  await fireEvent.click(screen.getByRole("radio", { name: "3" }));
+  for (const d of ["Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi"]) await fireEvent.click(screen.getByRole("checkbox", { name: d }));
+  expect(screen.getByText("Coche au moins 3 jours")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Générer le plan avec Claude" })).toBeDisabled();
 });

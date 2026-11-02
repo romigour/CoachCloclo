@@ -13,6 +13,8 @@
     race: "M5 21V4M5 4h4v3h4V4h4v3h2v6h-2v-3h-4v3H9v-3H5",
     close: "M6 6l12 12M18 6L6 18",
     arrow: "M5 12h14M13 6l6 6-6 6",
+    // deux roues, cadre et guidon
+    bike: "M6 14a3.5 3.5 0 1 0 0 7a3.5 3.5 0 1 0 0-7M18 14a3.5 3.5 0 1 0 0 7a3.5 3.5 0 1 0 0-7M6 17.5l4-8h6l2 8M10 9.5l3 8M9 7h3",
     upload: "M12 16V4M7 9l5-5 5 5M4 16v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3",
   } as const;
 

@@ -46,3 +46,11 @@ export function daysUntil(today: string, raceDate: string): number {
   const ms = Date.parse(`${raceDate}T00:00:00Z`) - Date.parse(`${today}T00:00:00Z`);
   return Math.round(ms / 86_400_000);
 }
+
+/** Séances pas encore faites de la semaine en cours et des suivantes (candidates à une fatigue). */
+export function openSessions(weeks: Week[], today: string): Session[] {
+  return weeks
+    .filter((w) => addDays(w.week_monday, 6) >= today)
+    .flatMap((w) => w.sessions)
+    .filter((s) => s.status !== "done");
+}

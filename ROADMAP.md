@@ -14,6 +14,7 @@ Idées d'amélioration, dans l'ordre où elles ont été notées.
 - [x] Stratégie du jour J : prédiction de temps, allure ou temps par segment à partir du GPX (montées, descentes), plan de ravitaillement et barrières horaires en trail, export sur la montre
 - [x] Icône des Réglages en engrenage
 - [x] Choix du thème Auto / Clair / Sombre dans les Réglages
+- [x] Disponibilités (jours possibles, sortie longue), imprévus (indisponibilité, blessure ou maladie, semaine allégée, fatigue) avec proposition d'ajustement, et séances vélo d'endurance douce
 - [x] Nouveau logo (« C » en virage de piste) décliné en favicon, PWA et icône Windows
 - [x] Allure min/km (ou plage de FC en bpm) à côté des zones dans le détail des séances
 

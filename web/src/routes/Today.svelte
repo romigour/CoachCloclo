@@ -3,10 +3,12 @@
   import { formatActivity } from "../lib/activity";
   import { formatDay, todayIso } from "../lib/dates";
   import { STATUS_LABEL } from "../lib/labels";
-  import { currentWeek, days, daysUntil, focusSession } from "../lib/week";
+  import { currentWeek, days, daysUntil, focusSession, openSessions } from "../lib/week";
   import ErrorBanner from "../components/ErrorBanner.svelte";
   import SessionCard from "../components/SessionCard.svelte";
   import Icon from "../components/Icon.svelte";
+  import EventDialog from "../components/EventDialog.svelte";
+  import InjuryBanner from "../components/InjuryBanner.svelte";
 
   let {
     version = 0,
@@ -46,6 +48,12 @@
     load();
   });
 
+  let declaring = $state(false);
+
+  function goProposal() {
+    location.hash = "#/proposal";
+  }
+
   function fail(e: unknown) {
     error = e;
     report?.(e);
@@ -63,6 +71,9 @@
     </p>
     <h1>Aujourd'hui</h1>
   </div>
+  {#if plan?.goal?.plan_accepted}
+    <button onclick={() => (declaring = true)}>Signaler un imprévu</button>
+  {/if}
   {#if plan?.goal}
     <p>{goalLabel(plan.goal)} · <strong>J-{daysUntil(today, plan.goal.race_date)}</strong></p>
   {/if}
@@ -70,12 +81,27 @@
 
 <ErrorBanner {error} onpin={load} />
 
+{#if declaring && plan?.goal}
+  <EventDialog
+    goal={plan.goal}
+    weeks={plan.weeks}
+    sessions={openSessions(plan.weeks, today)}
+    {today}
+    onclose={() => (declaring = false)}
+    onproposal={() => {
+      declaring = false;
+      location.hash = "#/proposal";
+    }}
+  />
+{/if}
+
 {#if plan}
   {#if !plan.goal}
     <p class="card">Aucun objectif pour l'instant. <a href="#/goal">Créer un objectif</a></p>
   {:else if !plan.goal.plan_accepted}
     <p class="card">Ton plan n'est pas encore validé. <a href="#/goal">Relire le brouillon</a></p>
   {:else}
+    <InjuryBanner injury={plan.open_injury ?? null} goalId={plan.goal.id} {today} onproposal={goProposal} onresumed={load} />
     <section class="week-strip" aria-label="Semaine en cours">
       {#each strip as d (d.date)}
         {@const s = d.sessions[0]}

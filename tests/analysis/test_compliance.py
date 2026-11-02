@@ -1,6 +1,9 @@
 from datetime import date
 
 from coach.analysis.compliance import (
+    CYCLING_TYPES,
+    RUNNING_TYPES,
+    activity_types_for,
     estimate_duration_min,
     hard_session_warnings,
     mark_missed,
@@ -177,3 +180,20 @@ def test_warning_counts_scheduled_sync_error_as_exported():
     assert hard_session_warnings(vma, WED, [err])
     err.pending_removal = True
     assert not hard_session_warnings(vma, WED, [err])
+
+
+def test_road_biking_activity_matches_exported_bike_session():
+    s = _session(1, sport="bike")
+    a = _act(10, type_key="road_biking")
+    assert match_activities([s], [a]) == [(1, 10)]
+
+
+def test_run_not_matched_to_bike_session_and_vice_versa():
+    assert match_activities([_session(1, sport="bike")], [_act(10, type_key="running")]) == []
+    assert match_activities([_session(1)], [_act(10, type_key="road_biking")]) == []
+
+
+def test_activity_types_for_sport():
+    assert activity_types_for("run") == RUNNING_TYPES
+    assert activity_types_for("bike") == CYCLING_TYPES
+    assert "indoor_cycling" in CYCLING_TYPES

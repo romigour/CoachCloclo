@@ -46,6 +46,7 @@ class SessionSpec(_Strict):
     title: str
     description: str
     chaining_note: str | None = None
+    sport: Literal["run", "bike"] = "run"
     steps: list[StepSpec | RepeatSpec] = Field(min_length=1)
 
     def iter_steps(self):

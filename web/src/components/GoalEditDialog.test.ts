@@ -8,6 +8,7 @@ afterEach(() => vi.unstubAllGlobals());
 const goal: Goal = {
   id: 3, type: "route", distance_km: 21.1, d_plus_m: 0, race_date: "2027-03-01", sessions_per_week: 4,
   plan_start: "2027-01-01", plan_accepted: true, gpx_summary: null, target_time_s: 6720, target_source: "claude",
+  available_days: ["lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche"], long_run_day: "dimanche", include_bike: false,
 };
 
 function mock(status = 200, body: unknown = { goal, proposal_id: 9 }) {
@@ -61,4 +62,41 @@ test("no change or invalid time disables save", async () => {
   expect(save).toBeDisabled();
   await fireEvent.input(screen.getByLabelText("Temps visé (h:mm)"), { target: { value: "1:55" } });
   expect(save).toBeEnabled();
+});
+
+test("changing only the days sends only available_days", async () => {
+  const f = mock();
+  const onsaved = vi.fn();
+  open({ onsaved });
+  await fireEvent.click(screen.getByRole("checkbox", { name: "Lundi" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Enregistrer" }));
+  await waitFor(() => expect(onsaved).toHaveBeenCalled());
+  expect(patchBody(f)).toEqual({ available_days: ["mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche"] });
+});
+
+test("choosing Aucun sends an empty long_run_day", async () => {
+  const f = mock();
+  const onsaved = vi.fn();
+  open({ onsaved });
+  await fireEvent.change(screen.getByLabelText("Jour de la sortie longue"), { target: { value: "" } });
+  await fireEvent.click(screen.getByRole("button", { name: "Enregistrer" }));
+  await waitFor(() => expect(onsaved).toHaveBeenCalled());
+  expect(patchBody(f)).toEqual({ long_run_day: "" });
+});
+
+test("too few days disables save", async () => {
+  open();
+  for (const d of ["Lundi", "Mardi", "Mercredi", "Jeudi"]) await fireEvent.click(screen.getByRole("checkbox", { name: d }));
+  expect(screen.getByText("Coche au moins 4 jours")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Enregistrer" })).toBeDisabled();
+});
+
+test("sends include_bike when the bike option changes", async () => {
+  const f = mock();
+  const onsaved = vi.fn();
+  open({ onsaved });
+  await fireEvent.click(screen.getByRole("checkbox", { name: /Inclure du vélo/ }));
+  await fireEvent.click(screen.getByRole("button", { name: "Enregistrer" }));
+  await waitFor(() => expect(onsaved).toHaveBeenCalledWith(9));
+  expect(patchBody(f)).toEqual({ include_bike: true });
 });

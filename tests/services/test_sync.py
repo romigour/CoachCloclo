@@ -8,7 +8,8 @@ from coach.config import load_settings
 from coach.garmin.port import ActivitySummary, FakeGarminClient, LapSummary, Metrics
 from coach.llm.provider import FakeLLMProvider, LLMUsageLimit
 from coach.llm.schemas import AdjustmentResponse, Change
-from coach.plan.models import Activity, Proposal
+from coach.plan.models import Activity, Event, Proposal
+from coach.services.events import delete_event
 from tests.llm.factories import make_session
 from coach.services.sync import SyncResult, sync
 from tests.plan.factories import make_db_session, make_goal
@@ -267,3 +268,19 @@ def test_proposal_prompt_contains_step_detail(repo, coach_home, accepted_plan):
     llm = FakeLLMProvider([adjustment_json()])
     sync(repo, garmin, llm, now=NOW)
     assert "· échauffement" in llm.calls[0]
+
+
+def test_sync_skips_proposal_during_open_injury(repo, coach_home, fake_garmin, accepted_plan):
+    repo.add(Event(goal_id=accepted_plan.id, kind="injury", start_date=date(2026, 11, 3)))
+    llm = FakeLLMProvider([adjustment_json()])
+    r = sync(repo, fake_garmin, llm, now=NOW)
+    assert r.matched == 1 and r.proposal_id is None and llm.calls == []
+    assert load_settings().proposal_due is True
+
+
+def test_deleting_open_injury_resumes_sync_proposals(repo, coach_home, fake_garmin, accepted_plan):
+    injury = repo.add(Event(goal_id=accepted_plan.id, kind="injury", start_date=date(2026, 11, 3)))
+    assert sync(repo, fake_garmin, FakeLLMProvider([adjustment_json()]), now=NOW).proposal_id is None
+    delete_event(repo, injury.id)
+    r = sync(repo, fake_garmin, FakeLLMProvider([adjustment_json()]), now=NOW)
+    assert r.proposal_id is not None and load_settings().proposal_due is False

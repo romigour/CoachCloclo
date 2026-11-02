@@ -24,14 +24,17 @@ from coach.garmin.port import (
 )
 from coach.llm.schemas import Change
 from coach.plan import calendar
-from coach.plan.models import Goal, Proposal, Session
+from coach.plan.constraints import allowed_days, blocked_periods
+from coach.plan.models import ALL_DAYS, Goal, Proposal, Session
 from coach.plan.repo import Repo
 from coach.services import CoachError
+from coach.services.context import load_constraints
 
 _GARMIN_ERRORS = (GarminUnavailable, GarminAuthRequired, GarminRateLimited)
 _EARLY_ERRORS = (GarminAuthRequired, GarminRateLimited)
 _CHANGES = TypeAdapter(list[Change])
 _PENDING_MSG = "Synchronisation Garmin en cours"
+_UNAVAILABLE_DAY = "Jour hors de tes disponibilités"
 
 
 class ExportError(CoachError):
@@ -74,7 +77,16 @@ def _check_not_past(garmin: GarminPort, d: date) -> None:
 
 
 def _warnings(repo: Repo, session: Session, d: date) -> list[str]:
-    return hard_session_warnings(session, d, repo.sessions(session.goal_id))
+    warnings = hard_session_warnings(session, d, repo.sessions(session.goal_id))
+    goal = _goal(repo, session)
+    # `today = d` : un arrêt ouvert bloque jusqu'au dimanche de la semaine de `d`
+    constraints = load_constraints(repo, goal, d)
+    if ALL_DAYS[d.weekday()] not in allowed_days(constraints, d):
+        warnings.append(_UNAVAILABLE_DAY)
+    for start, end, label in blocked_periods(constraints):
+        if start <= d <= end:
+            warnings.append(f"Pendant ton imprévu : {label}")
+    return warnings
 
 
 def _name(session: Session) -> str:
@@ -335,7 +347,7 @@ def apply_proposal(repo: Repo, garmin: GarminPort, proposal_id: int) -> list[int
                 fresh = Session.from_spec(c.session, goal_id=s.goal_id)
                 for f in (
                     "week_index", "order", "suggested_day", "chaining_note", "type",
-                    "target_kind", "title", "description", "steps_json",
+                    "sport", "target_kind", "title", "description", "steps_json",
                 ):  # fmt: skip
                     setattr(s, f, getattr(fresh, f))
                 s.est_duration_min = s.est_distance_km = None

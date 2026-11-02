@@ -4,6 +4,8 @@ Application locale qui génère tes plans d'entraînement running/trail à parti
 
 La page **Stats** (page d'accueil dès que des activités sont importées) donne une vue d'ensemble de toutes tes activités Garmin : chiffres clés, régularité, volume, progression en course, records et compétitions, avec des filtres par période et par sport. Elle ne demande pas d'objectif : la synchronisation importe tes activités dès que Garmin est connecté, puis l'historique complet est importé en arrière-plan (reprise possible après une interruption, et « Réimporter l'historique » dans les Réglages).
 
+**Disponibilités, imprévus et vélo.** À la création de l'objectif (et dans « Modifier l'objectif »), tu coches les jours où tu peux t'entraîner et, si tu veux, le jour de ta sortie longue : le plan ne place aucune séance ailleurs. Quand la vie s'en mêle, « Signaler un imprévu » enregistre une indisponibilité (vacances, déplacement), une blessure ou une maladie (avec ou sans date de reprise), une semaine allégée ou une fatigue : Claude propose aussitôt un ajustement, que tu valides ou refuses (refusé, le plan reste inchangé et l'imprévu reste enregistré). Pendant un arrêt sans date de reprise, la synchronisation ne propose plus d'ajustement ; « Signaler la reprise » produit une proposition de reprise progressive. Enfin, la case « Inclure du vélo » autorise Claude à remplacer au plus une séance facile par semaine par du vélo d'endurance douce (FC en zones 1-2), exporté sur la montre comme workout vélo et rattaché à l'activité vélo correspondante.
+
 Prochaines idées d'amélioration : voir [ROADMAP.md](ROADMAP.md).
 
 ## Installation

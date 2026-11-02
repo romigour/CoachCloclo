@@ -14,9 +14,11 @@ from sqlmodel import SQLModel, create_engine, delete, select
 
 from coach.garmin.port import LapSummary
 from coach.plan.models import (
+    ALL_DAYS_JSON,
     Activity,
     ActivityLaps,
     AthleteSnapshot,
+    Event,
     Goal,
     PersonalRecord,
     Proposal,
@@ -37,25 +39,44 @@ def make_engine(path: Path) -> Engine:
     return engine
 
 
+def _add_columns(conn, table: str, columns: dict[str, str]) -> None:
+    """Ajoute à `table` chaque colonne absente (DDL donné en valeur)."""
+    existing = {row[1] for row in conn.execute(text(f"PRAGMA table_info({table})"))}
+    for name, ddl in columns.items():
+        if name not in existing:
+            conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {ddl}"))
+
+
 def _migrate(engine: Engine) -> None:
-    """Met à niveau une base existante : colonnes du temps visé de `goal`, reprises de la stratégie."""
+    """Met à niveau une base existante, étape par étape (chacune idempotente)."""
     with engine.begin() as conn:
         columns = {row[1] for row in conn.execute(text("PRAGMA table_info(goal)"))}
-        if "target_time_s" in columns:
-            return
-        conn.execute(text("ALTER TABLE goal ADD COLUMN target_time_s INTEGER"))
-        conn.execute(text("ALTER TABLE goal ADD COLUMN target_source VARCHAR"))
-        rows = conn.execute(text("SELECT goal_id, settings_json FROM racestrategy")).all()
-        for goal_id, settings_json in rows:
-            try:
-                target = json.loads(settings_json).get("target_time_s")
-            except (ValueError, AttributeError, TypeError):
-                continue  # ligne corrompue : ignorée, les autres sont reprises
-            if target:
-                conn.execute(
-                    text("UPDATE goal SET target_time_s = :t, target_source = 'user' WHERE id = :id"),
-                    {"t": target, "id": goal_id},
-                )
+        if "target_time_s" not in columns:
+            # temps visé de `goal`, repris de la stratégie de course
+            _add_columns(conn, "goal", {"target_time_s": "INTEGER", "target_source": "VARCHAR"})
+            rows = conn.execute(text("SELECT goal_id, settings_json FROM racestrategy")).all()
+            for goal_id, settings_json in rows:
+                try:
+                    target = json.loads(settings_json).get("target_time_s")
+                except (ValueError, AttributeError, TypeError):
+                    continue  # ligne corrompue : ignorée, les autres sont reprises
+                if target:
+                    conn.execute(
+                        text("UPDATE goal SET target_time_s = :t, target_source = 'user' WHERE id = :id"),
+                        {"t": target, "id": goal_id},
+                    )
+        # jours possibles et jour de sortie longue
+        _add_columns(
+            conn,
+            "goal",
+            {
+                "available_days_json": f"VARCHAR NOT NULL DEFAULT '{ALL_DAYS_JSON}'",
+                "long_run_day": "VARCHAR",
+            },
+        )
+        # sport des séances et option vélo de l'objectif
+        _add_columns(conn, "session", {"sport": "VARCHAR NOT NULL DEFAULT 'run'"})
+        _add_columns(conn, "goal", {"include_bike": "BOOLEAN NOT NULL DEFAULT 0"})
 
 
 class Repo:
@@ -106,6 +127,26 @@ class Repo:
         stmt = stmt.order_by(Session.week_index, Session.order)
         with self._open() as db:
             return list(db.exec(stmt))
+
+    def events(self, goal_id: int) -> list[Event]:
+        """Imprévus de l'objectif, le plus récent d'abord."""
+        stmt = (
+            select(Event)
+            .where(Event.goal_id == goal_id)
+            .order_by(Event.start_date.desc(), Event.id.desc())
+        )
+        with self._open() as db:
+            return list(db.exec(stmt))
+
+    def open_injury(self, goal_id: int) -> Event | None:
+        """Arrêt en cours (blessure sans date de fin), s'il y en a un."""
+        stmt = (
+            select(Event)
+            .where(Event.goal_id == goal_id, Event.kind == "injury", Event.end_date == None)  # noqa: E711
+            .order_by(Event.id.desc())
+        )
+        with self._open() as db:
+            return db.exec(stmt).first()
 
     def session(self, id: int) -> Session:
         with self._open() as db:

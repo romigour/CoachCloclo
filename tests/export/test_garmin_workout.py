@@ -96,6 +96,23 @@ def test_pace_target_in_m_per_s_slow_first():
     assert step["targetValueOne"] < step["targetValueTwo"]
 
 
+def test_bike_session_uses_cycling_sport_type_at_both_levels():
+    bike = make_session(sport="bike", steps=[StepSpec(kind="active", duration_s=3600, zone="Z2")])
+    w = session_to_workout_json(bike, ZONES, name="x")
+    cycling = {"sportTypeId": 2, "sportTypeKey": "cycling"}
+    assert w["sportType"] == cycling
+    assert w["workoutSegments"][0]["sportType"] == cycling
+    step = first_active(w)
+    assert step["targetType"]["workoutTargetTypeKey"] == "heart.rate.zone"
+    assert (step["targetValueOne"], step["targetValueTwo"]) == ZONES.hr["Z2"]
+
+
+def test_run_session_keeps_running_sport_type():
+    w = session_to_workout_json(EF_HR_SESSION, ZONES, name="x")
+    assert w["sportType"]["sportTypeKey"] == "running"
+    assert w["workoutSegments"][0]["sportType"]["sportTypeKey"] == "running"
+
+
 def test_hr_target_uses_bpm():
     step = first_active(session_to_workout_json(EF_HR_SESSION, ZONES, name="x"))
     assert step["targetType"] == {"workoutTargetTypeId": 4, "workoutTargetTypeKey": "heart.rate.zone"}

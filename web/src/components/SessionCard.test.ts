@@ -7,7 +7,7 @@ afterEach(() => vi.unstubAllGlobals());
 
 const session: Session = {
   id: 7, order: 1, type: "EF", title: "Sortie EF", description: "", target_kind: "pace",
-  status: "done", suggested_day: "mardi", scheduled_date: "2026-11-10", chaining_note: null, steps: [], sync_error: null,
+  status: "done", suggested_day: "mardi", sport: "run", scheduled_date: "2026-11-10", chaining_note: null, steps: [], sync_error: null,
 };
 const act = (id: number, date: string, session_id: number | null): Activity => ({
   id, date, type_key: "running", duration_s: 3120, distance_m: 10200, d_plus_m: 0, avg_hr: 150, session_id, match_source: "auto",
@@ -33,7 +33,7 @@ test("Corriger lists the free runs of the last 14 days and re-matches in one cli
   });
   expect(screen.getByText(/mar\. 10\/11 · 52 min · 10,2 km/)).toBeVisible();
   await fireEvent.click(screen.getByRole("button", { name: "Corriger" }));
-  expect(calls[0].url).toBe("/api/activities/free?days=14");
+  expect(calls[0].url).toBe("/api/activities/free?days=14&sport=run");
   await fireEvent.click(await screen.findByRole("button", { name: "jeu. 05/11 · 52 min · 10,2 km" }));
   expect(screen.queryByRole("button", { name: /jeu\. 12\/11/ })).toBeNull(); // liée à une autre séance
   await waitFor(() => expect(onchanged).toHaveBeenCalled());
@@ -225,4 +225,20 @@ test("an unrelated re-render keeps the loaded comparison", async () => {
   expect(screen.getByText("1/3 fractions dans la cible")).toBeVisible();
   expect(details().open).toBe(true);
   expect(calls).toHaveLength(1);
+});
+
+test("only a bike session shows the bike icon and label", () => {
+  const { unmount } = render(SessionCard, { session, weekMonday: "2026-11-09" });
+  expect(screen.queryByText("Vélo")).toBeNull();
+  unmount();
+  render(SessionCard, { session: { ...session, sport: "bike" }, weekMonday: "2026-11-09" });
+  expect(screen.getByText("Vélo")).toBeVisible();
+});
+
+test("manual linking of a bike session lists bike activities", async () => {
+  const calls = stubApi();
+  render(SessionCard, { session: { ...session, sport: "bike", status: "todo", scheduled_date: null }, weekMonday: "2026-11-09" });
+  await fireEvent.click(screen.getByRole("button", { name: "Rattacher une activité" }));
+  await waitFor(() => expect(calls).toHaveLength(1));
+  expect(calls[0].url).toBe("/api/activities/free?days=14&sport=bike");
 });

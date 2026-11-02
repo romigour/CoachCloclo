@@ -19,7 +19,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, ValidationError, model_validator
 from sqlmodel import select
 
-from coach.analysis.compliance import RUNNING_TYPES
+from coach.analysis.compliance import activity_types_for
 from coach.analysis.gpx import GpxError
 from coach.api.desktop_routes import desktop_router
 from coach.api.deps import get_garmin, get_llm, is_loopback, verify_pin
@@ -41,7 +41,7 @@ from coach.llm.provider import (
     LLMUsageLimit,
 )
 from coach.plan import calendar
-from coach.plan.models import Activity, Goal, Proposal, Session
+from coach.plan.models import Activity, Event, Goal, Proposal, Session
 from coach.plan.repo import Repo, make_engine
 from coach.services import CoachError
 from coach.services import garmin_export as export
@@ -56,6 +56,8 @@ from coach.services.plans import (
 )
 from coach.analysis.race_plan import RaceSettings
 from coach.services import race_strategy
+from coach.services.adjust import request_adjustment
+from coach.services.events import EventInput, EventResult, create_event, delete_event, resume_injury
 from coach.services.history import HistoryRunner, load_state, recover_orphan
 from coach.services.laps import fetch_laps, latest_zones, session_comparison
 from coach.services.sync import sync
@@ -158,7 +160,23 @@ def _goal_dict(goal: Goal) -> dict:
         "plan_accepted": goal.plan_accepted,
         "target_time_s": goal.target_time_s,
         "target_source": goal.target_source,
+        "available_days": goal.available_days(),
+        "long_run_day": goal.long_run_day,
+        "include_bike": goal.include_bike,
         "gpx_summary": json.loads(goal.gpx_summary_json) if goal.gpx_summary_json else None,
+    }
+
+
+def _event_dict(e: Event) -> dict:
+    return {
+        "id": e.id,
+        "kind": e.kind,
+        "start_date": e.start_date.isoformat(),
+        "end_date": e.end_date.isoformat() if e.end_date else None,
+        "max_sessions": e.max_sessions,
+        "days": e.days(),
+        "session_id": e.session_id,
+        "note": e.note,
     }
 
 
@@ -167,6 +185,7 @@ def _session_dict(s: Session) -> dict:
         "id": s.id,
         "order": s.order,
         "type": s.type,
+        "sport": s.sport,
         "title": s.title,
         "description": s.description,
         "target_kind": s.target_kind,
@@ -401,14 +420,23 @@ def create_app(
         sessions_per_week: Annotated[int, Form()],
         d_plus_m: Annotated[int, Form()] = 0,
         target_time: Annotated[str | None, Form()] = None,
+        available_days: Annotated[str | None, Form()] = None,
+        long_run_day: Annotated[str | None, Form()] = None,
+        include_bike: Annotated[bool, Form()] = False,
         gpx: Annotated[UploadFile | None, File()] = None,
     ):
         target_time_s = parse_target_time(target_time) if target_time else None
         raw = gpx.file.read(MAX_GPX_BYTES + 1) if gpx is not None else None
         if raw is not None and len(raw) > MAX_GPX_BYTES:
             return _error(413, "too_large", "Fichier GPX trop volumineux (10 Mo maximum)")
+        days = {}  # absent : GoalInput garde ses 7 jours par défaut
+        if available_days:
+            days["available_days"] = [d.strip() for d in available_days.split(",") if d.strip()]
         try:
             data = GoalInput(
+                **days,
+                long_run_day=long_run_day or None,
+                include_bike=include_bike,
                 type=type,
                 distance_km=distance_km,
                 d_plus_m=d_plus_m,
@@ -464,8 +492,10 @@ def create_app(
         weeks: dict[int, list[dict]] = {}
         for s in repo.sessions(goal.id):
             weeks.setdefault(s.week_index, []).append(_session_dict(s))
+        injury = repo.open_injury(goal.id)
         return {
             "goal": _goal_dict(goal),
+            "open_injury": _event_dict(injury) if injury else None,
             "weeks": [
                 {
                     "week_index": idx,
@@ -475,6 +505,39 @@ def create_app(
                 for idx, sessions in sorted(weeks.items())
             ],
         }
+
+    # --- imprévus ---------------------------------------------------------------------------
+
+    def _exists(repo: Repo, model, id: int) -> bool:
+        with repo.transaction() as db:
+            return db.get(model, id) is not None
+
+    @api.post("/goals/{goal_id}/events")
+    def post_event(goal_id: int, body: EventInput, repo: RepoDep, garmin: GarminDep, llm: LLMDep) -> EventResult:
+        return create_event(repo, garmin, llm, goal_id, body)
+
+    @api.get("/goals/{goal_id}/events")
+    def get_events(goal_id: int, repo: RepoDep):
+        if not _exists(repo, Goal, goal_id):
+            return _error(404, "not_found", "Objectif introuvable")
+        return [_event_dict(e) for e in repo.events(goal_id)]
+
+    @api.delete("/events/{event_id}")
+    def delete_event_route(event_id: int, repo: RepoDep):
+        if not _exists(repo, Event, event_id):
+            return _error(404, "not_found", "Imprévu introuvable")
+        delete_event(repo, event_id)
+        return {"status": "ok"}
+
+    @api.post("/events/{event_id}/resume")
+    def post_resume(event_id: int, body: DateBody, repo: RepoDep, garmin: GarminDep, llm: LLMDep) -> EventResult:
+        if not _exists(repo, Event, event_id):
+            return _error(404, "not_found", "Imprévu introuvable")
+        return resume_injury(repo, garmin, llm, event_id, body.date)
+
+    @api.post("/goals/{goal_id}/adjust")
+    def post_adjust(goal_id: int, repo: RepoDep, garmin: GarminDep, llm: LLMDep):
+        return {"proposal_id": request_adjustment(repo, garmin, llm, goal_id)}
 
     # --- export Garmin ----------------------------------------------------------------------
 
@@ -531,10 +594,13 @@ def create_app(
         return [_activity_row(a) for a in repo.activities_since(monday) if a.date <= sunday]
 
     @api.get("/activities/free")
-    def get_free_activities(days: Annotated[int, Query(ge=1, le=90)], repo: RepoDep):
-        """Courses des `days` derniers jours rattachées à aucune séance, la plus récente d'abord."""
+    def get_free_activities(
+        days: Annotated[int, Query(ge=1, le=90)], repo: RepoDep, sport: Literal["run", "bike"] = "run"
+    ):
+        """Activités du `sport` (course par défaut) des `days` derniers jours, rattachées à aucune séance."""
         since = date.today() - timedelta(days=days)
-        free = [a for a in repo.activities_since(since) if a.session_id is None and a.type_key in RUNNING_TYPES]
+        types = activity_types_for(sport)
+        free = [a for a in repo.activities_since(since) if a.session_id is None and a.type_key in types]
         return [_activity_row(a) for a in reversed(free)]
 
     @api.post("/activities/{activity_id}/match")
@@ -549,6 +615,8 @@ def create_app(
                 new = db.get(Session, body.session_id)
                 if new is None:
                     return _error(404, "not_found", "Séance introuvable")
+                if activity.type_key not in activity_types_for(new.sport):
+                    return _error(422, "sport_mismatch", "Cette activité ne correspond pas au sport de la séance")
                 # une séance n'a qu'une activité : on libère l'éventuelle précédente
                 others = db.exec(
                     select(Activity).where(Activity.session_id == new.id, Activity.id != activity.id)

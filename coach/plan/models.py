@@ -1,12 +1,16 @@
 """Tables SQLModel de CoachCloclo (section 4 de la spec)."""
 
 import datetime as dt
+import json
 
 from pydantic import TypeAdapter
 from sqlmodel import Field, SQLModel
 
 from coach.llm.schemas import RepeatSpec, SessionSpec, StepSpec
 
+# Jours de la semaine, dans l'ordre de coach.plan.calendar._WEEKDAYS (défini ici : calendar importe models).
+ALL_DAYS = ("lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche")
+ALL_DAYS_JSON = json.dumps(list(ALL_DAYS))
 
 
 def _now() -> dt.datetime:
@@ -43,6 +47,12 @@ class Goal(SQLModel, table=True):
     plan_accepted: bool = False
     target_time_s: int | None = None
     target_source: str | None = None  # "user" | "claude"
+    available_days_json: str = ALL_DAYS_JSON
+    long_run_day: str | None = None
+    include_bike: bool = False
+
+    def available_days(self) -> list[str]:
+        return json.loads(self.available_days_json)
 
 
 class Session(SQLModel, table=True):
@@ -53,6 +63,7 @@ class Session(SQLModel, table=True):
     suggested_day: str
     chaining_note: str | None = None
     type: str
+    sport: str = "run"  # "run" | "bike"
     target_kind: str  # "pace" | "hr"
     title: str
     description: str
@@ -79,6 +90,7 @@ class Session(SQLModel, table=True):
             title=self.title,
             description=self.description,
             chaining_note=self.chaining_note,
+            sport=self.sport,
             steps=_STEPS.validate_json(self.steps_json),
         )
 
@@ -91,6 +103,7 @@ class Session(SQLModel, table=True):
             suggested_day=spec.suggested_day,
             chaining_note=spec.chaining_note,
             type=spec.type,
+            sport=spec.sport,
             target_kind=spec.target_kind,
             title=spec.title,
             description=spec.description,
@@ -128,6 +141,24 @@ class Proposal(SQLModel, table=True):
     analysis: str
     changes_json: str = "[]"
     status: str = "pending"  # pending | accepted | rejected | stale
+
+
+class Event(SQLModel, table=True):
+    """Imprévu déclaré par l'athlète (spec 3.2) : indisponibilité, blessure, semaine allégée, fatigue."""
+
+    id: int | None = Field(default=None, primary_key=True)
+    goal_id: int = Field(index=True)
+    created_at: dt.datetime = Field(default_factory=_now)
+    kind: str  # "unavailable" | "injury" | "light_week" | "fatigue"
+    start_date: dt.date
+    end_date: dt.date | None = None  # None seulement pour un arrêt (injury) en cours
+    max_sessions: int | None = None  # light_week seulement
+    days_json: str | None = None  # light_week seulement : jours possibles cette semaine-là
+    session_id: int | None = None  # fatigue seulement : séance ratée
+    note: str | None = None
+
+    def days(self) -> list[str] | None:
+        return None if self.days_json is None else json.loads(self.days_json)
 
 
 class Race(SQLModel, table=True):

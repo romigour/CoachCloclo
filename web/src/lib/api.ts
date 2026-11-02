@@ -53,6 +53,7 @@ export type Session = {
   target_kind: "pace" | "hr";
   status: SessionStatus;
   suggested_day: Weekday;
+  sport: "run" | "bike";
   scheduled_date: string | null;
   chaining_note: string | null;
   steps: (Step | StepGroup)[];
@@ -71,6 +72,9 @@ export type Goal = {
   gpx_summary: Record<string, unknown> | null;
   target_time_s: number | null;
   target_source: "user" | "claude" | null;
+  available_days: string[];
+  long_run_day: string | null;
+  include_bike: boolean;
 };
 
 export type Activity = {
@@ -175,7 +179,35 @@ export type HistoryState = {
 };
 
 export type Week = { week_index: number; week_monday: string; sessions: Session[] };
-export type Plan = { goal: Goal | null; weeks: Week[] };
+export type EventKind = "unavailable" | "injury" | "light_week" | "fatigue";
+
+/** Imprévu déclaré (GET /api/goals/{id}/events). */
+export type CoachEvent = {
+  id: number;
+  kind: EventKind;
+  start_date: string;
+  end_date: string | null;
+  max_sessions: number | null;
+  days: string[] | null;
+  session_id: number | null;
+  note: string | null;
+};
+
+/** Corps de POST /api/goals/{id}/events. */
+export type EventInput = {
+  kind: EventKind;
+  start_date?: string;
+  end_date?: string;
+  max_sessions?: number;
+  days?: string[];
+  session_id?: number;
+  note?: string;
+};
+
+/** L'imprévu est enregistré même si Claude échoue : `proposal_id` est alors nul et `error` renseigné. */
+export type EventResult = { event_id: number; proposal_id: number | null; error: string | null };
+
+export type Plan = { goal: Goal | null; weeks: Week[]; open_injury?: CoachEvent | null };
 
 export type Status = {
   garmin: "ok" | "auth_required" | "unavailable";
@@ -244,6 +276,7 @@ export type SessionSpec = {
   title: string;
   description: string;
   chaining_note?: string | null;
+  sport?: "run" | "bike";
   steps: (Step | StepGroup)[];
 };
 
@@ -338,6 +371,9 @@ export type GoalInput = {
   sessions_per_week: number;
   target_time?: string;
   gpx?: File | null;
+  available_days?: string[];
+  long_run_day?: string;
+  include_bike?: boolean;
 };
 
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
@@ -429,9 +465,15 @@ export const api = {
     f.set("sessions_per_week", String(g.sessions_per_week));
     if (g.target_time) f.set("target_time", g.target_time);
     if (g.gpx) f.set("gpx", g.gpx);
+    if (g.available_days) f.set("available_days", g.available_days.join(","));
+    if (g.long_run_day) f.set("long_run_day", g.long_run_day);
+    if (g.include_bike) f.set("include_bike", "true");
     return post<Goal>("/goals", f);
   },
-  updateGoal: (goalId: number, body: { race_date?: string; target_time?: string }) =>
+  updateGoal: (
+    goalId: number,
+    body: { race_date?: string; target_time?: string; available_days?: string[]; long_run_day?: string; include_bike?: boolean },
+  ) =>
     patch<{ goal: Goal; proposal_id: number }>(`/goals/${goalId}`, body),
   generate: (goalId: number) => post<{ summary: string; weeks: number }>(`/goals/${goalId}/generate`),
   accept: (goalId: number) => post<{ status: string }>(`/goals/${goalId}/accept`),
@@ -450,7 +492,8 @@ export const api = {
   activities: (week: number) => get<Activity[]>(`/activities?week=${week}`),
   zones: () => get<Zones | null>("/zones"),
   comparison: (sessionId: number) => get<Comparison>(`/sessions/${sessionId}/comparison`),
-  freeActivities: (days: number) => get<Activity[]>(`/activities/free?days=${days}`),
+  freeActivities: (days: number, sport: "run" | "bike" = "run") =>
+    get<Activity[]>(`/activities/free?days=${days}&sport=${sport}`),
   match: (activityId: number, sessionId: number | null) =>
     post<{ status: string }>(`/activities/${activityId}/match`, { session_id: sessionId }),
   sync: () => post<Record<string, unknown>>("/sync"),
@@ -461,5 +504,10 @@ export const api = {
   statsRecords: () => get<{ records: PersonalRecord[] }>("/stats/records"),
   saveRace: (activityId: number, race: Partial<RaceInfo>) => request<StatActivity>("PUT", `/races/${activityId}`, race),
   removeRace: (activityId: number) => del<{ status: string }>(`/races/${activityId}`),
+  createEvent: (goalId: number, body: EventInput) => post<EventResult>(`/goals/${goalId}/events`, body),
+  requestAdjustment: (goalId: number) => post<{ proposal_id: number }>(`/goals/${goalId}/adjust`),
+  events: (goalId: number) => get<CoachEvent[]>(`/goals/${goalId}/events`),
+  deleteEvent: (id: number) => del<{ status: string }>(`/events/${id}`),
+  resumeInjury: (id: number, date: string) => post<EventResult>(`/events/${id}/resume`, { date }),
   importHistory: () => post<{ status: string }>("/history/import"),
 };

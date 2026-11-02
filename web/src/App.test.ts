@@ -40,6 +40,7 @@ beforeEach(() => {
     else if (url === "/api/stats/activities") { statsCalls++; body = { activities: [] }; }
     else if (url === "/api/stats/records") body = { records: [] };
     else if (url === "/api/plan") body = plan;
+    else if (/^\/api\/goals\/\d+\/events$/.test(url)) body = [];
     else if (url === "/api/settings") body = { llm_mode: "cli", anthropic_model: null, anthropic_api_key_set: false };
     else if (url === "/api/garmin/login") body = { status: "ok" };
     else if (url === "/api/sync") {

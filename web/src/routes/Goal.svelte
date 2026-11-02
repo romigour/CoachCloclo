@@ -1,13 +1,14 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { api, type Goal, type Plan } from "../lib/api";
-  import { formatDate, todayIso } from "../lib/dates";
+  import { formatDate, todayIso, WEEKDAYS } from "../lib/dates";
   import { goalTimeLabel, parseTargetTime } from "../lib/race";
   import { daysUntil } from "../lib/week";
   import ErrorBanner from "../components/ErrorBanner.svelte";
   import Calendar from "../components/Calendar.svelte";
   import SessionCard from "../components/SessionCard.svelte";
   import Icon from "../components/Icon.svelte";
+  import AvailabilityFields, { availabilityValid } from "../components/AvailabilityFields.svelte";
   import GoalEditDialog from "../components/GoalEditDialog.svelte";
 
   let { onchanged, today = todayIso() }: { onchanged?: () => void; today?: string } = $props();
@@ -23,8 +24,12 @@
   let dplus = $state(0);
   let raceDate = $state("");
   let perWeek = $state(4);
+  let days = $state<string[]>([...WEEKDAYS]);
+  let longRunDay = $state("");
+  let includeBike = $state(false);
   let gpx = $state<File | null>(null);
   let targetMode = $state<"claude" | "user">("claude");
+  const daysOk = $derived(availabilityValid(days, perWeek));
   const ownTime = $derived(targetMode === "user");
   let targetText = $state("");
   let targetError = $state("");
@@ -88,6 +93,9 @@
         sessions_per_week: perWeek,
         target_time: ownTime ? targetText.trim() : undefined,
         gpx,
+        available_days: days,
+        long_run_day: longRunDay || undefined,
+        include_bike: includeBike,
       });
       await generate(goal);
     } catch (err) {
@@ -233,6 +241,8 @@
         </div>
       </fieldset>
 
+      <AvailabilityFields bind:days bind:longRunDay bind:includeBike {perWeek} />
+
       <fieldset>
         <legend>Temps visé</legend>
         <div class="choices">
@@ -264,7 +274,7 @@
       </label>
 
       <div class="actions row end">
-        <button class="primary" disabled={!!busy}>Générer le plan avec Claude</button>
+        <button class="primary" disabled={!!busy || !daysOk}>Générer le plan avec Claude</button>
       </div>
     </form>
 

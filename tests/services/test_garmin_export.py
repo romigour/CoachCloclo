@@ -6,7 +6,7 @@ import pytest
 from coach.analysis.zones import compute_zones
 from coach.garmin.port import FakeGarminClient, GarminAuthRequired, GarminUnavailable
 from coach.llm.schemas import Change
-from coach.plan.models import AthleteSnapshot, Goal, Proposal
+from coach.plan.models import AthleteSnapshot, Event, Goal, Proposal
 from coach.services import CoachError
 from coach.services.garmin_export import (
     ExportError,
@@ -103,6 +103,13 @@ def test_export_returns_48h_warning(repo, fake_garmin, goal):
     assert len(warnings) == 1 and "VMA" in warnings[0]
     assert len(fake_garmin.calls) == n + 2
     assert check_export(repo, b.id, date(2026, 11, 14)) == []
+
+
+def test_check_export_warns_outside_available_days(repo, fake_garmin):
+    g = repo.add(make_goal(available_days_json='["mardi", "jeudi", "dimanche"]'))
+    s = repo.add(make_db_session(g.id, week_index=3))
+    assert "Jour hors de tes disponibilités" in check_export(repo, s.id, date(2026, 11, 9))  # lundi
+    assert "Jour hors de tes disponibilités" not in check_export(repo, s.id, D)  # mardi
 
 
 def test_check_export_writes_nothing(repo, fake_garmin, session_w3):
@@ -501,3 +508,38 @@ def test_failed_replacement_then_past_date_then_unschedule_leaves_no_orphan(repo
     sync(repo, g, FakeLLMProvider([]), now=datetime(2026, 11, 20, 9))
     assert g.workouts == {} and g.schedules == {} and g.calendar == {}
     assert repo.session(s.id).status == "missed"
+
+
+def test_export_check_warns_during_event(repo, fake_garmin, goal):
+    s = repo.add(make_db_session(goal.id, week_index=3))
+    repo.add(Event(goal_id=goal.id, kind="unavailable", start_date=D, end_date=D))
+    repo.add(Event(goal_id=goal.id, kind="injury", start_date=date(2026, 11, 9)))  # arrêt ouvert
+    warnings = check_export(repo, s.id, D)
+    assert "Pendant ton imprévu : indisponibilité du 10/11 au 10/11" in warnings
+    assert "Pendant ton imprévu : arrêt depuis le 09/11" in warnings
+    # avant le début de l'arrêt ouvert, rien ne bloque
+    earlier = repo.add(make_db_session(goal.id, week_index=2))
+    assert not any("imprévu" in w for w in check_export(repo, earlier.id, date(2026, 11, 3)))
+
+
+def test_apply_proposal_modify_copies_sport(repo, fake_garmin, session_w3):
+    p = proposal_of(repo, modify(session_w3.id, sport="bike"))
+    apply_proposal(repo, fake_garmin, p.id)
+    assert repo.session(session_w3.id).sport == "bike"
+
+
+def test_check_export_uses_light_week_days_for_availability(repo, fake_garmin):
+    g = repo.add(make_goal())  # plan du lundi 2026-10-26 ; semaine 3 : lundi 09/11
+    s = repo.add(make_db_session(g.id, week_index=3))
+    repo.add(
+        Event(
+            goal_id=g.id,
+            kind="light_week",
+            start_date=date(2026, 11, 9),
+            end_date=date(2026, 11, 15),
+            max_sessions=2,
+            days_json='["mardi", "jeudi"]',
+        )
+    )
+    assert "Jour hors de tes disponibilités" in check_export(repo, s.id, date(2026, 11, 11))  # mercredi
+    assert "Jour hors de tes disponibilités" not in check_export(repo, s.id, date(2026, 11, 12))  # jeudi

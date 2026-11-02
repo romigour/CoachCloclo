@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/svelte";
+import { fireEvent, render, screen } from "@testing-library/svelte";
 import { afterEach, expect, test, vi } from "vitest";
 import Today from "./Today.svelte";
 import type { Plan, Session } from "../lib/api";
@@ -7,12 +7,12 @@ afterEach(() => vi.unstubAllGlobals());
 
 const s = (id: number, title: string, suggested_day: Session["suggested_day"], status: Session["status"]): Session => ({
   id, order: id, type: "seuil", title, description: "", target_kind: "pace", status, suggested_day,
-  scheduled_date: null, chaining_note: null, sync_error: null,
+  sport: "run", scheduled_date: null, chaining_note: null, sync_error: null,
   steps: [{ kind: "warmup", duration_s: 1200, zone: "EF" }, { kind: "active", duration_s: 1800, zone: "seuil" }],
 });
 
 const plan: Plan = {
-  goal: { id: 1, type: "route", distance_km: 21.1, d_plus_m: 0, race_date: "2026-12-06", sessions_per_week: 3, plan_start: "2026-10-26", plan_accepted: true, gpx_summary: null },
+  goal: { id: 1, type: "route", distance_km: 21.1, d_plus_m: 0, race_date: "2026-12-06", sessions_per_week: 3, plan_start: "2026-10-26", plan_accepted: true, gpx_summary: null, target_time_s: null, target_source: null, available_days: ["lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche"], long_run_day: null, include_bike: false },
   weeks: [{ week_index: 1, week_monday: "2026-10-26", sessions: [s(1, "Endurance 50 min", "lundi", "done"), s(2, "Seuil 3 × 10 min", "vendredi", "todo")] }],
 };
 
@@ -40,4 +40,11 @@ test("once the week is over, it says so", async () => {
   mock();
   render(Today, { today: "2026-10-31" });
   expect(await screen.findByRole("heading", { name: "Repos aujourd'hui" })).toBeVisible();
+});
+
+test("Signaler un imprévu opens the event dialog", async () => {
+  mock();
+  render(Today, { today: "2026-10-30" });
+  await fireEvent.click(await screen.findByRole("button", { name: "Signaler un imprévu" }));
+  expect(screen.getByRole("dialog", { name: "Signaler un imprévu" })).toBeVisible();
 });

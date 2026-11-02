@@ -129,7 +129,7 @@ def test_flat_route_prediction_and_pace_targets():
 
 
 def test_target_time_rescales():
-    p = plan(settings=RaceSettings(target_time_s=2700))
+    p = plan(target_time_s=2700)
     assert p.predicted_time_s == 2880 and p.reference_time_s == 2700 and p.segments[0].time_s == 270
 
 
@@ -159,13 +159,13 @@ def test_late_cutoff_warns_and_capacity_alert():
 
 
 def test_target_passage_computed_alongside_predicted():
-    p = plan(trail=True, settings=RaceSettings(aid_stations=[STATION], target_time_s=3600))
+    p = plan(trail=True, settings=RaceSettings(aid_stations=[STATION]), target_time_s=3600)
     assert p.aid_passages[0].target.elapsed_s == 1710 and p.aid_passages[0].predicted.elapsed_s == 1440
 
 
 def test_target_not_above_stops_rejected():
     with pytest.raises(ValueError, match="arrêts"):
-        plan(trail=True, settings=RaceSettings(aid_stations=[STATION], target_time_s=180))
+        plan(trail=True, settings=RaceSettings(aid_stations=[STATION]), target_time_s=180)
 
 
 def test_no_reference_time():
@@ -197,6 +197,6 @@ def test_cutoff_before_start_is_next_day():
 
 def test_negative_margin_floored():
     st = STATION.model_copy(update={"cutoff": "08:28"})  # arrivée visée 08:28:30
-    p = plan(trail=True, settings=RaceSettings(aid_stations=[st], target_time_s=3600))
+    p = plan(trail=True, settings=RaceSettings(aid_stations=[st]), target_time_s=3600)
     t = p.aid_passages[0].target
     assert (t.margin_min, t.status) == (-1, "hors délai")

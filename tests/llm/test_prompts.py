@@ -242,3 +242,41 @@ def test_adjustment_prompt_without_comparison_unchanged():
 def test_adjustment_prompt_mentions_step_detail_rule():
     p = _adjustment(compare_session(make_session(), [_lap(0, 1, 600, 1800)], ZONES))
     assert DETAIL_RULE in p
+
+
+def test_goal_text_includes_target():
+    from coach.llm.prompts import _goal_text
+
+    assert "Temps visé : 1 h 50" in _goal_text(make_goal(target_time_s=6600, target_source="user"))
+    assert "Temps visé" not in _goal_text(make_goal())
+
+
+def test_generation_prompt_asks_estimate_in_claude_mode():
+    p = build_generation_prompt(make_goal(target_source="claude"), ZONES, [], n_weeks=14, gpx_text=None)
+    assert "estimated_time_s" in p and "Estime" in p
+
+
+def test_generation_prompt_regeneration_in_claude_mode_asks_estimate_again():
+    goal = make_goal(target_source="claude", target_time_s=6720)
+    p = build_generation_prompt(goal, ZONES, [], n_weeks=14, gpx_text=None)
+    assert "estimated_time_s" in p
+    assert "Construis le plan pour atteindre ce temps visé" not in p
+    assert "Temps visé" not in p and "Estimation précédente : 1 h 52" in p
+
+
+def test_generation_prompt_targets_user_time():
+    goal = make_goal(target_time_s=6600, target_source="user")
+    p = build_generation_prompt(goal, ZONES, [], n_weeks=14, gpx_text=None)
+    assert "Construis le plan pour atteindre ce temps visé" in p and "Estime" not in p
+
+
+def test_generation_prompt_legacy_goal_has_no_target_instruction():
+    p = build_generation_prompt(make_goal(), ZONES, [], n_weeks=14, gpx_text=None)
+    assert "Estime" not in p and "atteindre ce temps visé" not in p
+
+
+def test_adjustment_prompt_includes_change_note():
+    p = build_adjustment_prompt(
+        make_goal(), ZONES, 4, [], [], [], [], change_note="L'athlète a modifié son objectif : X"
+    )
+    assert p.index("L'athlète a modifié") < p.index("Nous sommes en semaine")

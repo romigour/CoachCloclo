@@ -229,7 +229,6 @@ class AidStation(BaseModel):
 class RaceSettings(BaseModel):
     """Réglages de la stratégie saisis par l'athlète."""
 
-    target_time_s: int | None = Field(None, gt=0)
     start_time: str = Field("08:00", pattern=_HHMM)
     carbs_g_h: int = Field(60, ge=0, le=150)
     water_ml_h: int = Field(500, ge=0, le=2000)
@@ -410,11 +409,12 @@ def build_race_plan(
     basis: RaceBasis,
     settings: RaceSettings,
     today: date,
+    target_time_s: int | None = None,
 ) -> RacePlan:
     """Plan de course complet : temps par segment, passages aux ravitos, nutrition, alertes."""
     stations = sorted(settings.aid_stations, key=lambda s: s.km) if trail else []
     stops_s = round(sum(st.stop_min * 60 for st in stations))
-    target = settings.target_time_s
+    target = target_time_s
     if target is not None and target <= stops_s:
         raise ValueError("Le temps visé doit dépasser la durée des arrêts aux ravitos")
     spans = split_segments(profile, distance_km)

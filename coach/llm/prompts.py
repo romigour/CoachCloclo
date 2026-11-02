@@ -172,12 +172,19 @@ def _history_text(history: list[Activity]) -> str:
     return f"Historique récent ({HISTORY_WEEKS} dernières semaines, plus récent d'abord) :\n" + "\n".join(lines)
 
 
-def _goal_text(goal: Goal) -> str:
-    return (
+def _goal_text(goal: Goal, *, generation: bool = False) -> str:
+    """`generation` : un temps issu d'une estimation de Claude est présenté comme estimation précédente."""
+    text = (
         f"Objectif : course de type {goal.type}, {goal.distance_km:g} km, "
         f"{goal.d_plus_m} m de D+, le {goal.race_date.isoformat()}. "
         f"Le plan débute le {goal.plan_start.isoformat()}."
     )
+    if goal.target_time_s is not None:
+        if generation and goal.target_source == "claude":
+            text += f" Estimation précédente : {fmt_duration(goal.target_time_s)}."
+        else:
+            text += f" Temps visé : {fmt_duration(goal.target_time_s)}."
+    return text
 
 
 def _today_text(goal: Goal, today: dt.date) -> str:
@@ -189,7 +196,7 @@ def _today_text(goal: Goal, today: dt.date) -> str:
     )
 
 
-def _fmt_duration(s: int) -> str:
+def fmt_duration(s: int) -> str:
     """« 5 h 12 » (arrondi à la minute)."""
     h, m = divmod(round(s / 60), 60)
     return f"{h} h {m:02d}"
@@ -201,9 +208,9 @@ def race_text(plan: RacePlan) -> str | None:
         return None
     times = []
     if plan.predicted_time_s is not None:
-        times.append(f"temps prévu {_fmt_duration(plan.predicted_time_s)}")
+        times.append(f"temps prévu {fmt_duration(plan.predicted_time_s)}")
     if plan.target_time_s is not None:
-        times.append(f"visé {_fmt_duration(plan.target_time_s)}")
+        times.append(f"visé {fmt_duration(plan.target_time_s)}")
     text = "Stratégie jour J (indicative) : " + ", ".join(times)
     climbs = sorted(
         sorted((s for s in plan.segments if s.kind == "montée"), key=lambda s: s.d_plus_m, reverse=True)[:3],
@@ -233,11 +240,20 @@ def build_generation_prompt(
 ) -> str:
     """Prompt de génération du plan complet ; `today` situe le jour courant dans la semaine 1."""
     parts = [
-        _goal_text(goal) + (" " + _today_text(goal, today) if today is not None else ""),
+        _goal_text(goal, generation=True) + (" " + _today_text(goal, today) if today is not None else ""),
         f"Construis un plan de {n_weeks} semaines, avec au plus {goal.sessions_per_week} séances "
         f"par semaine ({goal.sessions_per_week} séances). Aujourd'hui correspond à la semaine 1 ; "
         f"la dernière semaine se termine à la course. Numérote les semaines de 1 à {n_weeks} "
         "et les séances de chaque semaine à partir de 1 (champ order).",
+    ]
+    if goal.target_source == "claude":
+        parts.append(
+            "Estime d'abord un temps réaliste pour cette course d'après l'historique et les zones, "
+            "indique-le dans estimated_time_s (en secondes), puis construis le plan pour ce temps."
+        )
+    elif goal.target_time_s is not None:
+        parts.append("Construis le plan pour atteindre ce temps visé (allures cibles, volume).")
+    parts += [
         _zones_text(zones),
         _history_text(history),
     ]
@@ -278,14 +294,17 @@ def build_adjustment_prompt(
     history: list[Activity],
     comparisons: dict[int, StepComparison] | None = None,
     race_text: str | None = None,
+    change_note: str | None = None,
 ) -> str:
     """Prompt de proposition d'ajustements après une synchronisation.
 
     `comparisons` (clé = Session.id) ajoute le détail par étape sous les séances réalisées concernées.
+    `change_note` signale une modification de l'objectif, insérée juste après le descriptif de l'objectif.
     """
     comparisons = comparisons or {}
     parts = [
         _goal_text(goal),
+        *([change_note] if change_note else []),
         f"Nous sommes en semaine {current_week} du plan, à raison de {goal.sessions_per_week} séances "
         "maximum par semaine. Analyse les séances réalisées et manquées, puis propose des ajustements "
         "pour les séances à venir (liste vide si aucun changement n'est utile).",

@@ -17,6 +17,7 @@ from coach.plan.models import Activity, AthleteSnapshot, Race
 from coach.services.history import HistoryState, save_state
 from tests.llm.factories import valid_plan_json
 from tests.plan.factories import make_activity, make_db_session, make_goal
+from tests.services.test_sync import adjustment_json
 
 FIXTURES = Path(__file__).parent.parent / "fixtures" / "gpx"
 METRICS = Metrics(hr_max=190, hr_rest=50, threshold_pace_s_km=300)
@@ -102,6 +103,21 @@ def _create_goal(client, **over):
     return client.post("/api/goals", data={**GOAL_FORM, **over})
 
 
+def test_post_goal_with_target_time(make_client):
+    r = _create_goal(make_client(), target_time="1:50")
+    assert r.status_code == 200
+    assert (r.json()["target_time_s"], r.json()["target_source"]) == (6600, "user")
+
+
+def test_post_goal_empty_target_time_is_claude_mode(make_client):
+    r = _create_goal(make_client(), target_time="")
+    assert (r.json()["target_time_s"], r.json()["target_source"]) == (None, "claude")
+
+
+def test_post_goal_bad_target_time(make_client):
+    assert _create_goal(make_client(), target_time="abc").status_code == 422
+
+
 def test_status_reports_auth_required(make_client):
     r = make_client(garmin="auth").get("/api/status")
     assert r.status_code == 200
@@ -182,6 +198,33 @@ def test_generate_accept_and_plan(make_client):
     assert s["status"] == "todo" and isinstance(s["steps"], list) and s["steps"][0]["kind"] == "warmup"
     assert s["suggested_day"] and s["scheduled_date"] is None and s["sync_error"] is None
     assert client.get("/api/status").json()["goal"]["id"] == goal["id"]
+
+
+def _accepted_goal(client) -> dict:
+    goal = _create_goal(client).json()
+    client.post(f"/api/goals/{goal['id']}/generate")
+    client.post(f"/api/goals/{goal['id']}/accept")
+    return goal
+
+
+def test_patch_goal(make_client):
+    client = make_client(llm=FakeLLMProvider([valid_plan_json(14, 3), adjustment_json()]))
+    goal = _accepted_goal(client)
+    r = client.patch(f"/api/goals/{goal['id']}", json={"race_date": "2027-02-14", "target_time": "5:15"})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["goal"]["target_time_s"] == 18900 and body["goal"]["target_source"] == "user"
+    assert body["goal"]["race_date"] == "2027-02-14"
+    assert isinstance(body["proposal_id"], int)
+    assert client.get("/api/proposals/pending").json()["id"] == body["proposal_id"]
+
+
+def test_patch_goal_invalid(make_client):
+    client = make_client(llm=FakeLLMProvider([valid_plan_json(14, 3)]))
+    goal = _accepted_goal(client)
+    for body in ({"race_date": "2020-01-01"}, {}, {"target_time": "abc"}, {"race_date": "pas une date"}):
+        r = client.patch(f"/api/goals/{goal['id']}", json=body)
+        assert r.status_code == 422 and r.json()["code"] == "invalid"
 
 
 def test_export_check_returns_warnings(make_client):
@@ -837,9 +880,10 @@ def test_race_plan_routes(make_client):
     assert r.status_code == 422
     assert any("cutoff" in e["loc"] for e in r.json()["detail"])
 
-    r = client.put(url, json={"target_time_s": 18000})
+    r = client.put(url, json={"start_time": "07:30"})
     assert r.status_code == 200
-    assert r.json()["settings"]["target_time_s"] == 18000
+    assert r.json()["settings"]["start_time"] == "07:30"
+    assert r.json()["target_time_s"] is None
 
     assert client.post(f"{url}/refresh").status_code == 200
     assert client.post(f"{url}/reimport").status_code == 200

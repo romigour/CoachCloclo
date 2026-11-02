@@ -45,7 +45,15 @@ from coach.plan.models import Activity, Goal, Proposal, Session
 from coach.plan.repo import Repo, make_engine
 from coach.services import CoachError
 from coach.services import garmin_export as export
-from coach.services.plans import GoalInput, accept_plan, create_goal, generate_plan
+from coach.services.plans import (
+    GoalInput,
+    GoalUpdate,
+    accept_plan,
+    create_goal,
+    generate_plan,
+    parse_target_time,
+    update_goal,
+)
 from coach.analysis.race_plan import RaceSettings
 from coach.services import race_strategy
 from coach.services.history import HistoryRunner, load_state, recover_orphan
@@ -148,6 +156,8 @@ def _goal_dict(goal: Goal) -> dict:
         "sessions_per_week": goal.sessions_per_week,
         "plan_start": goal.plan_start.isoformat(),
         "plan_accepted": goal.plan_accepted,
+        "target_time_s": goal.target_time_s,
+        "target_source": goal.target_source,
         "gpx_summary": json.loads(goal.gpx_summary_json) if goal.gpx_summary_json else None,
     }
 
@@ -390,8 +400,10 @@ def create_app(
         race_date: Annotated[date, Form()],
         sessions_per_week: Annotated[int, Form()],
         d_plus_m: Annotated[int, Form()] = 0,
+        target_time: Annotated[str | None, Form()] = None,
         gpx: Annotated[UploadFile | None, File()] = None,
     ):
+        target_time_s = parse_target_time(target_time) if target_time else None
         raw = gpx.file.read(MAX_GPX_BYTES + 1) if gpx is not None else None
         if raw is not None and len(raw) > MAX_GPX_BYTES:
             return _error(413, "too_large", "Fichier GPX trop volumineux (10 Mo maximum)")
@@ -403,10 +415,16 @@ def create_app(
                 race_date=race_date,
                 sessions_per_week=sessions_per_week,
                 gpx=raw,
+                target_time_s=target_time_s,
             )
         except ValidationError as e:
             return _invalid(e.errors(), ("body",))
         return _goal_dict(create_goal(repo, garmin, data))
+
+    @api.patch("/goals/{goal_id}")
+    def patch_goal(goal_id: int, body: GoalUpdate, repo: RepoDep, garmin: GarminDep, llm: LLMDep):
+        goal, proposal_id = update_goal(repo, garmin, llm, goal_id, body)
+        return {"goal": _goal_dict(goal), "proposal_id": proposal_id}
 
     @api.post("/goals/{goal_id}/generate")
     def post_generate(goal_id: int, repo: RepoDep, garmin: GarminDep, llm: LLMDep):

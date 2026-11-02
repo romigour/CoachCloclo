@@ -226,6 +226,15 @@ def _sync(repo: Repo, garmin: GarminPort, session_id: int, zones: Zones | None, 
     return True
 
 
+def sync_marked(repo: Repo, garmin: GarminPort, session_ids: list[int], zones: Zones | None) -> list[int]:
+    """Synchronise Garmin les séances marquées par `mark_for_cleanup`, après commit.
+
+    Une erreur Garmin laisse la séance en `sync_error` sans interrompre les autres ;
+    renvoie les ids des séances restées en `sync_error`.
+    """
+    return [sid for sid in session_ids if not _sync(repo, garmin, sid, zones, early=False)]
+
+
 def retry_sync_error(repo: Repo, garmin: GarminPort, session_id: int) -> None:
     """Relance l'étape Garmin qui avait échoué pour une séance en `sync_error`."""
     session = _get(repo, session_id)
@@ -266,7 +275,7 @@ def reject_proposal(repo: Repo, proposal_id: int) -> None:
         db.add(proposal)
 
 
-def _mark_for_cleanup(s: Session, *, removal: bool) -> None:
+def mark_for_cleanup(s: Session, *, removal: bool) -> None:
     """Conserve les ids Garmin actuels à nettoyer ; la séance n'a plus de planification."""
     s.pending_old_workout_id = s.garmin_workout_id
     s.pending_old_schedule_id = s.garmin_schedule_id
@@ -331,20 +340,16 @@ def apply_proposal(repo: Repo, garmin: GarminPort, proposal_id: int) -> list[int
                     setattr(s, f, getattr(fresh, f))
                 s.est_duration_min = s.est_distance_km = None
                 if s.status == "exported":
-                    _mark_for_cleanup(s, removal=False)
+                    mark_for_cleanup(s, removal=False)
                     to_sync.append(s.id)
                 db.add(s)
             elif s.status == "todo":
                 db.delete(s)
             else:  # exported
-                _mark_for_cleanup(s, removal=True)
+                mark_for_cleanup(s, removal=True)
                 to_sync.append(s.id)
                 db.add(s)
         proposal.status = "accepted"
         db.add(proposal)
 
-    failed = []
-    for sid in to_sync:
-        if not _sync(repo, garmin, sid, zones, early=False):
-            failed.append(sid)
-    return failed
+    return sync_marked(repo, garmin, to_sync, zones)

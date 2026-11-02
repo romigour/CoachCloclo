@@ -1,6 +1,6 @@
 <script lang="ts">
   import { api, type Goal, type RaceSettings, type RaceView } from "../lib/api";
-  import { fmtDuration, fmtTargetTime, isDirty, parseTargetTime, settingsError, targetLabel } from "../lib/race";
+  import { fmtDuration, isDirty, settingsError, targetLabel } from "../lib/race";
   import { fmtClock, fmtDay, fmtNumber, fmtPace } from "../lib/stats/format";
   import ErrorBanner from "../components/ErrorBanner.svelte";
   import ElevationProfile from "../components/race/ElevationProfile.svelte";
@@ -10,16 +10,11 @@
 
   let view = $state<RaceView | null>(null);
   let draft = $state<RaceSettings | null>(null);
-  let targetText = $state("");
   let error = $state<unknown>(null);
   let busy = $state<"load" | "save" | "refresh" | "export" | "reimport" | null>(null);
 
-  const parsedTarget = $derived(parseTargetTime(targetText));
-  const targetInvalid = $derived(parsedTarget !== null && !(parsedTarget > 0)); // NaN ou 0
-  const current = $derived<RaceSettings | null>(
-    draft ? { ...draft, target_time_s: parsedTarget !== null && parsedTarget > 0 ? parsedTarget : null } : null,
-  );
-  const dirty = $derived(!!view && !!current && (targetInvalid || isDirty(view.settings, current)));
+  const current = $derived<RaceSettings | null>(draft);
+  const dirty = $derived(!!view && !!current && isDirty(view.settings, current));
   const formError = $derived(current ? settingsError(current) : null);
 
   const plan = $derived(view?.plan ?? null);
@@ -32,7 +27,6 @@
   function apply(v: RaceView) {
     view = v;
     draft = structuredClone(v.settings);
-    targetText = v.settings.target_time_s ? fmtTargetTime(v.settings.target_time_s) : "";
   }
 
   async function run(kind: NonNullable<typeof busy>, call: () => Promise<RaceView>) {
@@ -50,7 +44,7 @@
 
   const load = () => run("load", () => api.racePlan(goal.id));
   const save = () => {
-    if (targetInvalid || formError || !current) return;
+    if (formError || !current) return;
     return run("save", () => api.saveRacePlan(goal.id, current));
   };
   const refresh = () => run("refresh", () => api.refreshRacePlan(goal.id));
@@ -84,8 +78,14 @@
         </p>
       </div>
       <div>
-        <label for="race-target">Temps visé</label>
-        <input id="race-target" bind:value={targetText} placeholder="h:mm" inputmode="numeric" aria-invalid={targetInvalid} />
+        <p class="meta">
+          {#if view.target_time_s != null}
+            Temps visé : {fmtDuration(view.target_time_s)} · {view.target_source === "claude" ? "estimé par Claude" : "fixé par toi"}
+          {:else}
+            Pas de temps visé, référence : prédiction
+          {/if}
+        </p>
+        <a href="#/goal">Modifier l'objectif</a>
       </div>
       <div>
         <label for="race-start">Heure de départ</label>
@@ -103,9 +103,6 @@
       {/if}
     </div>
 
-    {#if targetInvalid}
-      <p class="error" role="alert">Temps visé invalide : saisis une durée au format h:mm ou h:mm:ss (ex. 3:45 pour 3 h 45).</p>
-    {/if}
     {#if plan.warnings.length}
       <ul class="warnings" aria-label="Avertissements">
         {#each plan.warnings as w, i (i)}<li>{w}</li>{/each}

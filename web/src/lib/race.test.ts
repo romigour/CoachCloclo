@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
-import { fmtDuration, fmtTargetTime, isDirty, parseTargetTime, settingsError, targetLabel } from "./race";
-import type { RaceSegment, RaceSettings } from "./api";
+import { fmtDuration, goalTimeLabel, fmtTargetTime, isDirty, parseTargetTime, settingsError, targetLabel } from "./race";
+import type { Goal, RaceSegment, RaceSettings } from "./api";
 
 const seg = (over: Partial<RaceSegment>): RaceSegment => ({
   kind: "plat", start_km: 0, end_km: 1, eq_km: 1, d_plus_m: 0, d_minus_m: 0, index: 1, avg_grade_pct: 0,
@@ -22,7 +22,7 @@ test("targetLabel for pace and heart-rate targets", () => {
 
 test("isDirty detects an aid station change", () => {
   const a: RaceSettings = {
-    target_time_s: null, start_time: "08:00", carbs_g_h: 60, water_ml_h: 500, carry_ml: 1000,
+    start_time: "08:00", carbs_g_h: 60, water_ml_h: 500, carry_ml: 1000,
     aid_stations: [{ km: 10, name: "A", kind: "eau", cutoff: null, stop_min: 1 }],
   };
   const b = structuredClone(a);
@@ -48,7 +48,7 @@ test("fmtTargetTime round-trips through parseTargetTime", () => {
 
 describe("settingsError", () => {
   const ok: RaceSettings = {
-    target_time_s: null, start_time: "08:00", carbs_g_h: 60, water_ml_h: 500, carry_ml: 1000,
+    start_time: "08:00", carbs_g_h: 60, water_ml_h: 500, carry_ml: 1000,
     aid_stations: [{ km: 10, name: "A", kind: "eau", cutoff: null, stop_min: 1 }],
   };
   const st = ok.aid_stations[0];
@@ -62,4 +62,11 @@ describe("settingsError", () => {
     [{ aid_stations: [{ ...st, name: "  " }] }, "Ravitaillement 1"],
     [{ aid_stations: [{ ...st, stop_min: NaN }] }, "Ravitaillement 1"],
   ])("%o is refused", (over, msg) => expect(settingsError({ ...ok, ...over })).toContain(msg));
+});
+
+test("goalTimeLabel distinguishes Claude estimate, own target and none", () => {
+  const g = { target_time_s: 6720, target_source: "claude" } as Goal;
+  expect(goalTimeLabel(g)).toBe("Temps estimé par Claude : 1 h 52");
+  expect(goalTimeLabel({ ...g, target_time_s: 6600, target_source: "user" })).toBe("Temps visé : 1 h 50");
+  expect(goalTimeLabel({ ...g, target_time_s: null, target_source: null })).toBeNull();
 });

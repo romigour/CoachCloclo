@@ -1,7 +1,7 @@
 import json
 from datetime import date, timedelta
 
-from coach.llm.schemas import AdjustmentResponse, Change, StepSpec
+from coach.llm.schemas import AdjustmentResponse, Change, RepeatSpec, StepSpec
 from coach.plan.constraints import (
     blocked_periods,
     Planned,
@@ -221,7 +221,7 @@ def test_light_week_with_no_planned_session_has_nothing_to_fix():
     c = _ec(_light(0))
     assert constraint_errors([], c, fixed_counts={2: 1}) == []
     p = [_p("a", "jeudi", date(2026, 11, 5), week=2)]
-    assert constraint_errors(p, c) == ["semaine 2 : 1 séances pour 0 au plus (semaine allégée)"]
+    assert constraint_errors(p, c) == ["semaine 2 : 1 séance pour 0 au plus (semaine allégée)"]
 
 
 def test_several_light_weeks_on_same_week_all_apply():
@@ -353,4 +353,25 @@ def test_at_most_one_bike_session_per_week():
 def test_exported_bike_session_is_checked_too():
     assert constraint_errors([_bike(exported=True)], _bike_c(False)) == [
         "séance 1 : séance vélo non autorisée pour cet objectif"
+    ]
+
+
+def test_bike_session_refuses_distance_steps():
+    msg = "séance 1 : une séance vélo se décrit en durée (duration_s), pas en distance"
+    steps = [StepSpec(kind="active", distance_m=30000, zone="Z2")]
+    assert constraint_errors([_bike(steps=steps)], _bike_c()) == [msg]
+    repeated = [RepeatSpec(repeat=2, steps=[StepSpec(kind="active", distance_m=5000, zone="Z2")])]
+    assert constraint_errors([_bike(steps=repeated)], _bike_c()) == [msg]
+
+
+def test_bike_session_accepts_duration_steps_in_repeat():
+    repeated = [RepeatSpec(repeat=2, steps=[StepSpec(kind="active", duration_s=900, zone="Z2")])]
+    assert constraint_errors([_bike(steps=repeated)], _bike_c()) == []
+
+
+def test_light_week_message_singular_and_plural():
+    p = [_p("a", "jeudi", date(2026, 11, 5), week=2)]
+    assert constraint_errors(p, _ec(_light(0))) == ["semaine 2 : 1 séance pour 0 au plus (semaine allégée)"]
+    assert constraint_errors(p, _ec(_light(1)), fixed_counts={2: 2}) == [
+        "semaine 2 : 3 séances pour 1 au plus (semaine allégée)"
     ]

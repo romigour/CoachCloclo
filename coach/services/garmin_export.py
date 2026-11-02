@@ -24,7 +24,7 @@ from coach.garmin.port import (
 )
 from coach.llm.schemas import Change
 from coach.plan import calendar
-from coach.plan.constraints import blocked_periods
+from coach.plan.constraints import allowed_days, blocked_periods
 from coach.plan.models import ALL_DAYS, Goal, Proposal, Session
 from coach.plan.repo import Repo
 from coach.services import CoachError
@@ -79,10 +79,11 @@ def _check_not_past(garmin: GarminPort, d: date) -> None:
 def _warnings(repo: Repo, session: Session, d: date) -> list[str]:
     warnings = hard_session_warnings(session, d, repo.sessions(session.goal_id))
     goal = _goal(repo, session)
-    if ALL_DAYS[d.weekday()] not in goal.available_days():
-        warnings.append(_UNAVAILABLE_DAY)
     # `today = d` : un arrêt ouvert bloque jusqu'au dimanche de la semaine de `d`
-    for start, end, label in blocked_periods(load_constraints(repo, goal, d)):
+    constraints = load_constraints(repo, goal, d)
+    if ALL_DAYS[d.weekday()] not in allowed_days(constraints, d):
+        warnings.append(_UNAVAILABLE_DAY)
+    for start, end, label in blocked_periods(constraints):
         if start <= d <= end:
             warnings.append(f"Pendant ton imprévu : {label}")
     return warnings

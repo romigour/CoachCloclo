@@ -390,3 +390,15 @@ def test_prompts_without_constraints_mention_no_sport_rule():
 def test_session_line_flags_bike():
     assert _session_line(_db(1, sport="bike")).endswith(" | vélo")
     assert "vélo" not in _session_line(_db(1))
+
+
+def test_prompts_ask_bike_steps_in_duration_only():
+    for p in _bike_prompts(True):
+        assert "étapes en durée uniquement" in p
+
+
+def test_missed_sessions_flag_bike():
+    run, bike = _db(1, title="Course ratée"), _db(2, sport="bike", title="Vélo raté")
+    p = build_adjustment_prompt(make_goal(), ZONES, 4, [], [run, bike], [], [])
+    assert f"- Vélo raté ({bike.type}, vélo, semaine {bike.week_index})" in p
+    assert f"- Course ratée ({run.type}, semaine {run.week_index})" in p

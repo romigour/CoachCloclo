@@ -7,7 +7,8 @@ from sqlmodel import select
 
 from coach.config import load_settings, save_settings
 from coach.llm.provider import FakeLLMProvider
-from coach.plan.models import Event, Proposal
+from coach.garmin.port import GarminAuthRequired, GarminRateLimited, GarminUnavailable
+from coach.plan.models import Event, Proposal, Session
 from coach.services import CoachError
 from coach.services.adjust import request_adjustment
 from coach.services.events import (
@@ -74,6 +75,14 @@ def test_injury_open_and_closed(repo, goal):
 def test_injury_requires_start(repo, goal):
     with pytest.raises(EventError, match="Indique la date de début"):
         build(repo, goal, kind="injury")
+
+
+def test_open_injury_in_the_future_refused(repo, goal):
+    with pytest.raises(EventError, match="Un arrêt sans date de reprise doit avoir déjà commencé"):
+        build(repo, goal, kind="injury", start_date=date(2026, 11, 4))
+    assert build(repo, goal, kind="injury", start_date=TODAY).end_date is None
+    # un arrêt futur de durée connue reste possible
+    assert build(repo, goal, kind="injury", start_date=date(2026, 11, 4), end_date=date(2026, 11, 6))
 
 
 def test_injury_end_before_start(repo, goal):
@@ -298,3 +307,67 @@ def test_event_note_describes_each_kind():
         Event(kind="light_week", max_sessions=2, days_json='["mardi", "samedi"]', **base)
     )
     assert "fatigue" in event_note(Event(kind="fatigue", **base))
+
+
+def _fail_metrics(fake_garmin, exc):
+    def boom():
+        raise exc
+
+    fake_garmin.metrics = boom
+
+
+@pytest.mark.parametrize(
+    "exc, message",
+    [
+        (GarminUnavailable("Garmin indisponible (simulé)"), "Garmin indisponible (simulé)"),
+        (GarminAuthRequired(), "Connexion Garmin requise"),
+        (GarminRateLimited(), "Garmin limite les requêtes, réessaie plus tard"),
+        (CoachError("Le plan n'est plus validé"), "Le plan n'est plus validé"),
+    ],
+)
+def test_create_event_keeps_event_on_garmin_or_coach_error(repo, coach_home, fake_garmin, accepted_plan, exc, message):
+    _fail_metrics(fake_garmin, exc)
+    data = EventInput(kind="unavailable", start_date=date(2026, 11, 16), end_date=date(2026, 11, 18))
+    result = create_event(repo, fake_garmin, FakeLLMProvider([]), accepted_plan.id, data)
+    assert result.proposal_id is None and result.error == message
+    assert [e.id for e in repo.events(accepted_plan.id)] == [result.event_id]
+
+
+@pytest.mark.parametrize(
+    "exc, message",
+    [
+        (GarminUnavailable("Garmin indisponible (simulé)"), "Garmin indisponible (simulé)"),
+        (GarminAuthRequired(), "Connexion Garmin requise"),
+        (GarminRateLimited(), "Garmin limite les requêtes, réessaie plus tard"),
+        (CoachError("Le plan n'est plus validé"), "Le plan n'est plus validé"),
+    ],
+)
+def test_resume_injury_closes_stop_on_garmin_or_coach_error(repo, coach_home, fake_garmin, accepted_plan, exc, message):
+    injury = repo.add(Event(goal_id=accepted_plan.id, kind="injury", start_date=date(2026, 11, 1)))
+    _fail_metrics(fake_garmin, exc)
+    result = resume_injury(repo, fake_garmin, FakeLLMProvider([]), injury.id, date(2026, 11, 4))
+    assert result.proposal_id is None and result.error == message
+    assert repo.open_injury(accepted_plan.id) is None
+
+
+def test_fatigue_names_the_missed_session_to_claude(repo, coach_home, fake_garmin, accepted_plan):
+    todo = next(s for s in repo.sessions(accepted_plan.id) if s.status == "todo")
+    llm = FakeLLMProvider([adjustment_json()])
+    result = create_event(repo, fake_garmin, llm, accepted_plan.id, EventInput(kind="fatigue", session_id=todo.id))
+    assert result.error is None
+    manquees = llm.calls[0].split("Séances manquées :")[1]
+    assert todo.title in manquees.split("Séances")[0]
+    assert f"séance ratée : {todo.title} ({todo.type}, semaine {todo.week_index})" in llm.calls[0]
+
+
+def test_event_note_names_the_missed_session():
+    s = Session(goal_id=1, title="Sortie vélo", type="endurance", sport="bike", week_index=3, order=1)
+    note = event_note(Event(goal_id=1, kind="fatigue", start_date=TODAY), s)
+    assert "séance ratée : Sortie vélo (endurance, vélo, semaine 3)" in note
+
+
+def test_resume_note_singular_day(repo, coach_home, fake_garmin, accepted_plan):
+    injury = repo.add(Event(goal_id=accepted_plan.id, kind="injury", start_date=date(2026, 11, 3)))
+    llm = FakeLLMProvider([adjustment_json()])
+    resume_injury(repo, fake_garmin, llm, injury.id, date(2026, 11, 4))
+    assert "Reprise après un jour d'arrêt" in llm.calls[-1]

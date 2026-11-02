@@ -6,7 +6,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-from coach.garmin.port import GarminPort
+from coach.garmin.port import GarminAuthRequired, GarminPort, GarminRateLimited, GarminUnavailable
 from coach.llm.provider import LLMError, LLMProvider
 from coach.llm.schemas import Weekday
 from coach.plan import calendar
@@ -56,6 +56,8 @@ def build_event(repo: Repo, goal: Goal, data: EventInput, today: date) -> Event:
         if start is None:
             raise EventError("Indique la date de début")
         _check_order(start, end)
+        if end is None and start > today:
+            raise EventError("Un arrêt sans date de reprise doit avoir déjà commencé")
         # un seul arrêt ouvert : seul un nouvel arrêt ouvert entre en conflit
         if end is None and repo.open_injury(goal.id) is not None:
             raise EventError("Un arrêt est déjà en cours : signale d'abord la reprise")
@@ -105,8 +107,10 @@ def _fmt(d: date) -> str:
     return d.strftime("%d/%m/%Y")
 
 
-def event_note(event: Event) -> str:
-    """Description française de l'imprévu, transmise à Claude comme `change_note`."""
+def event_note(event: Event, session: Session | None = None) -> str:
+    """Description française de l'imprévu, transmise à Claude comme `change_note`.
+
+    `session` est la séance ratée d'une fatigue : Claude ne la voit plus parmi les séances à venir."""
     extra = f" ({event.note})" if event.note else ""
     if event.kind == "unavailable":
         text = f"indisponible du {_fmt(event.start_date)} au {_fmt(event.end_date)}"
@@ -122,15 +126,32 @@ def event_note(event: Event) -> str:
         if days:
             text += f", jours possibles : {', '.join(days)}"
     else:
-        text = "fatigue signalée aujourd'hui" + (", une séance a été ratée" if event.session_id else "")
+        text = "fatigue signalée aujourd'hui"
+        if session is not None:
+            kind = f"{session.type}, vélo" if session.sport == "bike" else session.type
+            text += f", séance ratée : {session.title} ({kind}, semaine {session.week_index})"
+        elif event.session_id:
+            text += ", une séance a été ratée"
     return f"L'athlète signale un imprévu : {text}{extra}. Adapte les séances à venir en conséquence."
 
 
-def _ask(repo: Repo, garmin: GarminPort, llm: LLMProvider, event_id: int, goal_id: int, note: str) -> EventResult:
-    """Demande l'ajustement ; un échec de Claude laisse l'imprévu enregistré."""
+def _ask(
+    repo: Repo,
+    garmin: GarminPort,
+    llm: LLMProvider,
+    event_id: int,
+    goal_id: int,
+    note: str,
+    missed: list[Session] = (),
+) -> EventResult:
+    """Demande l'ajustement ; toute erreur (Claude, Garmin, plan) laisse l'imprévu enregistré."""
     try:
-        proposal_id = request_adjustment(repo, garmin, llm, goal_id, note)
-    except LLMError as e:
+        proposal_id = request_adjustment(repo, garmin, llm, goal_id, note, missed=missed)
+    except GarminAuthRequired:
+        return EventResult(event_id=event_id, proposal_id=None, error="Connexion Garmin requise")
+    except GarminRateLimited:
+        return EventResult(event_id=event_id, proposal_id=None, error="Garmin limite les requêtes, réessaie plus tard")
+    except (LLMError, GarminUnavailable, CoachError) as e:
         return EventResult(event_id=event_id, proposal_id=None, error=str(e) or _DEFAULT_ERROR)
     return EventResult(event_id=event_id, proposal_id=proposal_id, error=None)
 
@@ -141,16 +162,20 @@ def create_event(repo: Repo, garmin: GarminPort, llm: LLMProvider, goal_id: int,
     if not goal.plan_accepted:
         raise EventError("Le plan de l'objectif doit être validé")
     event = build_event(repo, goal, data, garmin.today())
+    missed: list[Session] = []
     with repo.transaction() as db:
         if event.session_id is not None:  # fatigue : la séance ratée n'est plus à faire
             s = db.get(Session, event.session_id)
             if s is not None and s.status in ("todo", "exported"):
                 s.status = "missed"
                 db.add(s)
+                db.flush()
+                db.expunge(s)  # reste lisible après la transaction
+                missed.append(s)
         db.add(event)
         db.flush()
         event_id = event.id
-    return _ask(repo, garmin, llm, event_id, goal_id, event_note(event))
+    return _ask(repo, garmin, llm, event_id, goal_id, event_note(event, missed[0] if missed else None), missed)
 
 
 def delete_event(repo: Repo, event_id: int) -> None:
@@ -179,8 +204,9 @@ def resume_injury(
         goal_id, reason = event.goal_id, event.note
         db.add(event)
     detail = f" ({reason})" if reason else ""
+    duree = "un jour" if days == 1 else f"{days} jours" if days > 1 else "moins d'un jour"
     note = (
-        f"Reprise après {days} jours d'arrêt{detail} : "
+        f"Reprise après {duree} d'arrêt{detail} : "
         "reprise progressive, volume et intensité réduits les premières semaines."
     )
     return _ask(repo, garmin, llm, event_id, goal_id, note)

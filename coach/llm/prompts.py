@@ -190,8 +190,9 @@ def _goal_text(goal: Goal, *, generation: bool = False) -> str:
 
 _BIKE_RULE = (
     "Vélo autorisé : tu peux remplacer au plus une séance EF ou récup par semaine par du vélo d'endurance douce "
-    "(sport \"bike\", target_kind \"hr\", zones Z1 ou Z2), sur route ou home-trainer, jamais à la place d'une "
-    "séance clé ; compte une durée d'environ 1,3 à 1,5 fois celle de la séance de course remplacée."
+    "(sport \"bike\", target_kind \"hr\", zones Z1 ou Z2, étapes en durée uniquement), sur route ou home-trainer, "
+    "jamais à la place d'une séance clé ; compte une durée d'environ 1,3 à 1,5 fois celle de la séance de course "
+    "remplacée."
 )
 _RUN_ONLY_RULE = 'Toutes les séances sont en course à pied (sport "run").'
 
@@ -333,9 +334,12 @@ def _session_line(s: Session) -> str:
     )
 
 
+def _kind(s: Session) -> str:
+    return f"{s.type}, vélo" if s.sport == "bike" else s.type
+
+
 def _done_line(s: Session, a: Activity) -> str:
-    kind = f"{s.type}, vélo" if s.sport == "bike" else s.type
-    return f"- prévu : {s.title} ({kind}) -> réalisé : " + _activity_line(a)[2:]
+    return f"- prévu : {s.title} ({_kind(s)}) -> réalisé : " + _activity_line(a)[2:]
 
 
 def _done_block(s: Session, a: Activity, comparisons: dict[int, StepComparison]) -> str:
@@ -378,7 +382,7 @@ def build_adjustment_prompt(
         + ("\n".join(_done_block(s, a, comparisons) for s, a in done) if done else "aucune")
         + (f"\n{_DETAIL_RULE}" if comparisons else ""),
         "Séances manquées :\n"
-        + ("\n".join(f"- {s.title} ({s.type}, semaine {s.week_index})" for s in missed) if missed else "aucune"),
+        + ("\n".join(f"- {s.title} ({_kind(s)}, semaine {s.week_index})" for s in missed) if missed else "aucune"),
         "Séances à venir :\n" + ("\n".join(_session_line(s) for s in upcoming) if upcoming else "aucune"),
         "Règles de modification : seules les séances de statut `todo` ou `exported` peuvent être "
         "modifiées (op modify, avec session_id) ou supprimées (op remove) ; les séances `done`, "

@@ -112,6 +112,17 @@ def _light_weeks(c: PlanConstraints) -> list["Event"]:
     return [e for e in c.events if e.kind == "light_week"]
 
 
+def _restrictions(c: PlanConstraints, monday: date) -> list[list[str]]:
+    """Jours imposés par les semaines allégées qui commencent ce lundi."""
+    return [e.days() for e in _light_weeks(c) if e.start_date == monday and e.days() is not None]
+
+
+def allowed_days(c: PlanConstraints, d: date) -> set[str]:
+    """Jours possibles de la semaine de `d` : ceux d'une semaine allégée la couvrant remplacent ceux de l'objectif."""
+    restricted = _restrictions(c, monday_of(d))
+    return set.intersection(*(set(r) for r in restricted)) if restricted else set(c.available_days)
+
+
 def constraint_errors(
     planned: list[Planned], c: PlanConstraints, *, fixed_counts: Mapping[int, int] | None = None
 ) -> list[str]:
@@ -121,14 +132,12 @@ def constraint_errors(
     """
     errors: list[str] = []
     periods = blocked_periods(c)
-    light_weeks = _light_weeks(c)
     for p in planned:
         day = p.spec.suggested_day
         monday = monday_of(p.date)
         # semaine allégée avec jours restreints : ces jours remplacent les jours possibles de l'objectif
-        restricted = [e.days() for e in light_weeks if e.start_date == monday and e.days() is not None]
-        allowed = set.intersection(*(set(d) for d in restricted)) if restricted else set(c.available_days)
-        if not p.exported and day not in allowed:
+        restricted = _restrictions(c, monday)
+        if not p.exported and day not in allowed_days(c, p.date):
             errors.append(f"{p.label} : {day} n'est pas un jour possible")
         # comme pour les jours possibles, une séance exportée garde sa date Garmin
         if (
@@ -165,6 +174,9 @@ def _bike_errors(planned: list[Planned], c: PlanConstraints) -> list[str]:
             errors.append(f"{p.label} : séance vélo non autorisée pour cet objectif")
         if p.spec.type not in ("EF", "récup") or p.spec.target_kind != "hr":
             errors.append(f"{p.label} : une séance vélo doit être de l'EF ou de la récup ciblée en FC")
+        elif any(st.distance_m is not None for st in p.spec.iter_steps()):
+            # la durée attendue convertit les distances à l'allure course : un vélo en km ne se rattacherait jamais
+            errors.append(f"{p.label} : une séance vélo se décrit en durée (duration_s), pas en distance")
         elif any(st.zone not in (None, "Z1", "Z2") for st in p.spec.iter_steps()):
             errors.append(f"{p.label} : séance vélo limitée aux zones Z1 et Z2")
     errors += [f"semaine {w} : au plus une séance vélo" for w, n in sorted(per_week.items()) if n > 1]
@@ -192,7 +204,7 @@ def _light_week_count_errors(planned: list[Planned], c: PlanConstraints, fixed_c
         week = (e.start_date - c.plan_start).days // 7 + 1
         upcoming = sum(1 for p in planned if p.spec.week_index == week)
         total = fixed_counts.get(week, 0) + upcoming
-        msg = f"semaine {week} : {total} séances pour {e.max_sessions} au plus (semaine allégée)"
+        msg = f"semaine {week} : {total} séance{'s' if total > 1 else ''} pour {e.max_sessions} au plus (semaine allégée)"
         # rien à corriger si aucune séance n'est prévue cette semaine-là
         if upcoming and total > e.max_sessions and msg not in errors:
             errors.append(msg)

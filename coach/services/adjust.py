@@ -97,7 +97,12 @@ def save_proposal(db: DbSession, adj: AdjustmentResponse) -> int:
 
 
 def request_adjustment(
-    repo: Repo, garmin: GarminPort, llm: LLMProvider, goal_id: int, note: str | None = None
+    repo: Repo,
+    garmin: GarminPort,
+    llm: LLMProvider,
+    goal_id: int,
+    note: str | None = None,
+    missed: list[Session] = (),
 ) -> int:
     """Demande un ajustement à Claude, l'enregistre en proposition et renvoie son id.
 
@@ -110,7 +115,7 @@ def request_adjustment(
         raise GoalError("Le plan de l'objectif doit être validé")
     _, zones = refresh_snapshot(repo, garmin)
     adj = ask_adjustment(
-        repo, garmin, llm, goal, zones, repo.sessions(goal_id), garmin.today(), change_note=note
+        repo, garmin, llm, goal, zones, repo.sessions(goal_id), garmin.today(), missed=list(missed), change_note=note
     )
     with repo.transaction() as db:
         proposal_id = save_proposal(db, adj)

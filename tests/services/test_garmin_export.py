@@ -526,3 +526,20 @@ def test_apply_proposal_modify_copies_sport(repo, fake_garmin, session_w3):
     p = proposal_of(repo, modify(session_w3.id, sport="bike"))
     apply_proposal(repo, fake_garmin, p.id)
     assert repo.session(session_w3.id).sport == "bike"
+
+
+def test_check_export_uses_light_week_days_for_availability(repo, fake_garmin):
+    g = repo.add(make_goal())  # plan du lundi 2026-10-26 ; semaine 3 : lundi 09/11
+    s = repo.add(make_db_session(g.id, week_index=3))
+    repo.add(
+        Event(
+            goal_id=g.id,
+            kind="light_week",
+            start_date=date(2026, 11, 9),
+            end_date=date(2026, 11, 15),
+            max_sessions=2,
+            days_json='["mardi", "jeudi"]',
+        )
+    )
+    assert "Jour hors de tes disponibilités" in check_export(repo, s.id, date(2026, 11, 11))  # mercredi
+    assert "Jour hors de tes disponibilités" not in check_export(repo, s.id, date(2026, 11, 12))  # jeudi

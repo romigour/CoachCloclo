@@ -183,7 +183,7 @@
                 {#if summary}<li class="cmp-summary">{summary}</li>{/if}
                 <li class="cmp-step" class:undone={!s.done}>
                   <span class="cmp-plan">
-                    {stepLabel(s)}{#if targetLabel(s, comparison.target_kind)} · {targetLabel(s, comparison.target_kind)}{/if}
+                    {stepLabel(s)}{#if targetLabel(s, comparison.target_kind)}{" · "}{targetLabel(s, comparison.target_kind)}{/if}
                   </span>
                   {#if s.done}
                     <span class="cmp-done">{doneLabel(s)}</span>

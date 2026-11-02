@@ -111,6 +111,7 @@ test("Prévu / réalisé loads on first expand and shows verdicts", async () => 
   expect(screen.getByText("dans la cible")).toBeVisible();
   expect(screen.getByText("trop lent")).toBeVisible();
   expect(screen.getByText("non réalisée")).toBeVisible();
+  expect(screen.getByText("1.1 · Actif 400 m · VMA 3:40–3:55/km")).toBeVisible();
   expect(screen.getAllByText("412 m (+12 m) · 3:48/km · 172 bpm", { exact: false })[0]).toBeVisible();
   await open(); // referme
   await open(); // rouvre : pas de seconde requête

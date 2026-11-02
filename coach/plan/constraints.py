@@ -2,12 +2,13 @@
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, timedelta
 from typing import TYPE_CHECKING
 
 from coach.llm.schemas import AdjustmentResponse, PlanResponse, SessionSpec
+from coach.plan.calendar import plan_start as monday_of
 from coach.plan.calendar import suggested_date
-from coach.plan.models import Goal, Session
+from coach.plan.models import ALL_DAYS, Goal, Session
 
 if TYPE_CHECKING:
     from coach.plan.models import Event
@@ -20,6 +21,7 @@ class PlanConstraints:
     today: date
     include_bike: bool = False
     events: tuple["Event", ...] = ()
+    plan_start: date | None = None  # lundi de la semaine 1 ; sert à situer une semaine allégée
 
     @classmethod
     def of(cls, goal: Goal, today: date, events: Sequence["Event"] = ()) -> "PlanConstraints":
@@ -30,6 +32,7 @@ class PlanConstraints:
             today=today,
             include_bike=False,
             events=tuple(events),
+            plan_start=goal.plan_start,
         )
 
 
@@ -86,17 +89,47 @@ def planned_after_adjustment(goal: Goal, upcoming: list[Session], adj: Adjustmen
     return planned
 
 
+def _fmt(d: date) -> str:
+    return d.strftime("%d/%m")
+
+
+def blocked_periods(c: PlanConstraints) -> list[tuple[date, date, str]]:
+    """Périodes où aucune séance ne doit tomber : (début, fin incluse, libellé)."""
+    periods: list[tuple[date, date, str]] = []
+    for e in c.events:
+        if e.kind == "unavailable" and e.end_date is not None:
+            label = f"indisponibilité du {_fmt(e.start_date)} au {_fmt(e.end_date)}"
+            periods.append((e.start_date, e.end_date, label))
+        elif e.kind == "injury":
+            if e.end_date is not None:
+                periods.append((e.start_date, e.end_date, f"arrêt du {_fmt(e.start_date)} au {_fmt(e.end_date)}"))
+            else:  # arrêt ouvert : bloque jusqu'à la fin de la semaine en cours
+                end = max(e.start_date, monday_of(c.today) + timedelta(days=6))
+                periods.append((e.start_date, end, f"arrêt depuis le {_fmt(e.start_date)}"))
+    return periods
+
+
+def _light_weeks(c: PlanConstraints) -> list["Event"]:
+    return [e for e in c.events if e.kind == "light_week"]
+
+
 def constraint_errors(
     planned: list[Planned], c: PlanConstraints, *, fixed_counts: Mapping[int, int] | None = None
 ) -> list[str]:
     """Violations des règles de disponibilité ; vide si tout est respecté.
 
-    `fixed_counts` (séances done/missed/sync_error par semaine) servira à la règle de semaine allégée.
+    `fixed_counts` (séances done/missed/sync_error par semaine) compte dans la limite d'une semaine allégée.
     """
     errors: list[str] = []
+    periods = blocked_periods(c)
+    light_weeks = _light_weeks(c)
     for p in planned:
         day = p.spec.suggested_day
-        if not p.exported and day not in c.available_days:
+        monday = monday_of(p.date)
+        # semaine allégée avec jours restreints : ces jours remplacent les jours possibles de l'objectif
+        restricted = [e.days() for e in light_weeks if e.start_date == monday and e.days() is not None]
+        allowed = set.intersection(*(set(d) for d in restricted)) if restricted else set(c.available_days)
+        if not p.exported and day not in allowed:
             errors.append(f"{p.label} : {day} n'est pas un jour possible")
         # comme pour les jours possibles, une séance exportée garde sa date Garmin
         if (
@@ -104,6 +137,42 @@ def constraint_errors(
             and p.spec.type == "sortie_longue"
             and c.long_run_day is not None
             and day != c.long_run_day
+            and not _long_run_day_free(c, monday, periods, restricted)
         ):
             errors.append(f"{p.label} : la sortie longue doit tomber le {c.long_run_day}")
+        for start, end, name in periods:
+            if start <= p.date <= end:
+                if p.exported:
+                    errors.append(f"{p.label} : séance exportée pendant {name}, à retirer (op remove)")
+                else:
+                    errors.append(f"{p.label} : tombe pendant {name}")
+    errors += _light_week_count_errors(planned, c, fixed_counts or {})
+    return errors
+
+
+def _long_run_day_free(
+    c: PlanConstraints, monday: date, periods: list[tuple[date, date, str]], restricted: list[list[str] | None]
+) -> bool:
+    """Vrai si le jour de sortie longue est bloqué ou exclu cette semaine-là (tout jour possible convient)."""
+    if any(c.long_run_day not in days for days in restricted):
+        return True
+    d = monday + timedelta(days=ALL_DAYS.index(c.long_run_day))
+    return any(start <= d <= end for start, end, _ in periods)
+
+
+def _light_week_count_errors(planned: list[Planned], c: PlanConstraints, fixed_counts: Mapping[int, int]) -> list[str]:
+    """Règle 4 : séances de la semaine (déjà faites + prévues) au plus `max_sessions`."""
+    if c.plan_start is None:
+        return []
+    errors: list[str] = []
+    for e in _light_weeks(c):
+        if e.max_sessions is None:
+            continue
+        week = (e.start_date - c.plan_start).days // 7 + 1
+        upcoming = sum(1 for p in planned if p.spec.week_index == week)
+        total = fixed_counts.get(week, 0) + upcoming
+        msg = f"semaine {week} : {total} séances pour {e.max_sessions} au plus (semaine allégée)"
+        # rien à corriger si aucune séance n'est prévue cette semaine-là
+        if upcoming and total > e.max_sessions and msg not in errors:
+            errors.append(msg)
     return errors

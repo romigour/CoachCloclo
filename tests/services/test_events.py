@@ -91,6 +91,11 @@ def test_light_week_days_optional_and_zero_sessions(repo, goal):
     assert e.days() is None and e.max_sessions == 0
 
 
+def test_light_week_empty_days_means_no_restriction(repo, goal):
+    e = build(repo, goal, kind="light_week", start_date=date(2026, 11, 2), max_sessions=1, days=[])
+    assert e.days() is None and e.days_json is None
+
+
 def test_light_week_end_date_is_computed(repo, goal):
     e = build(repo, goal, kind="light_week", start_date=date(2026, 11, 2), end_date=date(2026, 12, 25), max_sessions=1)
     assert e.end_date == date(2026, 11, 8)

@@ -63,7 +63,7 @@ def build_event(repo: Repo, goal: Goal, data: EventInput, today: date) -> Event:
             raise EventError("Indique le nombre de séances maximum")
         end = start + timedelta(days=6)
         max_sessions = data.max_sessions
-        if data.days is not None:
+        if data.days:  # liste vide = aucune restriction de jours
             days = normalize_days(data.days)
             if not set(days) <= set(goal.available_days()):
                 raise EventError("Les jours de la semaine allégée doivent faire partie de tes jours possibles")

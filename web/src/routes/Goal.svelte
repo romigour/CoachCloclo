@@ -2,6 +2,7 @@
   import { onMount } from "svelte";
   import { api, type Goal, type Plan } from "../lib/api";
   import { formatDate, todayIso } from "../lib/dates";
+  import { goalTimeLabel, parseTargetTime } from "../lib/race";
   import { daysUntil } from "../lib/week";
   import ErrorBanner from "../components/ErrorBanner.svelte";
   import Calendar from "../components/Calendar.svelte";
@@ -22,6 +23,10 @@
   let raceDate = $state("");
   let perWeek = $state(4);
   let gpx = $state<File | null>(null);
+  let targetMode = $state<"claude" | "user">("claude");
+  const ownTime = $derived(targetMode === "user");
+  let targetText = $state("");
+  let targetError = $state("");
 
   let goal = $state<Goal | null>(null);
   let active = $state<Goal | null>(null);
@@ -65,6 +70,11 @@
   async function submit(e: Event) {
     e.preventDefault();
     error = null;
+    targetError = "";
+    if (ownTime && !Number.isFinite(parseTargetTime(targetText))) {
+      targetError = "Temps visé invalide : format attendu h:mm, ex. 1:50";
+      return;
+    }
     busy = "Création de l'objectif…";
     try {
       goal = await api.createGoal({
@@ -73,6 +83,7 @@
         d_plus_m: type === "trail" ? dplus : 0,
         race_date: raceDate,
         sessions_per_week: perWeek,
+        target_time: ownTime ? targetText.trim() : undefined,
         gpx,
       });
       await generate(goal);
@@ -134,6 +145,7 @@
 {#if plan && goal}
   <section class="card stack">
     <p class="meta">{goalLabel(goal)} · course le {formatDate(goal.race_date)} · {plan.weeks.length} semaines</p>
+    {#if goalTimeLabel(goal)}<p class="meta">{goalTimeLabel(goal)}</p>{/if}
     {#if summary}<p>{summary}</p>{/if}
     <div class="row">
       <button class="primary" onclick={accept} disabled={!!busy}>Valider le plan</button>
@@ -210,6 +222,27 @@
             </label>
           {/each}
         </div>
+      </fieldset>
+
+      <fieldset>
+        <legend>Temps visé</legend>
+        <div class="choices">
+          <label class="choice">
+            <input type="radio" name="target" value="claude" bind:group={targetMode} />
+            <span><strong>Laisser Claude estimer</strong></span>
+          </label>
+          <label class="choice">
+            <input type="radio" name="target" value="user" bind:group={targetMode} />
+            <span><strong>Je fixe mon temps</strong></span>
+          </label>
+        </div>
+        {#if ownTime}
+          <label>
+            Temps visé (h:mm)
+            <input type="text" inputmode="numeric" placeholder="1:50" bind:value={targetText} />
+            {#if targetError}<span class="hint" role="alert">{targetError}</span>{/if}
+          </label>
+        {/if}
       </fieldset>
 
       <label class="drop">

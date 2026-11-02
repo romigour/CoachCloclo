@@ -1,4 +1,4 @@
-import type { RaceSegment, RaceSettings } from "./api";
+import type { Goal, RaceSegment, RaceSettings } from "./api";
 import { fmtClock } from "./stats/format";
 
 /** Durée en secondes → « 5 h 12 » (arrondie à la minute), « 48 min » sous l'heure. */
@@ -56,4 +56,10 @@ export function settingsError(s: RaceSettings): string | null {
       return `Ravitaillement ${i + 1} : km (positif), nom (60 caractères au plus) et arrêt (0 à 120 min) sont requis.`;
   }
   return null;
+}
+
+/** Ligne « temps » d'un objectif : estimation de Claude ou temps fixé par l'utilisateur ; null sans temps visé. */
+export function goalTimeLabel(g: Goal): string | null {
+  if (g.target_time_s == null) return null;
+  return `${g.target_source === "claude" ? "Temps estimé par Claude" : "Temps visé"} : ${fmtDuration(g.target_time_s)}`;
 }

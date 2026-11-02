@@ -19,6 +19,14 @@ def week_monday(goal: Goal, week_index: int) -> date:
     return goal.plan_start + timedelta(weeks=week_index - 1)
 
 
+_WEEKDAYS = ("lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche")
+
+
+def suggested_date(goal: Goal, week_index: int, suggested_day: str) -> date:
+    """Date du jour suggéré (nom français du jour) dans la semaine `week_index`."""
+    return week_monday(goal, week_index) + timedelta(days=_WEEKDAYS.index(suggested_day))
+
+
 def week_of(goal: Goal, d: date) -> int:
     """Index (base 1) de la semaine de `d` ; peut sortir de [1, n] hors du plan."""
     return (d - goal.plan_start).days // 7 + 1

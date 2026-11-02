@@ -47,7 +47,10 @@ def _migrate(engine: Engine) -> None:
         conn.execute(text("ALTER TABLE goal ADD COLUMN target_source VARCHAR"))
         rows = conn.execute(text("SELECT goal_id, settings_json FROM racestrategy")).all()
         for goal_id, settings_json in rows:
-            target = json.loads(settings_json).get("target_time_s")
+            try:
+                target = json.loads(settings_json).get("target_time_s")
+            except (ValueError, AttributeError, TypeError):
+                continue  # ligne corrompue : ignorée, les autres sont reprises
             if target:
                 conn.execute(
                     text("UPDATE goal SET target_time_s = :t, target_source = 'user' WHERE id = :id"),

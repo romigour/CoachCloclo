@@ -9,7 +9,7 @@ from coach.analysis.gpx import GpxError
 from coach.garmin.port import FakeGarminClient, Metrics
 from coach.llm.provider import FakeLLMProvider, LLMInvalidResponse
 from coach.llm.schemas import Change
-from coach.plan.models import Goal, Proposal
+from coach.plan.models import Goal, Proposal, Session
 from coach.services import CoachError
 from coach.services.context import refresh_snapshot
 from coach.services.plans import (
@@ -314,9 +314,24 @@ def test_update_goal_removes_exported_after_race_day(repo, monday_garmin):
         GoalUpdate(race_date=date(2027, 1, 25)),
     )
     week13 = repo.sessions(goal.id, week_index=13)
-    assert [(s.order, s.status) for s in week13] == [(2, "todo"), (3, "todo")]  # sans date : conservées
+    assert week13 == []  # les todo (jour suggéré mardi) tombent aussi après la course
     assert repo.sessions(goal.id, week_index=14) == []
     assert monday_garmin.workouts == {} and monday_garmin.schedules == {}
+
+
+def test_update_goal_mid_week_removes_todo_after_race_day(repo, monday_garmin):
+    goal = _accepted_goal(repo, monday_garmin)
+    # course le samedi 2027-01-30 (semaine 13) : les todo planifiés dimanche sont retirés, les autres restent
+    with repo.transaction() as db:
+        for s in db.exec(select(Session).where(Session.goal_id == goal.id, Session.week_index == 13)).all():
+            s.suggested_day = "dimanche" if s.order == 3 else "jeudi"
+            db.add(s)
+    update_goal(
+        repo, monday_garmin, FakeLLMProvider([adjustment_json()]), goal.id,
+        GoalUpdate(race_date=date(2027, 1, 30)),
+    )
+    todo13 = [s.order for s in repo.sessions(goal.id, week_index=13) if s.status == "todo"]
+    assert todo13 == [2]
 
 
 def test_update_goal_garmin_failure_keeps_edit(repo, monday_garmin):

@@ -67,6 +67,7 @@
     const r = await api.generate(g.id);
     summary = r.summary;
     plan = await api.plan();
+    if (plan.goal) goal = plan.goal; // reprend le temps estimé par Claude
   }
 
   async function submit(e: Event) {

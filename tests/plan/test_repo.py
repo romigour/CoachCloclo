@@ -190,6 +190,18 @@ def test_migration_adds_columns_and_copies_strategy_target(tmp_path):
     assert archived.target_time_s is None and archived.target_source is None
 
 
+def test_migration_survives_corrupt_strategy_row(tmp_path):
+    path = tmp_path / "old.db"
+    _old_schema_db(path)
+    con = sqlite3.connect(path)
+    con.execute("INSERT INTO racestrategy (goal_id, settings_json, basis_json) VALUES (2, 'pas du json', '{}')")
+    con.execute("INSERT INTO racestrategy (goal_id, settings_json, basis_json) VALUES (3, '[1]', '{}')")
+    con.commit()
+    con.close()
+    repo = Repo(make_engine(path))
+    assert repo.active_goal().target_time_s == 6600
+
+
 def test_migration_is_idempotent(tmp_path):
     path = tmp_path / "old.db"
     _old_schema_db(path)

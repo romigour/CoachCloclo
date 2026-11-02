@@ -1,6 +1,6 @@
 from datetime import date
 
-from coach.plan.calendar import n_weeks, plan_start, week_monday, week_of
+from coach.plan.calendar import n_weeks, plan_start, suggested_date, week_monday, week_of
 from tests.plan.factories import make_goal
 
 
@@ -29,3 +29,9 @@ def test_week_of_outside_plan_is_not_clamped():
     g = make_goal()
     assert week_of(g, date(2026, 10, 25)) == 0
     assert week_of(g, date(2027, 2, 1)) == 15
+
+
+def test_suggested_date_maps_french_weekday():
+    goal = make_goal(plan_start=date(2026, 11, 2))
+    assert suggested_date(goal, 1, "lundi") == date(2026, 11, 2)
+    assert suggested_date(goal, 2, "dimanche") == date(2026, 11, 15)

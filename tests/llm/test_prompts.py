@@ -256,6 +256,14 @@ def test_generation_prompt_asks_estimate_in_claude_mode():
     assert "estimated_time_s" in p and "Estime" in p
 
 
+def test_generation_prompt_regeneration_in_claude_mode_asks_estimate_again():
+    goal = make_goal(target_source="claude", target_time_s=6720)
+    p = build_generation_prompt(goal, ZONES, [], n_weeks=14, gpx_text=None)
+    assert "estimated_time_s" in p
+    assert "Construis le plan pour atteindre ce temps visé" not in p
+    assert "Temps visé" not in p and "Estimation précédente : 1 h 52" in p
+
+
 def test_generation_prompt_targets_user_time():
     goal = make_goal(target_time_s=6600, target_source="user")
     p = build_generation_prompt(goal, ZONES, [], n_weeks=14, gpx_text=None)

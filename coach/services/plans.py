@@ -205,7 +205,11 @@ def update_goal(
         s.id
         for s in sessions
         if s.status in ("todo", "exported")
-        and (s.week_index > n or (s.scheduled_date is not None and s.scheduled_date > edited.race_date))
+        and (
+            s.week_index > n
+            or (s.scheduled_date or calendar.suggested_date(goal, s.week_index, s.suggested_day))
+            > edited.race_date
+        )
     }
     note = f"L'athlète a modifié son objectif : {' ; '.join(notes)}. Adapte les séances à venir en conséquence."
     adj = ask_adjustment(

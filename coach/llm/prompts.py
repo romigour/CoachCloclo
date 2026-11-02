@@ -172,14 +172,18 @@ def _history_text(history: list[Activity]) -> str:
     return f"Historique récent ({HISTORY_WEEKS} dernières semaines, plus récent d'abord) :\n" + "\n".join(lines)
 
 
-def _goal_text(goal: Goal) -> str:
+def _goal_text(goal: Goal, *, generation: bool = False) -> str:
+    """`generation` : un temps issu d'une estimation de Claude est présenté comme estimation précédente."""
     text = (
         f"Objectif : course de type {goal.type}, {goal.distance_km:g} km, "
         f"{goal.d_plus_m} m de D+, le {goal.race_date.isoformat()}. "
         f"Le plan débute le {goal.plan_start.isoformat()}."
     )
     if goal.target_time_s is not None:
-        text += f" Temps visé : {fmt_duration(goal.target_time_s)}."
+        if generation and goal.target_source == "claude":
+            text += f" Estimation précédente : {fmt_duration(goal.target_time_s)}."
+        else:
+            text += f" Temps visé : {fmt_duration(goal.target_time_s)}."
     return text
 
 
@@ -236,19 +240,19 @@ def build_generation_prompt(
 ) -> str:
     """Prompt de génération du plan complet ; `today` situe le jour courant dans la semaine 1."""
     parts = [
-        _goal_text(goal) + (" " + _today_text(goal, today) if today is not None else ""),
+        _goal_text(goal, generation=True) + (" " + _today_text(goal, today) if today is not None else ""),
         f"Construis un plan de {n_weeks} semaines, avec au plus {goal.sessions_per_week} séances "
         f"par semaine ({goal.sessions_per_week} séances). Aujourd'hui correspond à la semaine 1 ; "
         f"la dernière semaine se termine à la course. Numérote les semaines de 1 à {n_weeks} "
         "et les séances de chaque semaine à partir de 1 (champ order).",
     ]
-    if goal.target_time_s is not None:
-        parts.append("Construis le plan pour atteindre ce temps visé (allures cibles, volume).")
-    elif goal.target_source == "claude":
+    if goal.target_source == "claude":
         parts.append(
             "Estime d'abord un temps réaliste pour cette course d'après l'historique et les zones, "
             "indique-le dans estimated_time_s (en secondes), puis construis le plan pour ce temps."
         )
+    elif goal.target_time_s is not None:
+        parts.append("Construis le plan pour atteindre ce temps visé (allures cibles, volume).")
     parts += [
         _zones_text(zones),
         _history_text(history),

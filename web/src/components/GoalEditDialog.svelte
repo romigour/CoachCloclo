@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { untrack } from "svelte";
   import { api, type Goal } from "../lib/api";
   import { addDays, todayIso } from "../lib/dates";
   import { fmtTargetTime, parseTargetTime } from "../lib/race";
@@ -11,8 +12,9 @@
     onsaved,
   }: { goal: Goal; today?: string; onclose?: () => void; onsaved?: (proposalId: number) => void } = $props();
 
-  const initialTime = goal.target_time_s != null ? fmtTargetTime(goal.target_time_s) : "";
-  let date = $state(goal.race_date);
+  // instantané des valeurs de départ : le formulaire ne suit pas les changements de `goal`
+  const initialTime = untrack(() => (goal.target_time_s != null ? fmtTargetTime(goal.target_time_s) : ""));
+  let date = $state(untrack(() => goal.race_date));
   let time = $state(initialTime);
   let busy = $state(false);
   let error = $state<unknown>(null);

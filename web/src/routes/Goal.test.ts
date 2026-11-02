@@ -77,3 +77,24 @@ test("draft shows Claude estimate", async () => {
   render(Goal);
   expect(await screen.findByText(/Temps estimé par Claude : 1 h 52/)).toBeInTheDocument();
 });
+
+test("draft shows the Claude estimate right after generation, without remount", async () => {
+  const claudeGoal = mkGoal({ target_time_s: 6720, target_source: "claude" });
+  let generated = false;
+  const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+    if (init?.method === "POST" && url.endsWith("/goals")) return new Response(JSON.stringify(mkGoal()), { status: 200 });
+    if (url.endsWith("/generate")) {
+      generated = true;
+      return new Response(JSON.stringify({ summary: "ok", weeks: 8 }), { status: 200 });
+    }
+    const body = generated
+      ? { goal: claudeGoal, weeks: [{ id: 1, week_index: 1, week_monday: "2027-01-04", sessions: [] }] }
+      : { goal: null, weeks: [] };
+    return new Response(JSON.stringify(body), { status: 200 });
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  render(Goal);
+  fillBase();
+  await fireEvent.submit(screen.getByRole("button", { name: "Générer le plan avec Claude" }).closest("form")!);
+  expect(await screen.findByText(/Temps estimé par Claude : 1 h 52/)).toBeInTheDocument();
+});

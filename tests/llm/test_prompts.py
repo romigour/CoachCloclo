@@ -4,7 +4,7 @@ from coach.analysis.laps import compare_session
 from coach.analysis.race_plan import RacePlan, Segment
 from coach.analysis.zones import compute_zones
 from coach.garmin.port import LapSummary
-from coach.llm.prompts import SYSTEM_PROMPT, build_adjustment_prompt, build_generation_prompt, race_text
+from coach.llm.prompts import SYSTEM_PROMPT, _session_line, build_adjustment_prompt, build_generation_prompt, race_text
 from coach.llm.schemas import RepeatSpec, StepSpec
 from coach.plan.constraints import PlanConstraints
 from coach.plan.models import Event
@@ -358,3 +358,35 @@ def test_adjustment_prompt_includes_events_block():
     )
     p = build_adjustment_prompt(make_goal(), ZONES, 1, [], [], [], [], constraints=c)
     assert "- blessure/maladie depuis le 03/11/2026 (reprise non connue)" in p
+
+
+def _bike_prompts(include_bike):
+    c = PlanConstraints(
+        available_days=("mardi", "samedi"), long_run_day=None, today=date(2026, 11, 2), include_bike=include_bike
+    )
+    g = build_generation_prompt(make_goal(), ZONES, [], n_weeks=14, gpx_text=None, constraints=c)
+    a = build_adjustment_prompt(make_goal(), ZONES, 1, [], [], [_db(1)], [], constraints=c)
+    return g, a
+
+
+def test_prompts_allow_bike_when_included():
+    for p in _bike_prompts(True):
+        assert "Vélo autorisé : tu peux remplacer au plus une séance EF ou récup par semaine" in p
+        assert "1,3 à 1,5 fois" in p
+        assert "Toutes les séances sont en course à pied" not in p
+
+
+def test_prompts_state_run_only_without_bike():
+    for p in _bike_prompts(False):
+        assert 'Toutes les séances sont en course à pied (sport "run").' in p
+        assert "Vélo autorisé" not in p
+
+
+def test_prompts_without_constraints_mention_no_sport_rule():
+    g = build_generation_prompt(make_goal(), ZONES, [], n_weeks=14, gpx_text=None)
+    assert "Vélo autorisé" not in g and "course à pied" not in g
+
+
+def test_session_line_flags_bike():
+    assert _session_line(_db(1, sport="bike")).endswith(" | vélo")
+    assert "vélo" not in _session_line(_db(1))

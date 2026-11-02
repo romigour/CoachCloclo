@@ -1,7 +1,7 @@
 import json
 from datetime import date, timedelta
 
-from coach.llm.schemas import AdjustmentResponse, Change
+from coach.llm.schemas import AdjustmentResponse, Change, StepSpec
 from coach.plan.constraints import (
     blocked_periods,
     Planned,
@@ -308,3 +308,49 @@ def test_constraints_of_goal_carries_plan_start():
 def test_constraints_of_reads_include_bike():
     assert PlanConstraints.of(make_goal(), date(2026, 11, 2)).include_bike is False
     assert PlanConstraints.of(make_goal(include_bike=True), date(2026, 11, 2)).include_bike is True
+
+
+def _bike_c(include_bike=True):
+    return PlanConstraints(
+        available_days=tuple(ALL_DAYS), long_run_day=None, today=TODAY, include_bike=include_bike
+    )
+
+
+def _bike(label="séance 1", *, week=1, exported=False, **kw):
+    return _p(label, "mardi", date(2026, 11, 3), week=week, exported=exported, sport="bike", **kw)
+
+
+def test_valid_bike_session_is_accepted():
+    assert constraint_errors([_bike()], _bike_c()) == []
+
+
+def test_bike_session_refused_when_goal_excludes_bike():
+    assert constraint_errors([_bike()], _bike_c(False)) == ["séance 1 : séance vélo non autorisée pour cet objectif"]
+
+
+def test_bike_session_must_be_easy_and_hr_targeted():
+    msg = "séance 1 : une séance vélo doit être de l'EF ou de la récup ciblée en FC"
+    assert constraint_errors([_bike(type="seuil")], _bike_c()) == [msg]
+    steps = [StepSpec(kind="warmup", duration_s=600, zone="EF")]
+    assert constraint_errors([_bike(target_kind="pace", steps=steps)], _bike_c()) == [msg]
+
+
+def test_bike_session_limited_to_zones_z1_z2():
+    steps = [StepSpec(kind="active", duration_s=600, zone="Z3")]
+    assert constraint_errors([_bike(steps=steps)], _bike_c()) == ["séance 1 : séance vélo limitée aux zones Z1 et Z2"]
+
+
+def test_bike_session_without_zone_is_accepted():
+    steps = [StepSpec(kind="active", duration_s=600)]
+    assert constraint_errors([_bike(steps=steps)], _bike_c()) == []
+
+
+def test_at_most_one_bike_session_per_week():
+    planned = [_bike("séance 1"), _bike("séance 2"), _bike("séance 3", week=2)]
+    assert constraint_errors(planned, _bike_c()) == ["semaine 1 : au plus une séance vélo"]
+
+
+def test_exported_bike_session_is_checked_too():
+    assert constraint_errors([_bike(exported=True)], _bike_c(False)) == [
+        "séance 1 : séance vélo non autorisée pour cet objectif"
+    ]

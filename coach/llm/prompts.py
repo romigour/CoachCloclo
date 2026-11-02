@@ -188,11 +188,20 @@ def _goal_text(goal: Goal, *, generation: bool = False) -> str:
     return text
 
 
+_BIKE_RULE = (
+    "Vélo autorisé : tu peux remplacer au plus une séance EF ou récup par semaine par du vélo d'endurance douce "
+    "(sport \"bike\", target_kind \"hr\", zones Z1 ou Z2), sur route ou home-trainer, jamais à la place d'une "
+    "séance clé ; compte une durée d'environ 1,3 à 1,5 fois celle de la séance de course remplacée."
+)
+_RUN_ONLY_RULE = 'Toutes les séances sont en course à pied (sport "run").'
+
+
 def _availability_text(c: PlanConstraints) -> str:
     text = f"Disponibilités : Jours possibles : {', '.join(c.available_days)}."
     if c.long_run_day is not None:
         text += f" Sortie longue : le {c.long_run_day}."
-    return text + " Ne place aucune séance un autre jour."
+    text += " Ne place aucune séance un autre jour."
+    return text + " " + (_BIKE_RULE if c.include_bike else _RUN_ONLY_RULE)
 
 
 def _fmt_date(d: dt.date) -> str:
@@ -320,12 +329,13 @@ def build_generation_prompt(
 def _session_line(s: Session) -> str:
     return (
         f"id={s.id} | semaine {s.week_index} | {s.suggested_day} | {s.type} | {s.title} | "
-        f"statut {s.status} | date {s.scheduled_date or '-'}"
+        f"statut {s.status} | date {s.scheduled_date or '-'}" + (" | vélo" if s.sport == "bike" else "")
     )
 
 
 def _done_line(s: Session, a: Activity) -> str:
-    return f"- prévu : {s.title} ({s.type}) -> réalisé : " + _activity_line(a)[2:]
+    kind = f"{s.type}, vélo" if s.sport == "bike" else s.type
+    return f"- prévu : {s.title} ({kind}) -> réalisé : " + _activity_line(a)[2:]
 
 
 def _done_block(s: Session, a: Activity, comparisons: dict[int, StepComparison]) -> str:

@@ -146,6 +146,28 @@ def constraint_errors(
                 else:
                     errors.append(f"{p.label} : tombe pendant {name}")
     errors += _light_week_count_errors(planned, c, fixed_counts or {})
+    errors += _bike_errors(planned, c)
+    return errors
+
+
+def _bike_errors(planned: list[Planned], c: PlanConstraints) -> list[str]:
+    """Règle 6 : vélo autorisé par l'objectif, EF/récup en FC en Z1-Z2, une séance par semaine.
+
+    Ces contrôles portent sur le contenu, donc sur toutes les séances, exportées ou non.
+    """
+    errors: list[str] = []
+    per_week: dict[int, int] = {}
+    for p in planned:
+        if p.spec.sport != "bike":
+            continue
+        per_week[p.spec.week_index] = per_week.get(p.spec.week_index, 0) + 1
+        if not c.include_bike:
+            errors.append(f"{p.label} : séance vélo non autorisée pour cet objectif")
+        if p.spec.type not in ("EF", "récup") or p.spec.target_kind != "hr":
+            errors.append(f"{p.label} : une séance vélo doit être de l'EF ou de la récup ciblée en FC")
+        elif any(st.zone not in (None, "Z1", "Z2") for st in p.spec.iter_steps()):
+            errors.append(f"{p.label} : séance vélo limitée aux zones Z1 et Z2")
+    errors += [f"semaine {w} : au plus une séance vélo" for w, n in sorted(per_week.items()) if n > 1]
     return errors
 
 

@@ -296,6 +296,17 @@ def test_comparison_without_snapshot_has_no_verdicts(make_client, repo):
     assert body["steps"][0]["verdict"] is None
 
 
+def test_zones_null_without_snapshot(make_client):
+    assert make_client().get("/api/zones").json() is None
+
+
+def test_zones_from_latest_snapshot(make_client, repo):
+    repo.add(AthleteSnapshot(date=date(2026, 11, 1), zones_json=_zones().model_dump_json()))
+    body = make_client().get("/api/zones").json()
+    assert body["pace"]["VMA"] == [264, 279]
+    assert body["hr"]["Z2"] == [134, 148]
+
+
 def test_manual_match_fetches_laps(make_client, repo, fake_garmin):
     session = _db_session(repo)
     act = repo.add(make_activity(garmin_activity_id=7))

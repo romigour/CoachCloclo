@@ -5,9 +5,19 @@
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="theme-color" content="#245b4f" />
     <link rel="manifest" href="/manifest.webmanifest" />
-    <link rel="icon" href="/icon-192.png" />
+    <link rel="icon" href="/logo.svg" type="image/svg+xml" />
+    <link rel="icon" href="/icon-192.png" sizes="192x192" />
     <link rel="apple-touch-icon" href="/icon-192.png" />
     <title>CoachCloclo</title>
+    <script>
+      // thème posé avant le premier affichage, même règle que src/lib/theme.svelte.ts
+      (function () {
+        var c;
+        try { c = localStorage.getItem("coach.theme"); } catch (e) {}
+        var dark = c === "dark" || (c !== "light" && window.matchMedia("(prefers-color-scheme: dark)").matches);
+        document.documentElement.dataset.theme = dark ? "dark" : "light";
+      })();
+    </script>
   </head>
   <body>
     <div id="app"></div>

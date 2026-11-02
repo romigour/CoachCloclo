@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { api, ApiError, claudeSkipped, setupDone, type SetupStatus, type Status } from "./lib/api";
+  import { loadZones } from "./lib/zones.svelte";
   import ErrorBanner from "./components/ErrorBanner.svelte";
   import UpdateBanner from "./components/UpdateBanner.svelte";
   import Sidebar from "./components/Sidebar.svelte";
@@ -75,6 +76,12 @@
       else if (!error) location.hash = home();
     }
   }
+
+  // Zones au démarrage puis après chaque synchro ou fin d'import (nouvel instantané possible).
+  $effect(() => {
+    void version;
+    loadZones();
+  });
 
   // Pendant l'import de l'historique, on relit l'état toutes les 5 s ; l'intervalle s'arrête dès que l'état change.
   const importRunning = $derived(status?.history.status === "running");

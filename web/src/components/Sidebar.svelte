@@ -27,7 +27,7 @@
 
 <aside class="sidebar">
   <div class="brand">
-    <span class="brand-mark"><Icon name="trend" /></span>
+    <img class="brand-mark" src="/logo.svg" alt="" width="30" height="30" />
     CoachCloclo
   </div>
 

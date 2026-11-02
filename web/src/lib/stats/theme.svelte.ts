@@ -1,6 +1,7 @@
-// Thème clair/sombre réactif : un seul écouteur matchMedia alimente un $state module,
-// lu par themeColors() pour que les $derived des composants se recalculent au changement.
+// Couleurs du thème pour ECharts : themeColors() dépend du thème effectif (choix de
+// l'utilisateur ou système) pour que les $derived des composants se recalculent au changement.
 import type { Family } from "../api";
+import { effectiveScheme } from "../theme.svelte";
 
 const FAMILIES: Family[] = ["run", "trail", "bike", "swim", "strength", "walk", "other"];
 
@@ -16,20 +17,9 @@ export interface ThemeColors {
   families: Record<Family, string>;
 }
 
-const mq: MediaQueryList | null =
-  typeof window !== "undefined" && typeof window.matchMedia === "function"
-    ? window.matchMedia("(prefers-color-scheme: dark)")
-    : null;
-
-let scheme = $state<"light" | "dark">(mq?.matches ? "dark" : "light");
-
-mq?.addEventListener?.("change", (e: MediaQueryListEvent) => {
-  scheme = e.matches ? "dark" : "light";
-});
-
 // Lit les variables CSS de app.css au moment de l'appel (après le changement de thème).
 export function themeColors(): ThemeColors {
-  void scheme; // dépendance réactive
+  void effectiveScheme(); // dépendance réactive
   const css = getComputedStyle(document.documentElement);
   const get = (name: string) => css.getPropertyValue(name).trim();
   const families = {} as Record<Family, string>;

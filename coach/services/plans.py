@@ -1,5 +1,6 @@
 """Objectif de course et génération du plan."""
 
+import json
 import re
 from datetime import date, timedelta
 from typing import Literal
@@ -13,12 +14,13 @@ from coach.garmin.port import GarminPort
 from coach.llm.client import ask_structured
 from coach.llm.prompts import SYSTEM_PROMPT, build_generation_prompt, fmt_duration
 from coach.llm.provider import LLMProvider
-from coach.llm.schemas import PlanResponse, validate_plan
+from coach.llm.schemas import PlanResponse, Weekday, validate_plan
 from coach.plan import calendar
-from coach.plan.models import Goal, Session
+from coach.plan.constraints import constraint_errors, planned_from_plan
+from coach.plan.models import ALL_DAYS, Goal, Session
 from coach.plan.repo import Repo
 from coach.services import CoachError
-from coach.services.context import recent_history, refresh_snapshot
+from coach.services.context import load_constraints, recent_history, refresh_snapshot
 from coach.services.garmin_export import mark_for_cleanup, sync_marked
 
 MIN_DAYS_BEFORE_RACE = 14
@@ -40,6 +42,23 @@ class GoalInput(BaseModel):
     sessions_per_week: int = Field(ge=2, le=7)
     gpx: bytes | None = None
     target_time_s: int | None = Field(None, gt=0)
+    available_days: list[Weekday] = Field(default_factory=lambda: list(ALL_DAYS))
+    long_run_day: Weekday | None = None
+
+
+def normalize_days(days: list[str]) -> list[str]:
+    """Jours sans doublon, dans l'ordre de la semaine."""
+    return [d for d in ALL_DAYS if d in set(days)]
+
+
+def check_availability(available_days: list[str], long_run_day: str | None, sessions_per_week: int) -> None:
+    """Refuse des jours possibles incompatibles avec le nombre de séances ou la sortie longue."""
+    if len(available_days) < sessions_per_week:
+        raise GoalError(
+            f"Il faut au moins {sessions_per_week} jours possibles pour {sessions_per_week} séances par semaine"
+        )
+    if long_run_day is not None and long_run_day not in available_days:
+        raise GoalError("Le jour de la sortie longue doit faire partie des jours possibles")
 
 
 def parse_target_time(text: str) -> int:
@@ -66,6 +85,8 @@ def create_goal(repo: Repo, garmin: GarminPort, data: GoalInput) -> Goal:
         raise GoalError("La course doit être dans au moins 14 jours")
     if data.target_time_s is not None:
         check_target_time(data.target_time_s, data.distance_km)
+    available_days = normalize_days(data.available_days)
+    check_availability(available_days, data.long_run_day, data.sessions_per_week)
     summary = analyze_gpx(data.gpx) if data.gpx is not None else None
     d_plus = data.d_plus_m
     if summary is not None and summary.d_plus_m is not None and d_plus == 0:
@@ -80,6 +101,8 @@ def create_goal(repo: Repo, garmin: GarminPort, data: GoalInput) -> Goal:
         plan_start=calendar.plan_start(today),
         target_time_s=data.target_time_s,
         target_source="user" if data.target_time_s else "claude",
+        available_days_json=json.dumps(available_days),
+        long_run_day=data.long_run_day,
         gpx_summary_json=summary.model_dump_json() if summary is not None else None,
     )
     path = None
@@ -126,9 +149,10 @@ def generate_plan(repo: Repo, garmin: GarminPort, llm: LLMProvider, goal_id: int
     from coach.services.race_strategy import race_line_for_prompt  # import tardif : race_strategy importe ce module
 
     today = garmin.today()
+    constraints = load_constraints(repo, goal, today)
     prompt = build_generation_prompt(
         goal, zones, recent_history(garmin), n, gpx_text, today=today,
-        race_text=race_line_for_prompt(repo, goal, today),
+        race_text=race_line_for_prompt(repo, goal, today), constraints=constraints,
     )
     pace_available = zones.pace is not None
     estimate_min_s = round(MIN_PACE_S_KM * goal.distance_km) if goal.target_source == "claude" else None
@@ -140,7 +164,8 @@ def generate_plan(repo: Repo, garmin: GarminPort, llm: LLMProvider, goal_id: int
         validate=lambda p: validate_plan(
             p, n_weeks=n, sessions_per_week=goal.sessions_per_week,
             pace_available=pace_available, estimate_min_s=estimate_min_s,
-        ),
+        )
+        + constraint_errors(planned_from_plan(goal, p), constraints),
     )
     with repo.transaction() as db:
         todo = select(Session).where(Session.goal_id == goal_id, Session.status == "todo")
@@ -162,6 +187,8 @@ def generate_plan(repo: Repo, garmin: GarminPort, llm: LLMProvider, goal_id: int
 class GoalUpdate(BaseModel):
     race_date: date | None = None
     target_time: str | None = None
+    available_days: list[Weekday] | None = None
+    long_run_day: Weekday | Literal[""] | None = None  # "" : plus de jour imposé
 
 
 def update_goal(
@@ -194,6 +221,21 @@ def update_goal(
                 else ", aucun auparavant"
             )
             notes.append(f"temps visé {fmt_duration(seconds)}{before}")
+    available_days = goal.available_days()
+    if data.available_days is not None:
+        days = normalize_days(data.available_days)
+        if days != available_days:
+            available_days = days
+            update["available_days_json"] = json.dumps(days)
+            notes.append(f"jours possibles : {', '.join(days)}")
+    long_run_day = goal.long_run_day
+    if data.long_run_day is not None:
+        new_day = data.long_run_day or None
+        if new_day != long_run_day:
+            long_run_day = new_day
+            update["long_run_day"] = new_day
+            notes.append(f"sortie longue le {new_day}" if new_day else "plus de jour imposé pour la sortie longue")
+    check_availability(available_days, long_run_day, goal.sessions_per_week)
     if not update:
         raise GoalError("Aucune modification")
     edited = goal.model_copy(update=update)

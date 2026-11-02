@@ -9,7 +9,7 @@ from coach.analysis.gpx import GpxError
 from coach.garmin.port import FakeGarminClient, Metrics
 from coach.llm.provider import FakeLLMProvider, LLMInvalidResponse
 from coach.llm.schemas import Change
-from coach.plan.models import Goal, Proposal, Session
+from coach.plan.models import ALL_DAYS, Goal, Proposal, Session
 from coach.services import CoachError
 from coach.services.context import refresh_snapshot
 from coach.services.plans import (
@@ -417,4 +417,84 @@ def test_update_goal_requires_accepted_active_goal(repo, monday_garmin):
     for bad in (old.id, 999):
         with pytest.raises(GoalError, match="introuvable ou archivé"):
             update_goal(repo, monday_garmin, llm, bad, GoalUpdate(target_time="5:30"))
+    assert llm.calls == []
+
+
+# --- disponibilités ------------------------------------------------------------------------
+
+
+def test_create_goal_rejects_fewer_days_than_sessions(repo, fake_garmin):
+    with pytest.raises(GoalError, match="au moins 3 jours possibles"):
+        create_goal(repo, fake_garmin, goal_input(sessions_per_week=3, available_days=["mardi", "jeudi"]))
+
+
+def test_create_goal_rejects_long_run_day_not_available(repo, fake_garmin):
+    with pytest.raises(GoalError, match="Le jour de la sortie longue doit faire partie des jours possibles"):
+        create_goal(
+            repo, fake_garmin,
+            goal_input(available_days=["mardi", "jeudi", "samedi"], long_run_day="dimanche"),
+        )
+
+
+def test_create_goal_stores_availability_in_week_order(repo, fake_garmin):
+    goal = create_goal(
+        repo, fake_garmin,
+        goal_input(available_days=["samedi", "mardi", "jeudi", "mardi"], long_run_day="samedi"),
+    )
+    assert goal.available_days() == ["mardi", "jeudi", "samedi"] and goal.long_run_day == "samedi"
+
+
+def test_generate_plan_retries_on_unavailable_day(repo, fake_garmin):
+    goal = create_goal(repo, fake_garmin, goal_input(available_days=["mardi", "jeudi", "samedi"]))
+    bad = valid_plan_json(n_weeks=14, per_week=3).replace('"mardi"', '"lundi"')
+    llm = FakeLLMProvider([bad, valid_plan_json(n_weeks=14, per_week=3)])
+    generate_plan(repo, fake_garmin, llm, goal.id)
+    assert "lundi n'est pas un jour possible" in llm.calls[1]
+    assert "Jours possibles : mardi, jeudi, samedi" in llm.calls[0]
+
+
+def test_update_goal_availability_creates_proposal_with_note(repo, monday_garmin):
+    goal = _accepted_goal(repo, monday_garmin)
+    llm = FakeLLMProvider([adjustment_json()])
+    days = ["mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche"]
+    # les séances existantes sont toutes le mardi : aucune n'est sur un jour retiré
+    _, pid = update_goal(repo, monday_garmin, llm, goal.id, GoalUpdate(available_days=days))
+    assert repo.active_goal().available_days() == days
+    assert "jours possibles : mardi, mercredi" in llm.calls[0]
+    assert _proposals(repo) == [(pid, "pending")]
+
+
+def test_update_goal_removed_day_forces_claude_to_move_sessions(repo, monday_garmin):
+    goal = _accepted_goal(repo, monday_garmin)
+    llm = FakeLLMProvider([adjustment_json(), adjustment_json()])
+    with pytest.raises(LLMInvalidResponse):
+        update_goal(
+            repo, monday_garmin, llm, goal.id,
+            GoalUpdate(available_days=["lundi", "mercredi", "jeudi"]),  # mardi retiré
+        )
+    assert "mardi n'est pas un jour possible" in llm.calls[1]
+    assert repo.active_goal().available_days() == list(ALL_DAYS)
+
+
+def test_update_goal_clears_long_run_day(repo, monday_garmin):
+    goal = _accepted_goal(repo, monday_garmin, long_run_day="mardi")
+    assert repo.active_goal().long_run_day == "mardi"
+    llm = FakeLLMProvider([adjustment_json()])
+    update_goal(repo, monday_garmin, llm, goal.id, GoalUpdate(long_run_day=""))
+    assert repo.active_goal().long_run_day is None
+    assert "plus de jour imposé pour la sortie longue" in llm.calls[0]
+
+
+def test_update_goal_availability_rejections(repo, monday_garmin):
+    goal = _accepted_goal(repo, monday_garmin)
+    llm = FakeLLMProvider([])
+    with pytest.raises(GoalError, match="au moins 3 jours possibles"):
+        update_goal(repo, monday_garmin, llm, goal.id, GoalUpdate(available_days=["mardi", "jeudi"]))
+    with pytest.raises(GoalError, match="sortie longue doit faire partie"):
+        update_goal(
+            repo, monday_garmin, llm, goal.id,
+            GoalUpdate(available_days=["mardi", "jeudi", "samedi"], long_run_day="dimanche"),
+        )
+    with pytest.raises(GoalError, match="Aucune modification"):
+        update_goal(repo, monday_garmin, llm, goal.id, GoalUpdate(available_days=list(ALL_DAYS)))
     assert llm.calls == []

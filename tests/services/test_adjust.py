@@ -1,9 +1,10 @@
 from datetime import date
 
+import pytest
 from sqlmodel import select
 
 from coach.analysis.zones import compute_zones
-from coach.llm.provider import FakeLLMProvider
+from coach.llm.provider import FakeLLMProvider, LLMInvalidResponse
 from coach.llm.schemas import AdjustmentResponse
 from coach.plan.models import Proposal
 from coach.services.adjust import ask_adjustment, save_proposal
@@ -44,3 +45,13 @@ def test_save_proposal_stales_previous(repo):
     with repo.transaction() as db:
         status = {p.id: p.status for p in db.exec(select(Proposal)).all()}
     assert status == {first: "stale", second: "pending"}
+
+
+def test_ask_adjustment_uses_received_goal_constraints(repo, coach_home, fake_garmin, accepted_plan):
+    """Les contraintes viennent du `goal` reçu (copie modifiée), pas de la base."""
+    edited = accepted_plan.model_copy(update={"available_days_json": '["jeudi", "samedi", "dimanche"]'})
+    llm = FakeLLMProvider([adjustment_json(), adjustment_json()])
+    with pytest.raises(LLMInvalidResponse):
+        ask_adjustment(repo, fake_garmin, llm, edited, _zones(), repo.sessions(accepted_plan.id), TODAY)
+    assert "Jours possibles : jeudi, samedi, dimanche" in llm.calls[0]
+    assert "n'est pas un jour possible" in llm.calls[1]

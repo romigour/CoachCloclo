@@ -13,9 +13,10 @@ from coach.llm.prompts import SYSTEM_PROMPT, build_adjustment_prompt
 from coach.llm.provider import LLMProvider
 from coach.llm.schemas import AdjustmentResponse, validate_adjustment
 from coach.plan.calendar import n_weeks, week_of
+from coach.plan.constraints import constraint_errors, planned_after_adjustment
 from coach.plan.models import Activity, Goal, Proposal, Session
 from coach.plan.repo import Repo
-from coach.services.context import recent_history
+from coach.services.context import load_constraints, recent_history
 from coach.services.laps import session_comparison
 from coach.services.race_strategy import race_line_for_prompt
 
@@ -39,6 +40,12 @@ def ask_adjustment(
     counts: dict[int, int] = {}
     for s in (x for x in sessions if not x.pending_removal):
         counts[s.week_index] = counts.get(s.week_index, 0) + 1
+    # séances figées (ni à faire ni exportées), comptées par semaine pour la règle de semaine allégée
+    fixed_counts: dict[int, int] = {}
+    for s in sessions:
+        if s.status not in ("todo", "exported") and not s.pending_removal:
+            fixed_counts[s.week_index] = fixed_counts.get(s.week_index, 0) + 1
+    constraints = load_constraints(repo, goal, today)
     editable = {s.id for s in upcoming}
     week_of_session = {s.id: s.week_index for s in sessions}
 
@@ -52,6 +59,7 @@ def ask_adjustment(
         comparisons,
         race_text=race_line_for_prompt(repo, goal, today),
         change_note=change_note,
+        constraints=constraints,
     )
     return ask_structured(
         llm,
@@ -68,7 +76,8 @@ def ask_adjustment(
             pace_available=zones.pace is not None,
             week_of_session=week_of_session,
             exported_ids={s.id for s in upcoming if s.status == "exported"},
-        ),
+        )
+        + constraint_errors(planned_after_adjustment(goal, upcoming, a), constraints, fixed_counts=fixed_counts),
     )
 
 

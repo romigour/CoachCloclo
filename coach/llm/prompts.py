@@ -9,6 +9,7 @@ from coach.analysis.race_plan import RacePlan
 from coach.analysis.zones import Zones
 from coach.llm.schemas import AdjustmentResponse, PlanResponse, Weekday
 from coach.plan.calendar import week_of
+from coach.plan.constraints import PlanConstraints
 from coach.plan.models import Activity, Goal, Session
 
 HISTORY_WEEKS = 8
@@ -187,6 +188,13 @@ def _goal_text(goal: Goal, *, generation: bool = False) -> str:
     return text
 
 
+def _availability_text(c: PlanConstraints) -> str:
+    text = f"Disponibilités : Jours possibles : {', '.join(c.available_days)}."
+    if c.long_run_day is not None:
+        text += f" Sortie longue : le {c.long_run_day}."
+    return text + " Ne place aucune séance un autre jour."
+
+
 def _today_text(goal: Goal, today: dt.date) -> str:
     """« Aujourd'hui : mercredi 4 novembre 2026 (semaine 1). »"""
     week = week_of(goal, today)
@@ -237,10 +245,12 @@ def build_generation_prompt(
     gpx_text: str | None,
     today: dt.date | None = None,
     race_text: str | None = None,
+    constraints: PlanConstraints | None = None,
 ) -> str:
     """Prompt de génération du plan complet ; `today` situe le jour courant dans la semaine 1."""
     parts = [
         _goal_text(goal, generation=True) + (" " + _today_text(goal, today) if today is not None else ""),
+        *([_availability_text(constraints)] if constraints is not None else []),
         f"Construis un plan de {n_weeks} semaines, avec au plus {goal.sessions_per_week} séances "
         f"par semaine ({goal.sessions_per_week} séances). Aujourd'hui correspond à la semaine 1 ; "
         f"la dernière semaine se termine à la course. Numérote les semaines de 1 à {n_weeks} "
@@ -267,7 +277,7 @@ def build_generation_prompt(
 
 def _session_line(s: Session) -> str:
     return (
-        f"id={s.id} | semaine {s.week_index} | {s.type} | {s.title} | "
+        f"id={s.id} | semaine {s.week_index} | {s.suggested_day} | {s.type} | {s.title} | "
         f"statut {s.status} | date {s.scheduled_date or '-'}"
     )
 
@@ -295,6 +305,7 @@ def build_adjustment_prompt(
     comparisons: dict[int, StepComparison] | None = None,
     race_text: str | None = None,
     change_note: str | None = None,
+    constraints: PlanConstraints | None = None,
 ) -> str:
     """Prompt de proposition d'ajustements après une synchronisation.
 
@@ -305,6 +316,7 @@ def build_adjustment_prompt(
     parts = [
         _goal_text(goal),
         *([change_note] if change_note else []),
+        *([_availability_text(constraints)] if constraints is not None else []),
         f"Nous sommes en semaine {current_week} du plan, à raison de {goal.sessions_per_week} séances "
         "maximum par semaine. Analyse les séances réalisées et manquées, puis propose des ajustements "
         "pour les séances à venir (liste vide si aucun changement n'est utile).",

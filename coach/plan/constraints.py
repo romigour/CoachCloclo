@@ -98,6 +98,12 @@ def constraint_errors(
         day = p.spec.suggested_day
         if not p.exported and day not in c.available_days:
             errors.append(f"{p.label} : {day} n'est pas un jour possible")
-        if p.spec.type == "sortie_longue" and c.long_run_day is not None and day != c.long_run_day:
+        # comme pour les jours possibles, une séance exportée garde sa date Garmin
+        if (
+            not p.exported
+            and p.spec.type == "sortie_longue"
+            and c.long_run_day is not None
+            and day != c.long_run_day
+        ):
             errors.append(f"{p.label} : la sortie longue doit tomber le {c.long_run_day}")
     return errors

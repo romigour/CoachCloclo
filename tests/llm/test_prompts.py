@@ -6,6 +6,7 @@ from coach.analysis.zones import compute_zones
 from coach.garmin.port import LapSummary
 from coach.llm.prompts import SYSTEM_PROMPT, build_adjustment_prompt, build_generation_prompt, race_text
 from coach.llm.schemas import RepeatSpec, StepSpec
+from coach.plan.constraints import PlanConstraints
 from tests.llm.factories import make_session
 from tests.plan.factories import make_activity, make_db_session, make_goal
 
@@ -280,3 +281,19 @@ def test_adjustment_prompt_includes_change_note():
         make_goal(), ZONES, 4, [], [], [], [], change_note="L'athlète a modifié son objectif : X"
     )
     assert p.index("L'athlète a modifié") < p.index("Nous sommes en semaine")
+
+
+def test_prompts_list_availability_and_session_day():
+    c = PlanConstraints(available_days=("mardi", "jeudi", "dimanche"), long_run_day="dimanche", today=date(2026, 11, 2))
+    p = build_adjustment_prompt(make_goal(), ZONES, 1, [], [], [_db(1)], [], constraints=c)
+    assert "Jours possibles : mardi, jeudi, dimanche" in p
+    assert "Sortie longue : le dimanche" in p
+    assert "| mardi |" in p  # _session_line affiche le jour conseillé
+    g = build_generation_prompt(make_goal(), ZONES, [], n_weeks=14, gpx_text=None, constraints=c)
+    assert "Jours possibles : mardi, jeudi, dimanche" in g
+
+
+def test_availability_block_omits_long_run_when_unset():
+    c = PlanConstraints(available_days=("mardi", "jeudi"), long_run_day=None, today=date(2026, 11, 2))
+    p = build_generation_prompt(make_goal(), ZONES, [], n_weeks=14, gpx_text=None, constraints=c)
+    assert "Jours possibles : mardi, jeudi." in p and "Sortie longue" not in p

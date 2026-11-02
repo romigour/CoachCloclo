@@ -121,3 +121,10 @@ def test_constraints_of_goal():
     assert c.today == TODAY
     assert c.include_bike is False
     assert c.events == ()
+
+
+def test_exported_long_run_ignores_long_run_day():
+    c = _constraints(long_run_day="dimanche")
+    sl = make_session(type="sortie_longue", suggested_day="samedi")
+    p = [Planned("séance 1", sl, date(2026, 11, 7), exported=True)]
+    assert constraint_errors(p, c) == []

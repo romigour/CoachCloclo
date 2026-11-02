@@ -215,3 +215,38 @@ def test_migration_is_idempotent(tmp_path):
 def test_new_goal_has_no_target(repo):
     g = repo.add(make_goal())
     assert g.target_time_s is None and g.target_source is None
+
+
+_SEVEN_DAYS = ["lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche"]
+
+
+def test_goal_defaults_to_all_days(repo):
+    goal = repo.add(make_goal())
+    assert goal.available_days() == _SEVEN_DAYS
+    assert goal.long_run_day is None
+
+
+def test_migrate_adds_availability_to_old_goal(tmp_path):
+    # base 0.5.0 : table goal avec le temps visé mais sans available_days_json / long_run_day
+    path = tmp_path / "v050.db"
+    con = sqlite3.connect(path)
+    con.executescript("""
+        CREATE TABLE goal (id INTEGER PRIMARY KEY, created_at DATETIME, type VARCHAR, distance_km FLOAT,
+            d_plus_m INTEGER, race_date DATE, sessions_per_week INTEGER, gpx_path VARCHAR,
+            gpx_summary_json VARCHAR, status VARCHAR, plan_start DATE, plan_accepted BOOLEAN,
+            target_time_s INTEGER, target_source VARCHAR);
+        INSERT INTO goal VALUES (1, '2026-11-01', 'route', 21.1, 0, '2027-02-07', 4, NULL, NULL, 'active',
+            '2026-11-02', 1, 6600, 'user');
+    """)
+    con.commit()
+    con.close()
+    repo = Repo(make_engine(path))
+    goal = repo.active_goal()
+    assert goal.available_days() == _SEVEN_DAYS
+    assert goal.long_run_day is None
+    assert goal.target_time_s == 6600
+
+
+def test_migrate_availability_is_idempotent(tmp_path):
+    make_engine(tmp_path / "t.db")
+    make_engine(tmp_path / "t.db")  # pas d'exception

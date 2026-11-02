@@ -1,12 +1,16 @@
 """Tables SQLModel de CoachCloclo (section 4 de la spec)."""
 
 import datetime as dt
+import json
 
 from pydantic import TypeAdapter
 from sqlmodel import Field, SQLModel
 
 from coach.llm.schemas import RepeatSpec, SessionSpec, StepSpec
 
+# Jours de la semaine, dans l'ordre de coach.plan.calendar._WEEKDAYS (défini ici : calendar importe models).
+ALL_DAYS = ("lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche")
+ALL_DAYS_JSON = json.dumps(list(ALL_DAYS))
 
 
 def _now() -> dt.datetime:
@@ -43,6 +47,11 @@ class Goal(SQLModel, table=True):
     plan_accepted: bool = False
     target_time_s: int | None = None
     target_source: str | None = None  # "user" | "claude"
+    available_days_json: str = ALL_DAYS_JSON
+    long_run_day: str | None = None
+
+    def available_days(self) -> list[str]:
+        return json.loads(self.available_days_json)
 
 
 class Session(SQLModel, table=True):

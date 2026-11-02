@@ -162,10 +162,14 @@ def test_restart_during_slow_request_serves_new_host(coach_home):
         srv.stop()
 
 
-def test_restart_relaunches_even_if_stop_times_out(coach_home, monkeypatch):
+def test_restart_relaunches_even_if_stop_times_out(coach_home, monkeypatch, caplog):
     from coach.desktop import server as module
 
-    monkeypatch.setattr(module, "_DELAI_ARRET_S", 0.2)
+    # Assez court pour expirer pendant l'arrêt gracieux (3 s) de l'ancien serveur, assez long
+    # pour un arrêt normal : uvicorn met 0,1 à 0,25 s (tick + pause de 0,1 s), davantage sur
+    # un runner chargé. Avec 0,2 s, le `stop` final échouait de façon aléatoire sous Windows.
+    monkeypatch.setattr(module, "_DELAI_ARRET_S", 1.0)
+    assert module._DELAI_ARRET_S < module._DELAI_ARRET_GRACIEUX_S
     app = _app_lente()
     port = _port_libre()
     srv = AppServer(app, port)
@@ -173,6 +177,7 @@ def test_restart_relaunches_even_if_stop_times_out(coach_home, monkeypatch):
     try:
         _requete_lente(app, port)
         srv.restart("0.0.0.0")
+        assert "Arrêt incomplet" in caplog.text
         assert srv.host == "0.0.0.0"
         assert httpx.get(f"http://127.0.0.1:{port}/api/version").status_code == 200
     finally:

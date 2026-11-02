@@ -97,7 +97,12 @@
         {@const b = before(c)}
         <article class="card stack change {c.op}">
           <div class="row spread">
-            <strong>{heading(c)}</strong>
+            <span class="row tight">
+              <strong>{heading(c)}</strong>
+              {#if c.session?.sport === "bike" && c.op !== "remove"}
+                <span class="chip"><Icon name="bike" size={14} /> Vélo</span>
+              {/if}
+            </span>
             <span class="pill" class:done={c.op !== "remove"} class:missed={c.op === "remove"}>{OP_LABEL[c.op]}</span>
           </div>
           <div class="diff">

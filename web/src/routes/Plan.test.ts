@@ -15,7 +15,7 @@ const injury: CoachEvent = {
 const goal = {
   id: 1, type: "route", distance_km: 21.1, d_plus_m: 0, race_date: "2026-12-06", sessions_per_week: 3,
   plan_start: "2026-10-26", plan_accepted: true, gpx_summary: null, target_time_s: null, target_source: null,
-  available_days: null, long_run_day: null,
+  available_days: ["lundi", "mercredi", "samedi"], long_run_day: null, include_bike: false,
 } as PlanData["goal"];
 const planWith = (open_injury: CoachEvent | null): PlanData => ({
   goal, weeks: [{ week_index: 1, week_monday: "2026-10-26", sessions: [] }], open_injury,

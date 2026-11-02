@@ -128,3 +128,23 @@ test("a Claude error keeps the event and Réessayer asks for the adjustment", as
   expect(f.mock.calls.filter((c) => c[0] === "/api/goals/3/events")).toHaveLength(1);
   expect((callTo(f, "/api/goals/3/adjust")[1] as RequestInit).method).toBe("POST");
 });
+
+test("injury sends the day before the planned resume as the last blocked day", async () => {
+  const f = mock({ "/api/goals/3/events": { event_id: 1, proposal_id: 5, error: null } });
+  open();
+  await choose("Blessure / maladie");
+  await fireEvent.input(screen.getByLabelText("Reprise prévue (facultatif)"), { target: { value: "2026-11-10" } });
+  await fireEvent.click(screen.getByRole("button", { name: "Envoyer" }));
+  await waitFor(() => expect(f).toHaveBeenCalled());
+  expect(bodyOf(f, "/api/goals/3/events")).toEqual({ kind: "injury", start_date: "2026-11-03", end_date: "2026-11-09" });
+});
+
+test("injury resuming the day it starts keeps end_date at the start", async () => {
+  const f = mock({ "/api/goals/3/events": { event_id: 1, proposal_id: 5, error: null } });
+  open();
+  await choose("Blessure / maladie");
+  await fireEvent.input(screen.getByLabelText("Reprise prévue (facultatif)"), { target: { value: "2026-11-03" } });
+  await fireEvent.click(screen.getByRole("button", { name: "Envoyer" }));
+  await waitFor(() => expect(f).toHaveBeenCalled());
+  expect(bodyOf(f, "/api/goals/3/events")).toEqual({ kind: "injury", start_date: "2026-11-03", end_date: "2026-11-03" });
+});

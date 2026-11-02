@@ -65,7 +65,8 @@
     if (kind === "unavailable") Object.assign(b, { start_date: start, end_date: end });
     if (kind === "injury") {
       b.start_date = start;
-      if (end) b.end_date = end;
+      // `end_date` est le dernier jour bloqué (inclus) : la veille de la reprise, sans passer avant le début
+      if (end) b.end_date = addDays(end, -1) < start ? start : addDays(end, -1);
     }
     if (kind === "light_week") {
       Object.assign(b, { start_date: weekMonday, end_date: addDays(weekMonday, 6), max_sessions: maxSessions! });

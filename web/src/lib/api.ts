@@ -276,6 +276,7 @@ export type SessionSpec = {
   title: string;
   description: string;
   chaining_note?: string | null;
+  sport?: "run" | "bike";
   steps: (Step | StepGroup)[];
 };
 

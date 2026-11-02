@@ -615,6 +615,8 @@ def create_app(
                 new = db.get(Session, body.session_id)
                 if new is None:
                     return _error(404, "not_found", "Séance introuvable")
+                if activity.type_key not in activity_types_for(new.sport):
+                    return _error(422, "sport_mismatch", "Cette activité ne correspond pas au sport de la séance")
                 # une séance n'a qu'une activité : on libère l'éventuelle précédente
                 others = db.exec(
                     select(Activity).where(Activity.session_id == new.id, Activity.id != activity.id)

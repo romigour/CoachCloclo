@@ -53,8 +53,8 @@ def match_activities(sessions: list[Session], activities: list[Activity]) -> lis
     """Paires (session_id, activity_id) ; aucune écriture.
 
     Seules les séances planifiées sur Garmin sont rattachées automatiquement : course à ±1 jour de
-    la date prévue et durée à ±30 % de la durée prévue, dans le sport de la séance. Une séance non planifiée (`todo`) ne se
-    rattache qu'à la main, tout comme une activité détachée à la main."""
+    la date prévue et durée à ±30 % de la durée prévue, dans le sport de la séance. Une séance non
+    planifiée (`todo`) ne se rattache qu'à la main, tout comme une activité détachée à la main."""
     free = [
         a
         for a in activities

@@ -335,10 +335,10 @@ def test_manual_match(make_client, repo):
 LAP = LapSummary(index=0, duration_s=600, distance_m=1800, avg_hr=140, step_order=1, raw={"x": 1})
 
 
-def _db_session(repo):
+def _db_session(repo, **kw):
     """Séance persistée (un échauffement Z2 de 10 min) sans activité."""
     goal = repo.add(make_goal())
-    return repo.add(make_db_session(goal.id))
+    return repo.add(make_db_session(goal.id, **kw))
 
 
 def _zones() -> Zones:
@@ -401,6 +401,24 @@ def test_zones_from_latest_snapshot(make_client, repo):
     body = make_client().get("/api/zones").json()
     assert body["pace"]["VMA"] == [264, 279]
     assert body["hr"]["Z2"] == [134, 148]
+
+
+def test_manual_match_refuses_other_sport(make_client, repo):
+    from datetime import date
+
+    run_session = _db_session(repo)
+    bike_session = _db_session(repo, sport="bike")
+    ride = repo.add(Activity(garmin_activity_id=41, date=date(2026, 11, 3), type_key="road_biking"))
+    run = repo.add(Activity(garmin_activity_id=42, date=date(2026, 11, 3), type_key="running"))
+    client = make_client()
+    for act, session in ((run, bike_session), (ride, run_session)):
+        r = client.post(f"/api/activities/{act.id}/match", json={"session_id": session.id})
+        assert r.status_code == 422 and r.json()["code"] == "sport_mismatch"
+        with repo.transaction() as db:
+            assert db.get(Activity, act.id).session_id is None
+        assert repo.session(session.id).status == "todo"
+    ok = client.post(f"/api/activities/{ride.id}/match", json={"session_id": bike_session.id})
+    assert ok.status_code == 200
 
 
 def test_manual_match_fetches_laps(make_client, repo, fake_garmin):

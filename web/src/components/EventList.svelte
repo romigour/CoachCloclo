@@ -8,12 +8,15 @@
     today = todayIso(),
     onproposal,
     onchanged,
+    reload = 0,
   }: {
     goalId: number;
     today?: string;
     onproposal?: (proposalId: number) => void;
     /** Un imprévu a été supprimé : la page recharge son plan (un arrêt ouvert peut disparaître). */
     onchanged?: () => void;
+    /** Compteur incrémenté par la page quand son plan est rechargé : la liste se rafraîchit aussi. */
+    reload?: number;
   } = $props();
 
   const LABEL: Record<EventKind, string> = {
@@ -45,6 +48,7 @@
 
   $effect(() => {
     goalId; // recharge si l'objectif change
+    reload; // ou si la page a rechargé son plan (ex. reprise après un arrêt)
     load();
   });
 

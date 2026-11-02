@@ -20,6 +20,7 @@
   let error = $state<unknown>(null);
   let selected = $state<number | null>(null);
   let activities = $state<Activity[]>([]);
+  let reloads = $state(0); // incrémenté à chaque rechargement du plan, pour rafraîchir la liste des imprévus
 
   const now = $derived(plan ? currentWeek(plan.weeks, today) : null);
   const selection = $derived.by(() => {
@@ -33,6 +34,7 @@
   async function load() {
     try {
       plan = await api.plan();
+      reloads++;
       if (selected == null) selected = focusSession(currentWeek(plan.weeks, today), today)?.id ?? null;
     } catch (e) {
       error = e;
@@ -105,7 +107,7 @@
     <p class="card">Le plan n'est pas encore validé. <a href="#/goal">Relire le brouillon</a></p>
   {:else}
     <InjuryBanner injury={plan.open_injury ?? null} goalId={plan.goal.id} {today} onproposal={goProposal} onresumed={load} />
-    <EventList goalId={plan.goal.id} {today} onproposal={goProposal} onchanged={load} />
+    <EventList goalId={plan.goal.id} {today} reload={reloads} onproposal={goProposal} onchanged={load} />
     <section aria-label="Avancement du plan">
       <div class="weeks-bar" style:grid-template-columns="repeat({plan.weeks.length}, minmax(0, 1fr))">
         {#each plan.weeks as w (w.week_index)}

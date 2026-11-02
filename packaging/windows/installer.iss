@@ -26,6 +26,13 @@ Name: "french"; MessagesFile: "compiler:Languages\French.isl"
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"
 
+[InstallDelete]
+; Une mise à jour ne fait qu'ajouter ou écraser des fichiers : sans ce ménage,
+; _internal garderait coachcloclo-<ancienne>.dist-info à côté de la nouvelle, et
+; importlib.metadata pourrait renvoyer l'ancienne version (proposition de mise à
+; jour en boucle). Tout _internal est régénéré par PyInstaller à chaque build.
+Type: filesandordirs; Name: "{app}\_internal"
+
 [Files]
 Source: "..\..\dist\CoachCloclo\*"; DestDir: "{app}"; Flags: recursesubdirs ignoreversion
 

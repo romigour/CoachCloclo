@@ -7,6 +7,7 @@
   import { doneLabel, paceText, repeatSummary, stepLabel, targetLabel, VERDICT_LABEL } from "../lib/comparison";
   import { fmtClock } from "../lib/stats/format";
   import { formatSteps } from "../lib/steps";
+  import { currentZones } from "../lib/zones.svelte";
   import ExportDialog from "./ExportDialog.svelte";
   import IntensityProfile from "./IntensityProfile.svelte";
 
@@ -56,7 +57,7 @@
     failed = false;
     if (detailsEl) detailsEl.open = false;
   });
-  const lines = $derived(formatSteps(session.steps));
+  const lines = $derived(formatSteps(session.steps, currentZones()));
   const levels = $derived(session.steps.map((item) => ("repeat" in item ? peakLevel([item]) : stepLevel(item))));
   const total = $derived(totalSeconds(session.steps));
 

@@ -35,6 +35,13 @@ export type Step = {
 };
 export type StepGroup = { repeat: number; steps: Step[] };
 
+/** Zones calculées côté serveur : allure en s/km (borne rapide puis lente), FC en bpm. */
+export type Zones = {
+  pace: Record<string, [number, number]> | null;
+  hr: Record<string, [number, number]>;
+  source: string[];
+};
+
 export type SessionStatus = "todo" | "exported" | "done" | "missed" | "sync_error";
 
 export type Session = {
@@ -433,6 +440,7 @@ export const api = {
   unschedule: (id: number) => post<{ status: string }>(`/sessions/${id}/unschedule`),
   retry: (id: number) => post<{ status: string }>(`/sessions/${id}/retry`),
   activities: (week: number) => get<Activity[]>(`/activities?week=${week}`),
+  zones: () => get<Zones | null>("/zones"),
   comparison: (sessionId: number) => get<Comparison>(`/sessions/${sessionId}/comparison`),
   freeActivities: (days: number) => get<Activity[]>(`/activities/free?days=${days}`),
   match: (activityId: number, sessionId: number | null) =>

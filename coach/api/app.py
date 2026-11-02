@@ -494,6 +494,12 @@ def create_app(
             return {"available": False, "reason": result}
         return {"available": True, **result.model_dump(exclude={"laps": {"__all__": {"raw"}}})}
 
+    @api.get("/zones")
+    def get_zones(repo: RepoDep):
+        """Zones d'allure et de FC du dernier instantané, `null` s'il n'y en a pas encore."""
+        zones = latest_zones(repo)
+        return zones.model_dump() if zones else None
+
     # --- activités, synchro, propositions ---------------------------------------------------
 
     @api.get("/activities")

@@ -2,6 +2,7 @@
   import { onMount } from "svelte";
   import { api, type Change, type Proposal, type Session } from "../lib/api";
   import { formatSteps } from "../lib/steps";
+  import { currentZones } from "../lib/zones.svelte";
   import ErrorBanner from "../components/ErrorBanner.svelte";
   import IntensityProfile from "../components/IntensityProfile.svelte";
   import Icon from "../components/Icon.svelte";
@@ -113,7 +114,7 @@
           {#if c.session && c.op !== "remove"}
             <IntensityProfile steps={c.session.steps} small />
             <ul class="steps">
-              {#each formatSteps(c.session.steps) as line, j (j)}<li>{line}</li>{/each}
+              {#each formatSteps(c.session.steps, currentZones()) as line, j (j)}<li>{line}</li>{/each}
             </ul>
           {/if}
           <p class="tip">{c.reason}</p>

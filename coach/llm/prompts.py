@@ -173,11 +173,14 @@ def _history_text(history: list[Activity]) -> str:
 
 
 def _goal_text(goal: Goal) -> str:
-    return (
+    text = (
         f"Objectif : course de type {goal.type}, {goal.distance_km:g} km, "
         f"{goal.d_plus_m} m de D+, le {goal.race_date.isoformat()}. "
         f"Le plan débute le {goal.plan_start.isoformat()}."
     )
+    if goal.target_time_s is not None:
+        text += f" Temps visé : {_fmt_duration(goal.target_time_s)}."
+    return text
 
 
 def _today_text(goal: Goal, today: dt.date) -> str:
@@ -238,6 +241,15 @@ def build_generation_prompt(
         f"par semaine ({goal.sessions_per_week} séances). Aujourd'hui correspond à la semaine 1 ; "
         f"la dernière semaine se termine à la course. Numérote les semaines de 1 à {n_weeks} "
         "et les séances de chaque semaine à partir de 1 (champ order).",
+    ]
+    if goal.target_time_s is not None:
+        parts.append("Construis le plan pour atteindre ce temps visé (allures cibles, volume).")
+    elif goal.target_source == "claude":
+        parts.append(
+            "Estime d'abord un temps réaliste pour cette course d'après l'historique et les zones, "
+            "indique-le dans estimated_time_s (en secondes), puis construis le plan pour ce temps."
+        )
+    parts += [
         _zones_text(zones),
         _history_text(history),
     ]
@@ -278,14 +290,17 @@ def build_adjustment_prompt(
     history: list[Activity],
     comparisons: dict[int, StepComparison] | None = None,
     race_text: str | None = None,
+    change_note: str | None = None,
 ) -> str:
     """Prompt de proposition d'ajustements après une synchronisation.
 
     `comparisons` (clé = Session.id) ajoute le détail par étape sous les séances réalisées concernées.
+    `change_note` signale une modification de l'objectif, insérée juste après le descriptif de l'objectif.
     """
     comparisons = comparisons or {}
     parts = [
         _goal_text(goal),
+        *([change_note] if change_note else []),
         f"Nous sommes en semaine {current_week} du plan, à raison de {goal.sessions_per_week} séances "
         "maximum par semaine. Analyse les séances réalisées et manquées, puis propose des ajustements "
         "pour les séances à venir (liste vide si aucun changement n'est utile).",

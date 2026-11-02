@@ -139,25 +139,25 @@ def _adj(*changes):
 def test_validate_adjustment_rejects_unknown_or_done_session():
     adj = _adj(Change(op="remove", session_id=99, reason="r"))
     assert validate_adjustment(
-        adj, editable_ids={1, 2}, current_week=3, sessions_per_week=4, counts_by_week={3: 4}, pace_available=True
+        adj, editable_ids={1, 2}, current_week=3, sessions_per_week=4, n_weeks=52, counts_by_week={3: 4}, pace_available=True
     )
 
 
 def test_validate_adjustment_rejects_add_in_past_week():
     adj = _adj(Change(op="add", session=make_session(week_index=2), reason="r"))
     assert validate_adjustment(
-        adj, editable_ids=set(), current_week=3, sessions_per_week=4, counts_by_week={}, pace_available=True
+        adj, editable_ids=set(), current_week=3, sessions_per_week=4, n_weeks=52, counts_by_week={}, pace_available=True
     )
 
 
 def test_validate_adjustment_week_overflow_after_add():
     adj = _adj(Change(op="add", session=make_session(week_index=3), reason="r"))
     errs = validate_adjustment(
-        adj, editable_ids=set(), current_week=3, sessions_per_week=4, counts_by_week={3: 4}, pace_available=True
+        adj, editable_ids=set(), current_week=3, sessions_per_week=4, n_weeks=52, counts_by_week={3: 4}, pace_available=True
     )
     assert any("semaine 3" in e for e in errs)
     ok = validate_adjustment(
-        adj, editable_ids=set(), current_week=3, sessions_per_week=4, counts_by_week={3: 3}, pace_available=True
+        adj, editable_ids=set(), current_week=3, sessions_per_week=4, n_weeks=52, counts_by_week={3: 3}, pace_available=True
     )
     assert ok == []
 
@@ -167,7 +167,7 @@ def test_validate_adjustment_remove_frees_slot_when_week_known():
         Change(op="remove", session_id=5, reason="r"),
         Change(op="add", session=make_session(week_index=3), reason="r"),
     )
-    kwargs = dict(editable_ids={5}, current_week=3, sessions_per_week=4, counts_by_week={3: 4}, pace_available=True)
+    kwargs = dict(editable_ids={5}, current_week=3, sessions_per_week=4, n_weeks=52, counts_by_week={3: 4}, pace_available=True)
     assert validate_adjustment(adj, **kwargs)
     assert validate_adjustment(adj, **kwargs, week_of_session={5: 3}) == []
 
@@ -179,7 +179,7 @@ def test_validate_adjustment_modify_moves_week():
         editable_ids={5},
         current_week=3,
         sessions_per_week=4,
-        counts_by_week={3: 1, 4: 4},
+        n_weeks=52, counts_by_week={3: 1, 4: 4},
         pace_available=True,
         week_of_session={5: 3},
     )
@@ -189,7 +189,7 @@ def test_validate_adjustment_modify_moves_week():
 def test_validate_adjustment_pace_without_data():
     adj = _adj(Change(op="add", session=make_session(week_index=3, target_kind="pace"), reason="r"))
     assert validate_adjustment(
-        adj, editable_ids=set(), current_week=3, sessions_per_week=4, counts_by_week={}, pace_available=False
+        adj, editable_ids=set(), current_week=3, sessions_per_week=4, n_weeks=52, counts_by_week={}, pace_available=False
     )
 
 
@@ -200,7 +200,7 @@ def test_validate_plan_session_week_must_match_parent_week():
     assert any("semaine 2" in e and "week_index" in e for e in errs)
 
 
-_ADJ_KW = dict(current_week=3, sessions_per_week=4, counts_by_week={3: 2, 4: 1}, pace_available=True)
+_ADJ_KW = dict(current_week=3, sessions_per_week=4, n_weeks=52, counts_by_week={3: 2, 4: 1}, pace_available=True)
 
 
 def test_validate_adjustment_rejects_duplicate_session_ids():
@@ -226,3 +226,37 @@ def test_validate_adjustment_exported_session_cannot_change_week():
     assert any("exportée" in e for e in errs)
     same_week = _adj(Change(op="modify", session_id=5, session=make_session(week_index=3), reason="r"))
     assert validate_adjustment(same_week, **kwargs, exported_ids={5}) == []
+
+
+def test_validate_plan_requires_estimate():
+    plan = make_plan(n_weeks=2, per_week=[1, 1])
+    errs = validate_plan(plan, n_weeks=2, sessions_per_week=3, pace_available=True, estimate_min_s=1000)
+    assert any("estimated_time_s" in e for e in errs)
+
+
+def test_validate_plan_rejects_implausible_estimate():
+    plan = make_plan(n_weeks=2, per_week=[1, 1])
+    plan.estimated_time_s = 600
+    errs = validate_plan(plan, n_weeks=2, sessions_per_week=3, pace_available=True, estimate_min_s=1000)
+    assert any("estimated_time_s" in e for e in errs)
+
+
+def test_validate_plan_accepts_plausible_estimate():
+    plan = make_plan(n_weeks=2, per_week=[1, 1])
+    plan.estimated_time_s = 1000
+    assert validate_plan(plan, n_weeks=2, sessions_per_week=3, pace_available=True, estimate_min_s=1000) == []
+
+
+def test_validate_plan_ignores_estimate_when_not_required():
+    plan = make_plan(n_weeks=2, per_week=[1, 1])
+    assert plan.estimated_time_s is None
+    assert validate_plan(plan, n_weeks=2, sessions_per_week=3, pace_available=True, estimate_min_s=None) == []
+
+
+def test_adjustment_rejects_week_beyond_plan():
+    adj = _adj(Change(op="add", session=make_session(week_index=15), reason="r"))
+    errs = validate_adjustment(
+        adj, editable_ids=set(), current_week=3, sessions_per_week=4, counts_by_week={},
+        pace_available=True, n_weeks=14,
+    )
+    assert any("semaine 15, au-delà de la dernière semaine du plan (14)" in e for e in errs)

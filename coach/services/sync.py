@@ -15,7 +15,7 @@ from coach.llm.client import ask_structured
 from coach.llm.prompts import SYSTEM_PROMPT, build_adjustment_prompt
 from coach.llm.provider import LLMProvider
 from coach.llm.schemas import AdjustmentResponse, validate_adjustment
-from coach.plan.calendar import week_of
+from coach.plan.calendar import n_weeks, week_of
 from coach.plan.models import Activity, Goal, Proposal, Session
 from coach.plan.repo import Repo
 from coach.services.activities import store_summaries
@@ -134,6 +134,7 @@ def _propose(
             a,
             editable_ids=editable,
             current_week=current_week,
+            n_weeks=n_weeks(goal.plan_start, goal.race_date),
             sessions_per_week=goal.sessions_per_week,
             counts_by_week=counts,
             pace_available=pace_available,

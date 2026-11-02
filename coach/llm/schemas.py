@@ -75,6 +75,7 @@ class WeekSpec(_Strict):
 
 class PlanResponse(_Strict):
     summary: str
+    estimated_time_s: int | None = None
     weeks: list[WeekSpec]
 
 
@@ -103,10 +104,26 @@ def _uses_pace(session: SessionSpec) -> bool:
 
 
 def validate_plan(
-    plan: PlanResponse, *, n_weeks: int, sessions_per_week: int, pace_available: bool
+    plan: PlanResponse,
+    *,
+    n_weeks: int,
+    sessions_per_week: int,
+    pace_available: bool,
+    estimate_min_s: int | None = None,
 ) -> list[str]:
-    """Contrôle métier d'un plan complet ; retourne la liste des erreurs (vide si valide)."""
+    """Contrôle métier d'un plan complet ; retourne la liste des erreurs (vide si valide).
+
+    `estimate_min_s` non None : le plan doit porter une estimation `estimated_time_s` ≥ cette valeur.
+    """
     errors: list[str] = []
+    if estimate_min_s is not None:
+        if plan.estimated_time_s is None:
+            errors.append("estimated_time_s est obligatoire : estime un temps réaliste en secondes")
+        elif plan.estimated_time_s < estimate_min_s:
+            errors.append(
+                f"estimated_time_s ({plan.estimated_time_s} s) invraisemblable : "
+                f"au moins {estimate_min_s} s attendues"
+            )
     indexes = [w.week_index for w in plan.weeks]
     if indexes != list(range(1, n_weeks + 1)):
         errors.append(f"les semaines doivent être numérotées de 1 à {n_weeks} sans trou (reçu : {indexes})")
@@ -129,6 +146,7 @@ def validate_adjustment(
     *,
     editable_ids: set[int],
     current_week: int,
+    n_weeks: int,
     sessions_per_week: int,
     counts_by_week: dict[int, int],
     pace_available: bool,
@@ -156,6 +174,10 @@ def validate_adjustment(
         if ch.session is not None:
             if not pace_available and _uses_pace(ch.session):
                 errors.append(f"{label} : cible d'allure impossible sans données d'allure")
+            if ch.session.week_index > n_weeks:
+                errors.append(
+                    f"{label} : semaine {ch.session.week_index}, au-delà de la dernière semaine du plan ({n_weeks})"
+                )
             if ch.session.week_index < current_week:
                 errors.append(
                     f"{label} : semaine {ch.session.week_index}, avant la semaine courante {current_week}"

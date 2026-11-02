@@ -266,7 +266,7 @@ def reject_proposal(repo: Repo, proposal_id: int) -> None:
         db.add(proposal)
 
 
-def _mark_for_cleanup(s: Session, *, removal: bool) -> None:
+def mark_for_cleanup(s: Session, *, removal: bool) -> None:
     """Conserve les ids Garmin actuels à nettoyer ; la séance n'a plus de planification."""
     s.pending_old_workout_id = s.garmin_workout_id
     s.pending_old_schedule_id = s.garmin_schedule_id
@@ -331,13 +331,13 @@ def apply_proposal(repo: Repo, garmin: GarminPort, proposal_id: int) -> list[int
                     setattr(s, f, getattr(fresh, f))
                 s.est_duration_min = s.est_distance_km = None
                 if s.status == "exported":
-                    _mark_for_cleanup(s, removal=False)
+                    mark_for_cleanup(s, removal=False)
                     to_sync.append(s.id)
                 db.add(s)
             elif s.status == "todo":
                 db.delete(s)
             else:  # exported
-                _mark_for_cleanup(s, removal=True)
+                mark_for_cleanup(s, removal=True)
                 to_sync.append(s.id)
                 db.add(s)
         proposal.status = "accepted"

@@ -179,7 +179,7 @@ def _goal_text(goal: Goal) -> str:
         f"Le plan débute le {goal.plan_start.isoformat()}."
     )
     if goal.target_time_s is not None:
-        text += f" Temps visé : {_fmt_duration(goal.target_time_s)}."
+        text += f" Temps visé : {fmt_duration(goal.target_time_s)}."
     return text
 
 
@@ -192,7 +192,7 @@ def _today_text(goal: Goal, today: dt.date) -> str:
     )
 
 
-def _fmt_duration(s: int) -> str:
+def fmt_duration(s: int) -> str:
     """« 5 h 12 » (arrondi à la minute)."""
     h, m = divmod(round(s / 60), 60)
     return f"{h} h {m:02d}"
@@ -204,9 +204,9 @@ def race_text(plan: RacePlan) -> str | None:
         return None
     times = []
     if plan.predicted_time_s is not None:
-        times.append(f"temps prévu {_fmt_duration(plan.predicted_time_s)}")
+        times.append(f"temps prévu {fmt_duration(plan.predicted_time_s)}")
     if plan.target_time_s is not None:
-        times.append(f"visé {_fmt_duration(plan.target_time_s)}")
+        times.append(f"visé {fmt_duration(plan.target_time_s)}")
     text = "Stratégie jour J (indicative) : " + ", ".join(times)
     climbs = sorted(
         sorted((s for s in plan.segments if s.kind == "montée"), key=lambda s: s.d_plus_m, reverse=True)[:3],

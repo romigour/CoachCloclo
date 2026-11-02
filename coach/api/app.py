@@ -45,7 +45,15 @@ from coach.plan.models import Activity, Goal, Proposal, Session
 from coach.plan.repo import Repo, make_engine
 from coach.services import CoachError
 from coach.services import garmin_export as export
-from coach.services.plans import GoalInput, accept_plan, create_goal, generate_plan, parse_target_time
+from coach.services.plans import (
+    GoalInput,
+    GoalUpdate,
+    accept_plan,
+    create_goal,
+    generate_plan,
+    parse_target_time,
+    update_goal,
+)
 from coach.analysis.race_plan import RaceSettings
 from coach.services import race_strategy
 from coach.services.history import HistoryRunner, load_state, recover_orphan
@@ -412,6 +420,11 @@ def create_app(
         except ValidationError as e:
             return _invalid(e.errors(), ("body",))
         return _goal_dict(create_goal(repo, garmin, data))
+
+    @api.patch("/goals/{goal_id}")
+    def patch_goal(goal_id: int, body: GoalUpdate, repo: RepoDep, garmin: GarminDep, llm: LLMDep):
+        goal, proposal_id = update_goal(repo, garmin, llm, goal_id, body)
+        return {"goal": _goal_dict(goal), "proposal_id": proposal_id}
 
     @api.post("/goals/{goal_id}/generate")
     def post_generate(goal_id: int, repo: RepoDep, garmin: GarminDep, llm: LLMDep):

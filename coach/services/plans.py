@@ -11,7 +11,7 @@ from coach.analysis.gpx import GpxSummary, analyze_gpx, summary_to_text
 from coach.config import data_dir
 from coach.garmin.port import GarminPort
 from coach.llm.client import ask_structured
-from coach.llm.prompts import SYSTEM_PROMPT, build_generation_prompt
+from coach.llm.prompts import SYSTEM_PROMPT, build_generation_prompt, fmt_duration
 from coach.llm.provider import LLMProvider
 from coach.llm.schemas import PlanResponse, validate_plan
 from coach.plan import calendar
@@ -19,6 +19,7 @@ from coach.plan.models import Goal, Session
 from coach.plan.repo import Repo
 from coach.services import CoachError
 from coach.services.context import recent_history, refresh_snapshot
+from coach.services.garmin_export import mark_for_cleanup
 
 MIN_DAYS_BEFORE_RACE = 14
 _NOT_FOUND = "Objectif introuvable ou archivé"
@@ -156,6 +157,79 @@ def generate_plan(repo: Repo, garmin: GarminPort, llm: LLMProvider, goal_id: int
             g.target_time_s = plan.estimated_time_s
         db.add(g)
     return plan
+
+
+class GoalUpdate(BaseModel):
+    race_date: date | None = None
+    target_time: str | None = None
+
+
+def update_goal(
+    repo: Repo, garmin: GarminPort, llm: LLMProvider, goal_id: int, data: GoalUpdate
+) -> tuple[Goal, int]:
+    """Modifie la date et/ou le temps visé d'un objectif en cours et demande l'ajustement à Claude.
+
+    Rien n'est enregistré si Claude échoue. Renvoie l'objectif enregistré et l'id de la proposition.
+    """
+    from coach.services.adjust import ask_adjustment, save_proposal  # import tardif : cycle via race_strategy
+
+    goal = _get_goal(repo, goal_id)
+    if not goal.plan_accepted:
+        raise GoalError("Le plan de l'objectif doit être validé avant de le modifier")
+    today = garmin.today()
+    update: dict = {}
+    notes: list[str] = []
+    if data.race_date is not None and data.race_date != goal.race_date:
+        if data.race_date <= today:
+            raise GoalError("La course doit être après aujourd'hui")
+        update["race_date"] = data.race_date
+        notes.append(f"course déplacée du {goal.race_date:%d/%m/%Y} au {data.race_date:%d/%m/%Y}")
+    if data.target_time is not None:
+        seconds = parse_target_time(data.target_time)
+        check_target_time(seconds, goal.distance_km)
+        if seconds != goal.target_time_s:
+            update |= {"target_time_s": seconds, "target_source": "user"}
+            before = (
+                f" au lieu de {fmt_duration(goal.target_time_s)}" if goal.target_time_s is not None
+                else ", aucun auparavant"
+            )
+            notes.append(f"temps visé {fmt_duration(seconds)}{before}")
+    if not update:
+        raise GoalError("Aucune modification")
+    edited = goal.model_copy(update=update)
+
+    _, zones = refresh_snapshot(repo, garmin)
+    n = calendar.n_weeks(goal.plan_start, edited.race_date)
+    sessions = repo.sessions(goal_id)
+    removed_ids = {
+        s.id
+        for s in sessions
+        if s.status in ("todo", "exported")
+        and (s.week_index > n or (s.scheduled_date is not None and s.scheduled_date > edited.race_date))
+    }
+    note = f"L'athlète a modifié son objectif : {' ; '.join(notes)}. Adapte les séances à venir en conséquence."
+    adj = ask_adjustment(
+        repo, garmin, llm, edited, zones, [s for s in sessions if s.id not in removed_ids], today,
+        change_note=note,
+    )
+    with repo.transaction() as db:
+        g = db.get(Goal, goal_id)
+        if g is None or g.status != "active":
+            raise GoalError(_NOT_FOUND)
+        for key, value in update.items():
+            setattr(g, key, value)
+        db.add(g)
+        for sid in removed_ids:
+            s = db.get(Session, sid)
+            if s is None:
+                continue
+            if s.status == "todo":
+                db.delete(s)
+            elif s.status == "exported":
+                mark_for_cleanup(s, removal=True)
+                db.add(s)
+        proposal_id = save_proposal(db, adj)
+    return g, proposal_id
 
 
 def accept_plan(repo: Repo, goal_id: int) -> None:

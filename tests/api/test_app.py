@@ -952,3 +952,124 @@ def test_race_plan_archived_goal_422(make_client):
     _create_trail_goal(client)
     r = client.get(f"/api/goals/{first}/race-plan")
     assert r.status_code == 422
+
+
+# --- imprévus ---------------------------------------------------------------------------------
+
+
+# avant le début du plan : aucune séance concernée, la réponse vide de Claude respecte les contraintes
+UNAVAILABLE = {"kind": "unavailable", "start_date": "2026-10-10", "end_date": "2026-10-12"}
+
+
+def _event_client(make_client, *extra):
+    client = make_client(llm=FakeLLMProvider([valid_plan_json(14, 3), *extra]))
+    return client, _accepted_goal(client)
+
+
+def test_post_event_creates_it_and_proposal(make_client):
+    client, goal = _event_client(make_client, adjustment_json())
+    r = client.post(f"/api/goals/{goal['id']}/events", json={**UNAVAILABLE, "note": "voyage"})
+    assert r.status_code == 200
+    body = r.json()
+    assert isinstance(body["event_id"], int) and isinstance(body["proposal_id"], int) and body["error"] is None
+    assert client.get("/api/proposals/pending").json()["id"] == body["proposal_id"]
+    assert client.get(f"/api/goals/{goal['id']}/events").json() == [
+        {
+            "id": body["event_id"], "kind": "unavailable", "start_date": "2026-10-10", "end_date": "2026-10-12",
+            "max_sessions": None, "days": None, "session_id": None, "note": "voyage",
+        }
+    ]
+
+
+def test_post_event_claude_failure_keeps_event(make_client):
+    client, goal = _event_client(make_client, "pas du json")
+    body = client.post(f"/api/goals/{goal['id']}/events", json=UNAVAILABLE).json()
+    assert body["proposal_id"] is None and body["error"]
+    assert len(client.get(f"/api/goals/{goal['id']}/events").json()) == 1
+
+
+def test_post_event_invalid_returns_422(make_client):
+    client, goal = _event_client(make_client)
+    url = f"/api/goals/{goal['id']}/events"
+    for body in (
+        {"kind": "inconnu"},
+        {"kind": "unavailable", "start_date": "2026-11-10"},  # fin manquante (service)
+        {"kind": "unavailable", "start_date": "2026-10-12", "end_date": "2026-10-10"},
+    ):
+        r = client.post(url, json=body)
+        assert r.status_code == 422 and r.json()["code"] == "invalid"
+
+
+def test_post_event_unknown_goal_returns_422(make_client):
+    r = make_client().post("/api/goals/999/events", json=UNAVAILABLE)
+    assert r.status_code == 422 and r.json()["code"] == "invalid"
+
+
+def test_get_events_unknown_goal_is_404(make_client):
+    r = make_client().get("/api/goals/999/events")
+    assert r.status_code == 404 and r.json() == {"code": "not_found", "detail": "Objectif introuvable"}
+
+
+def test_delete_event(make_client):
+    client, goal = _event_client(make_client, adjustment_json())
+    event_id = client.post(f"/api/goals/{goal['id']}/events", json=UNAVAILABLE).json()["event_id"]
+    assert client.delete(f"/api/events/{event_id}").json() == {"status": "ok"}
+    assert client.get(f"/api/goals/{goal['id']}/events").json() == []
+
+
+def test_delete_event_unknown_is_404(make_client):
+    r = make_client().delete("/api/events/999")
+    assert r.status_code == 404 and r.json()["code"] == "not_found"
+
+
+def test_resume_injury_and_open_injury_in_plan(make_client):
+    # un arrêt ouvert bloque tout le plan : la réponse vide est refusée (2 essais) tant qu'il n'est pas clos
+    client, goal = _event_client(make_client, adjustment_json(), adjustment_json(), adjustment_json())
+    injury = {"kind": "injury", "start_date": "2026-10-01", "note": "genou"}
+    event_id = client.post(f"/api/goals/{goal['id']}/events", json=injury).json()["event_id"]
+    open_injury = client.get("/api/plan").json()["open_injury"]
+    assert open_injury["id"] == event_id and open_injury["end_date"] is None and open_injury["note"] == "genou"
+
+    r = client.post(f"/api/events/{event_id}/resume", json={"date": "2026-10-10"})
+    assert r.status_code == 200 and r.json()["event_id"] == event_id and r.json()["error"] is None
+    assert client.get("/api/plan").json()["open_injury"] is None
+    assert client.get(f"/api/goals/{goal['id']}/events").json()[0]["end_date"] == "2026-10-09"
+
+
+def test_resume_invalid_returns_422(make_client):
+    client, goal = _event_client(make_client, adjustment_json())
+    event_id = client.post(f"/api/goals/{goal['id']}/events", json=UNAVAILABLE).json()["event_id"]
+    r = client.post(f"/api/events/{event_id}/resume", json={"date": "2026-11-20"})  # pas un arrêt ouvert
+    assert r.status_code == 422 and r.json()["code"] == "invalid"
+    r = client.post(f"/api/events/{event_id}/resume", json={"date": "pas une date"})
+    assert r.status_code == 422 and r.json()["code"] == "invalid"
+
+
+def test_resume_unknown_event_is_404(make_client):
+    r = make_client().post("/api/events/999/resume", json={"date": "2026-11-09"})
+    assert r.status_code == 404 and r.json()["code"] == "not_found"
+
+
+def test_plan_open_injury_is_null_without_injury(make_client):
+    client, _ = _event_client(make_client)
+    assert client.get("/api/plan").json()["open_injury"] is None
+
+
+def test_post_adjust(make_client):
+    client, goal = _event_client(make_client, adjustment_json())
+    body = client.post(f"/api/goals/{goal['id']}/adjust").json()
+    assert isinstance(body["proposal_id"], int)
+    assert client.get("/api/proposals/pending").json()["id"] == body["proposal_id"]
+
+
+def test_post_adjust_invalid_goal_returns_422(make_client):
+    r = make_client().post("/api/goals/999/adjust")
+    assert r.status_code == 422 and r.json()["code"] == "invalid"
+
+
+def test_post_adjust_llm_limit_maps_to_429(make_client):
+    client = make_client(llm=FakeLLMProvider([valid_plan_json(14, 3)]))
+    goal = _accepted_goal(client)
+    limited = make_client(llm=LimitedLLM())
+    r = limited.post(f"/api/goals/{goal['id']}/adjust")
+    assert r.status_code == 429 and r.json()["code"] == "llm_limit"

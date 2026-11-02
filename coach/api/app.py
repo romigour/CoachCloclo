@@ -41,7 +41,7 @@ from coach.llm.provider import (
     LLMUsageLimit,
 )
 from coach.plan import calendar
-from coach.plan.models import Activity, Goal, Proposal, Session
+from coach.plan.models import Activity, Event, Goal, Proposal, Session
 from coach.plan.repo import Repo, make_engine
 from coach.services import CoachError
 from coach.services import garmin_export as export
@@ -56,6 +56,8 @@ from coach.services.plans import (
 )
 from coach.analysis.race_plan import RaceSettings
 from coach.services import race_strategy
+from coach.services.adjust import request_adjustment
+from coach.services.events import EventInput, EventResult, create_event, delete_event, resume_injury
 from coach.services.history import HistoryRunner, load_state, recover_orphan
 from coach.services.laps import fetch_laps, latest_zones, session_comparison
 from coach.services.sync import sync
@@ -161,6 +163,19 @@ def _goal_dict(goal: Goal) -> dict:
         "available_days": goal.available_days(),
         "long_run_day": goal.long_run_day,
         "gpx_summary": json.loads(goal.gpx_summary_json) if goal.gpx_summary_json else None,
+    }
+
+
+def _event_dict(e: Event) -> dict:
+    return {
+        "id": e.id,
+        "kind": e.kind,
+        "start_date": e.start_date.isoformat(),
+        "end_date": e.end_date.isoformat() if e.end_date else None,
+        "max_sessions": e.max_sessions,
+        "days": e.days(),
+        "session_id": e.session_id,
+        "note": e.note,
     }
 
 
@@ -473,8 +488,10 @@ def create_app(
         weeks: dict[int, list[dict]] = {}
         for s in repo.sessions(goal.id):
             weeks.setdefault(s.week_index, []).append(_session_dict(s))
+        injury = repo.open_injury(goal.id)
         return {
             "goal": _goal_dict(goal),
+            "open_injury": _event_dict(injury) if injury else None,
             "weeks": [
                 {
                     "week_index": idx,
@@ -484,6 +501,39 @@ def create_app(
                 for idx, sessions in sorted(weeks.items())
             ],
         }
+
+    # --- imprévus ---------------------------------------------------------------------------
+
+    def _exists(repo: Repo, model, id: int) -> bool:
+        with repo.transaction() as db:
+            return db.get(model, id) is not None
+
+    @api.post("/goals/{goal_id}/events")
+    def post_event(goal_id: int, body: EventInput, repo: RepoDep, garmin: GarminDep, llm: LLMDep) -> EventResult:
+        return create_event(repo, garmin, llm, goal_id, body)
+
+    @api.get("/goals/{goal_id}/events")
+    def get_events(goal_id: int, repo: RepoDep):
+        if not _exists(repo, Goal, goal_id):
+            return _error(404, "not_found", "Objectif introuvable")
+        return [_event_dict(e) for e in repo.events(goal_id)]
+
+    @api.delete("/events/{event_id}")
+    def delete_event_route(event_id: int, repo: RepoDep):
+        if not _exists(repo, Event, event_id):
+            return _error(404, "not_found", "Imprévu introuvable")
+        delete_event(repo, event_id)
+        return {"status": "ok"}
+
+    @api.post("/events/{event_id}/resume")
+    def post_resume(event_id: int, body: DateBody, repo: RepoDep, garmin: GarminDep, llm: LLMDep) -> EventResult:
+        if not _exists(repo, Event, event_id):
+            return _error(404, "not_found", "Imprévu introuvable")
+        return resume_injury(repo, garmin, llm, event_id, body.date)
+
+    @api.post("/goals/{goal_id}/adjust")
+    def post_adjust(goal_id: int, repo: RepoDep, garmin: GarminDep, llm: LLMDep):
+        return {"proposal_id": request_adjustment(repo, garmin, llm, goal_id)}
 
     # --- export Garmin ----------------------------------------------------------------------
 

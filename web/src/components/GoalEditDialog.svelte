@@ -61,16 +61,18 @@
 </script>
 
 <div class="modal-backdrop">
-  <div class="modal card stack" role="dialog" aria-label="Modifier l'objectif">
+  <div class="modal wide card stack" role="dialog" aria-label="Modifier l'objectif">
     <h2>Modifier l'objectif</h2>
-    <label>
-      Date de la course
-      <input type="date" min={minDate} bind:value={date} required />
-    </label>
-    <label>
-      Temps visé (h:mm)
-      <input type="text" inputmode="numeric" placeholder="1:50" bind:value={time} aria-invalid={timeInvalid} />
-    </label>
+    <div class="pair">
+      <label>
+        Date de la course
+        <input type="date" min={minDate} bind:value={date} required />
+      </label>
+      <label>
+        Temps visé (h:mm)
+        <input type="text" inputmode="numeric" placeholder="1:50" bind:value={time} aria-invalid={timeInvalid} />
+      </label>
+    </div>
     {#if timeInvalid}<span class="hint" role="alert">Temps visé invalide : format attendu h:mm, ex. 1:50</span>{/if}
     <AvailabilityFields bind:days bind:longRunDay bind:includeBike perWeek={goal.sessions_per_week} />
     <p class="meta">Pour changer la distance ou le type de course, crée un nouvel objectif.</p>
@@ -82,3 +84,8 @@
     </div>
   </div>
 </div>
+
+<style>
+  /* date et temps côte à côte quand la place le permet */
+  .pair { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 14px; }
+</style>

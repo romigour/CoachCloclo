@@ -339,7 +339,12 @@ a.more { font-weight: 600; text-decoration: none; }
   position: fixed; inset: 0; background: rgb(0 0 0 / 0.4); z-index: 10;
   display: flex; align-items: center; justify-content: center; padding: 16px;
 }
-.modal { width: 100%; max-width: 440px; display: flex; flex-direction: column; gap: 14px; box-shadow: 0 20px 50px rgb(0 0 0 / 0.2); }
+.modal {
+  width: 100%; max-width: 440px; display: flex; flex-direction: column; gap: 14px; box-shadow: 0 20px 50px rgb(0 0 0 / 0.2);
+  /* sur un écran peu haut, la fenêtre défile au lieu d'être coupée */
+  max-height: calc(100dvh - 32px); overflow-y: auto;
+}
+.modal.wide { max-width: 640px; }
 
 details summary { cursor: pointer; }
 

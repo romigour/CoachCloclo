@@ -322,7 +322,7 @@ export type RaceSegment = {
 
 export type Passage = { elapsed_s: number; clock: string; margin_min: number | null; status: "ok" | "serré" | "hors délai" | null };
 
-export type AidPassage = { station: AidStation; predicted: Passage | null; target: Passage | null };
+export type AidPassage = { station: AidStation; passage: Passage };
 
 export type NutritionLeg = {
   from_name: string;
@@ -339,7 +339,6 @@ export type RacePlan = {
   distance_km: number;
   eq_km: number;
   stops_s: number;
-  predicted_time_s: number | null;
   target_time_s: number | null;
   reference_time_s: number | null;
   segments: RaceSegment[];

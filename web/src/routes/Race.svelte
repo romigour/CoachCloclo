@@ -25,8 +25,10 @@
   const formError = $derived(current ? settingsError(current) : null);
 
   const plan = $derived(view?.plan ?? null);
-  const shownTime = $derived(plan ? (plan.target_time_s ?? plan.predicted_time_s) : null);
-  const avgPace = $derived(plan && shownTime ? shownTime / plan.distance_km : null);
+  const hasTarget = $derived(plan?.target_time_s != null);
+  // les données Garmin ne servent qu'à l'estimation de repli et aux zones FC du trail
+  const usesBasis = $derived(!hasTarget || view?.goal_type === "trail");
+  const avgPace = $derived(plan?.reference_time_s ? plan.reference_time_s / plan.distance_km : null);
   const dPlus = $derived(plan?.segments.reduce((sum, s) => sum + s.d_plus_m, 0) ?? 0);
   const sent = $derived(!!view && view.workout_id !== null && !view.export_error);
   const stale = $derived(sent && !!view?.export_stale);
@@ -84,23 +86,19 @@
   <section class="card lg stack" aria-label="Prédiction">
     <div class="head-grid">
       <div>
-        <p class="meta">Temps prédit</p>
-        <p class="big">{plan.predicted_time_s ? fmtDuration(plan.predicted_time_s) : "—"}</p>
+        <p class="meta">{hasTarget ? "Temps visé" : "Estimation d'après tes données Garmin"}</p>
+        <p class="big">{plan.reference_time_s ? fmtDuration(plan.reference_time_s) : "—"}</p>
         <p class="meta">
-          Données du {fmtDay(view.basis_date)}
-          <button type="button" onclick={refresh} disabled={busy !== null || dirty}>Actualiser</button>
-        </p>
-      </div>
-      <div>
-        <p class="meta">
-          {#if view.target_time_s != null}
-            Temps visé : {fmtDuration(view.target_time_s)} · {view.target_source === "claude" ? "estimé par Claude" : "fixé par toi"}
-          {:else}
-            Pas de temps visé, référence : prédiction
-          {/if}
+          {#if hasTarget}{view.target_source === "claude" ? "estimé par Claude" : "fixé par toi"}{:else}Pas de temps visé{/if}
         </p>
         <button type="button" onclick={() => (editing = true)}>Modifier l'objectif</button>
       </div>
+      {#if usesBasis}
+        <div>
+          <p class="meta">Données Garmin du {fmtDay(view.basis_date)}</p>
+          <button type="button" onclick={refresh} disabled={busy !== null || dirty}>Actualiser</button>
+        </div>
+      {/if}
       <div>
         <label for="race-start">Heure de départ</label>
         <input id="race-start" type="time" bind:value={draft.start_time} />

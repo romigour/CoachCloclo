@@ -24,12 +24,15 @@ const view = (over: Partial<RaceView> = {}): RaceView => ({
   settings: { start_time: "08:00", carbs_g_h: 60, water_ml_h: 500, carry_ml: 1000, aid_stations: [] },
   basis_date: "2026-10-30", profile: null, workout_id: null, export_error: null, export_stale: false,
   plan: {
-    distance_km: 10, eq_km: 10, stops_s: 0, predicted_time_s: 2880, target_time_s: null, reference_time_s: 2880,
+    distance_km: 10, eq_km: 10, stops_s: 0, target_time_s: null, reference_time_s: 2880,
     segments, aid_passages: [], nutrition: [], warnings: [],
   },
   target_time_s: null, target_source: null,
   ...over,
 });
+
+const targeted = (seconds: number, source: "claude" | "user") =>
+  view({ target_time_s: seconds, target_source: source, plan: { ...view().plan, target_time_s: seconds, reference_time_s: seconds } });
 
 function mock(data = view()) {
   const fetchMock = vi.fn(async () => new Response(JSON.stringify(data), { status: 200 }));
@@ -39,7 +42,7 @@ function mock(data = view()) {
 const calls = (f: ReturnType<typeof mock>) =>
   f.mock.calls.map((c) => `${(c[1] as RequestInit).method} ${c[0]}`);
 
-test("a road goal shows the predicted time and its 10 segments, without aid stations", async () => {
+test("a road goal shows the reference time and its 10 segments, without aid stations", async () => {
   mock();
   render(Race, { goal });
   expect(await screen.findByText("48 min")).toBeVisible();
@@ -48,10 +51,27 @@ test("a road goal shows the predicted time and its 10 segments, without aid stat
   expect(screen.queryByText("Ravitaillements")).toBeNull();
 });
 
-test("target time is read-only, editing the goal opens the prefilled dialog", async () => {
-  mock(view({ target_time_s: 6720, target_source: "claude" }));
+test("the target time is the only time shown, without Garmin data on the road", async () => {
+  mock(targeted(6720, "claude"));
   render(Race, { goal });
-  expect(await screen.findByText("Temps visé : 1 h 52 · estimé par Claude")).toBeVisible();
+  expect(await screen.findByText("Temps visé")).toBeVisible();
+  expect(screen.getByText("1 h 52")).toBeVisible();
+  expect(screen.getByText("estimé par Claude")).toBeVisible();
+  expect(screen.queryByText(/prédit/i)).toBeNull();
+  expect(screen.queryByRole("button", { name: "Actualiser" })).toBeNull();
+});
+
+test("a trail goal with a target keeps the Garmin data refresh for the heart-rate zones", async () => {
+  const v = trailView();
+  mock({ ...v, target_time_s: 3600, target_source: "user", plan: { ...v.plan, target_time_s: 3600, reference_time_s: 3600 } });
+  render(Race, { goal: trailGoal });
+  expect(await screen.findByRole("button", { name: "Actualiser" })).toBeVisible();
+});
+
+test("target time is read-only, editing the goal opens the prefilled dialog", async () => {
+  mock(targeted(6720, "claude"));
+  render(Race, { goal });
+  expect(await screen.findByText("estimé par Claude")).toBeVisible();
   expect(screen.queryByLabelText("Temps visé")).toBeNull();
   await fireEvent.click(screen.getByRole("button", { name: "Modifier l'objectif" }));
   const dialog = screen.getByRole("dialog", { name: "Modifier l'objectif" });
@@ -80,15 +100,17 @@ test("saving the goal edit refreshes the app and shows the proposal", async () =
 });
 
 test("a user-set target time says so", async () => {
-  mock(view({ target_time_s: 6600, target_source: "user" }));
+  mock(targeted(6600, "user"));
   render(Race, { goal });
-  expect(await screen.findByText("Temps visé : 1 h 50 · fixé par toi")).toBeVisible();
+  expect(await screen.findByText("fixé par toi")).toBeVisible();
 });
 
-test("no goal time falls back to prediction label", async () => {
+test("no goal time falls back on the Garmin estimate", async () => {
   mock();
   render(Race, { goal });
-  expect(await screen.findByText("Pas de temps visé, référence : prédiction")).toBeVisible();
+  expect(await screen.findByText("Estimation d'après tes données Garmin")).toBeVisible();
+  expect(screen.getByText("Pas de temps visé")).toBeVisible();
+  expect(screen.getByRole("button", { name: "Actualiser" })).toBeVisible();
 });
 
 test("saving sends no target time", async () => {
@@ -118,7 +140,7 @@ const trailView = (): RaceView =>
       ...view().plan,
       stops_s: 180,
       aid_passages: [
-        { station, predicted: { elapsed_s: 5400, clock: "09:30", margin_min: 12, status: "serré" }, target: null },
+        { station, passage: { elapsed_s: 5400, clock: "09:30", margin_min: 12, status: "serré" } },
       ],
       nutrition: [
         { from_name: "Départ", to_name: "Ravito Col", from_km: 0, to_km: 5, duration_s: 5400, carbs_g: 90, water_ml: 1200, over_capacity: true },
@@ -134,6 +156,8 @@ test("a trail goal lists aid stations with their status, the nutrition legs and 
   expect(within(table).getByDisplayValue("Ravito Col")).toBeVisible();
   expect(within(table).getByText("serré")).toBeVisible();
   expect(within(table).getByText("09:30", { selector: "td" })).toBeVisible();
+  expect(within(table).getAllByRole("columnheader").map((h) => h.textContent)).toContain("Heure de passage");
+  expect(within(table).queryByText("Heure visée")).toBeNull();
   const nutrition = screen.getByRole("table", { name: "Nutrition" });
   expect(within(nutrition).getAllByRole("row")).toHaveLength(3); // en-tête + 2 tronçons
   expect(within(nutrition).getByText(/contenance/i)).toBeVisible();

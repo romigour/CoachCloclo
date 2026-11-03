@@ -202,9 +202,9 @@ def split_segments(profile: list[ProfilePoint] | None, distance_km: float) -> li
     return spans
 
 
-NO_TIME = "Pas de prédiction possible : saisis un temps visé pour obtenir le découpage"
+NO_TIME = "Pas de temps de référence : saisis un temps visé pour obtenir le découpage"
 STALE = "Données de référence du {:%d/%m/%Y} : actualise-les avant la course"
-LATE = "Barrière hors délai au ravito « {} » avec le temps prédit"
+LATE = "Barrière hors délai au ravito « {} »"
 
 _HHMM = r"^([01]\d|2[0-3]):[0-5]\d$"
 _DAY_MIN = 24 * 60
@@ -262,8 +262,7 @@ class Passage(BaseModel):
 
 class AidPassage(BaseModel):
     station: AidStation
-    predicted: Passage | None
-    target: Passage | None
+    passage: Passage
 
 
 class NutritionLeg(BaseModel):
@@ -283,9 +282,8 @@ class RacePlan(BaseModel):
     distance_km: float
     eq_km: float
     stops_s: int
-    predicted_time_s: int | None
     target_time_s: int | None
-    reference_time_s: int | None
+    reference_time_s: int | None  # temps visé, ou à défaut l'estimation tirée des données Garmin
     segments: list[Segment]
     aid_passages: list[AidPassage]
     nutrition: list[NutritionLeg]
@@ -419,14 +417,16 @@ def build_race_plan(
         raise ValueError("Le temps visé doit dépasser la durée des arrêts aux ravitos")
     spans = split_segments(profile, distance_km)
     eq_km = sum(s.eq_km for s in spans)
-    pred_run = predict_run_time(eq_km, basis)
-    predicted = None if pred_run is None else pred_run + stops_s
-    reference = target if target is not None else predicted
+    reference = target
+    if reference is None:  # repli : estimation d'après les données Garmin
+        pred_run = predict_run_time(eq_km, basis)
+        reference = None if pred_run is None else pred_run + stops_s
     start_s = _hhmm_s(settings.start_time)
     warnings: list[str] = []
     if reference is None:
         warnings.append(NO_TIME)
-    if (today - basis.captured_on).days > _STALE_DAYS:
+    # les données Garmin ne servent qu'au repli et aux zones FC du trail
+    if (trail or target is None) and (today - basis.captured_on).days > _STALE_DAYS:
         warnings.append(STALE.format(basis.captured_on))
 
     ref = None if reference is None else _Timing(spans, reference - stops_s, stations)
@@ -459,20 +459,17 @@ def build_race_plan(
     aid_passages: list[AidPassage] = []
     nutrition: list[NutritionLeg] = []
     if ref is not None and trail:
-        pred_t = None if pred_run is None else _Timing(spans, pred_run, stations)
         for idx, st in enumerate(stations):
-            p = None if pred_t is None else _passage(pred_t.arrival(idx), start_s, st.cutoff)
-            t = None if target is None else _passage(ref.arrival(idx), start_s, st.cutoff)
-            if p is not None and p.status == "hors délai":
+            p = _passage(ref.arrival(idx), start_s, st.cutoff)
+            if p.status == "hors délai":
                 warnings.append(LATE.format(st.name))
-            aid_passages.append(AidPassage(station=st, predicted=p, target=t))
+            aid_passages.append(AidPassage(station=st, passage=p))
         nutrition = _nutrition(ref, distance_km, settings, reference)
 
     return RacePlan(
         distance_km=distance_km,
         eq_km=eq_km,
         stops_s=stops_s,
-        predicted_time_s=predicted,
         target_time_s=target,
         reference_time_s=reference,
         segments=segments,

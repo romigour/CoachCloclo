@@ -120,9 +120,9 @@ def plan(**kw):
     return build_race_plan(**{**args, **kw})
 
 
-def test_flat_route_prediction_and_pace_targets():
+def test_flat_route_falls_back_on_prediction_and_pace_targets():
     p = plan()
-    assert p.predicted_time_s == p.reference_time_s == 2880 and len(p.segments) == 10
+    assert p.target_time_s is None and p.reference_time_s == 2880 and len(p.segments) == 10
     s = p.segments[0]
     assert (s.time_s, s.pace_s_km, s.target_kind, s.target_low, s.target_high) == (288, 288, "pace", 283, 293)
     assert p.segments[-1].clock == "08:48" and p.aid_passages == [] and p.nutrition == []
@@ -130,7 +130,8 @@ def test_flat_route_prediction_and_pace_targets():
 
 def test_target_time_rescales():
     p = plan(target_time_s=2700)
-    assert p.predicted_time_s == 2880 and p.reference_time_s == 2700 and p.segments[0].time_s == 270
+    assert p.target_time_s == p.reference_time_s == 2700 and p.segments[0].time_s == 270
+    assert "predicted_time_s" not in p.model_dump()
 
 
 def test_climb_slower_than_flat():
@@ -145,7 +146,7 @@ STATION = AidStation(km=5, name="Col", kind="complet", cutoff="08:50", stop_min=
 def test_aid_passage_margin_and_nutrition():
     p = plan(trail=True, settings=RaceSettings(aid_stations=[STATION]))
     assert p.stops_s == 180 and p.reference_time_s == 3060
-    a = p.aid_passages[0].predicted
+    a = p.aid_passages[0].passage
     assert (a.elapsed_s, a.clock, a.margin_min, a.status) == (1440, "08:24", 26, "serré")
     assert [(n.from_name, n.to_name, n.duration_s, n.carbs_g, n.water_ml) for n in p.nutrition] == [
         ("Départ", "Col", 1440, 24, 200), ("Col", "Arrivée", 1440, 24, 200)]
@@ -154,13 +155,15 @@ def test_aid_passage_margin_and_nutrition():
 def test_late_cutoff_warns_and_capacity_alert():
     st = STATION.model_copy(update={"cutoff": "08:20"})
     p = plan(trail=True, settings=RaceSettings(aid_stations=[st], carry_ml=100))
-    assert p.aid_passages[0].predicted.status == "hors délai"
+    assert p.aid_passages[0].passage.status == "hors délai"
     assert LATE.format("Col") in p.warnings and all(n.over_capacity for n in p.nutrition)
 
 
-def test_target_passage_computed_alongside_predicted():
-    p = plan(trail=True, settings=RaceSettings(aid_stations=[STATION]), target_time_s=3600)
-    assert p.aid_passages[0].target.elapsed_s == 1710 and p.aid_passages[0].predicted.elapsed_s == 1440
+def test_passage_and_cutoff_warning_follow_the_target_time():
+    st = STATION.model_copy(update={"cutoff": "08:25"})  # prédit 08:24, visé 08:28:30
+    p = plan(trail=True, settings=RaceSettings(aid_stations=[st]), target_time_s=3600)
+    assert p.aid_passages[0].passage.elapsed_s == 1710
+    assert p.aid_passages[0].passage.status == "hors délai" and LATE.format("Col") in p.warnings
 
 
 def test_target_not_above_stops_rejected():
@@ -171,11 +174,17 @@ def test_target_not_above_stops_rejected():
 def test_no_reference_time():
     b = BASIS.model_copy(update={"pred_10k_s": None})
     p = plan(basis=b)
-    assert p.predicted_time_s is None and p.segments[0].time_s is None and NO_TIME in p.warnings
+    assert p.reference_time_s is None and p.segments[0].time_s is None and NO_TIME in p.warnings
 
 
 def test_stale_basis_warns():
     assert STALE.format(date(2026, 11, 1)) in plan(today=date(2026, 12, 5)).warnings
+
+
+def test_stale_basis_ignored_on_road_with_target():
+    late = date(2026, 12, 5)
+    assert not any(w.startswith("Données") for w in plan(today=late, target_time_s=2700).warnings)
+    assert STALE.format(date(2026, 11, 1)) in plan(today=late, trail=True, target_time_s=2700).warnings
 
 
 def test_clock_wraps_after_midnight():
@@ -190,7 +199,7 @@ def test_race_hr_zone(t, z):
 def test_cutoff_before_start_is_next_day():
     st = STATION.model_copy(update={"cutoff": "02:00"})
     p = plan(trail=True, settings=RaceSettings(start_time="22:00", aid_stations=[st]))
-    a = p.aid_passages[0].predicted
+    a = p.aid_passages[0].passage
     assert (a.clock, a.margin_min, a.status) == ("22:24", 216, "ok")
     assert LATE.format("Col") not in p.warnings
 
@@ -198,5 +207,5 @@ def test_cutoff_before_start_is_next_day():
 def test_negative_margin_floored():
     st = STATION.model_copy(update={"cutoff": "08:28"})  # arrivée visée 08:28:30
     p = plan(trail=True, settings=RaceSettings(aid_stations=[st]), target_time_s=3600)
-    t = p.aid_passages[0].target
+    t = p.aid_passages[0].passage
     assert (t.margin_min, t.status) == (-1, "hors délai")

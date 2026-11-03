@@ -20,8 +20,6 @@
   const DEFAULT_STOP = { eau: 1, complet: 3 } as const;
   const STATUS_CLASS = { ok: "done", serré: "todo", "hors délai": "missed" } as const;
 
-  const hasTarget = $derived(passages.some((p) => p.target));
-
   // Les colonnes calculées viennent du dernier plan enregistré : elles ne valent que pour
   // une ligne inchangée depuis (sinon « — » jusqu'à l'enregistrement).
   function passageFor(st: AidStation, i: number): AidPassage | null {
@@ -57,8 +55,7 @@
     <thead>
       <tr>
         <th>Km</th><th>Nom</th><th>Type</th><th>Barrière</th><th>Arrêt (min)</th>
-        <th>Heure prévue</th><th>Marge</th><th>Statut</th>
-        {#if hasTarget}<th>Heure visée</th><th>Marge visée</th><th>Statut visé</th>{/if}
+        <th>Heure de passage</th><th>Marge</th><th>Statut</th>
         <th></th>
       </tr>
     </thead>
@@ -76,8 +73,7 @@
           </td>
           <td><input type="time" aria-label="Barrière du ravitaillement {i + 1}" value={st.cutoff ?? ""} oninput={(e) => setCutoff(i, e.currentTarget.value)} /></td>
           <td><input class="num" type="number" min="0" aria-label="Arrêt du ravitaillement {i + 1} (min)" value={st.stop_min} oninput={(e) => patch(i, { stop_min: e.currentTarget.valueAsNumber })} /></td>
-          {@render passageCell(p?.predicted)}
-          {#if hasTarget}{@render passageCell(p?.target)}{/if}
+          {@render passageCell(p?.passage)}
           <td><button type="button" class="danger" aria-label="Supprimer le ravitaillement {i + 1}" onclick={() => remove(i)}>Supprimer</button></td>
         </tr>
       {/each}

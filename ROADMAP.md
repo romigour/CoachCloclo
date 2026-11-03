@@ -11,7 +11,7 @@ Idées d'amélioration, dans l'ordre où elles ont été notées.
 - [x] Installateur Windows avec mise à jour intégrée (lancement sans terminal, écran d'accueil, mode LAN dans les Réglages)
 - [x] Temps visé de l'objectif (fixé ou estimé par Claude) et modification de la date et du temps d'un objectif en cours
 - [x] Demander des idées de fonctionnalités pour la suite de l'application (ajoutées ci-dessous)
-- [x] Stratégie du jour J : prédiction de temps, allure ou temps par segment à partir du GPX (montées, descentes), plan de ravitaillement et barrières horaires en trail, export sur la montre
+- [x] Stratégie du jour J : allure ou temps par segment à partir du GPX (montées, descentes), calculés sur le temps visé (repli sur les données Garmin sans temps visé), plan de ravitaillement et barrières horaires en trail, export sur la montre
 - [x] Icône des Réglages en engrenage
 - [x] Choix du thème Auto / Clair / Sombre dans les Réglages
 - [x] Disponibilités (jours possibles, sortie longue), imprévus (indisponibilité, blessure ou maladie, semaine allégée, fatigue) avec proposition d'ajustement, et séances vélo d'endurance douce

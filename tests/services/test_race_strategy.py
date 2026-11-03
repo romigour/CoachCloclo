@@ -98,9 +98,9 @@ def test_target_below_stops_rejected(repo, coach_home, garmin):
 
 def test_refresh_updates_basis(repo, coach_home, garmin):
     goal = make_goal(repo, garmin)
-    before = get_race_view(repo, garmin, goal.id).plan.predicted_time_s
+    before = get_race_view(repo, garmin, goal.id).plan.reference_time_s  # sans temps visé : repli sur la prédiction
     garmin._metrics = Metrics(hr_max=190, hr_rest=50, pred_10k_s=2400)
-    after = refresh_basis(repo, garmin, goal.id).plan.predicted_time_s
+    after = refresh_basis(repo, garmin, goal.id).plan.reference_time_s
     assert after != before
 
 

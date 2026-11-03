@@ -265,12 +265,8 @@ def race_text(plan: RacePlan) -> str | None:
     """Résumé indicatif de la stratégie du jour J ; None sans temps de référence."""
     if plan.reference_time_s is None:
         return None
-    times = []
-    if plan.predicted_time_s is not None:
-        times.append(f"temps prévu {fmt_duration(plan.predicted_time_s)}")
-    if plan.target_time_s is not None:
-        times.append(f"visé {fmt_duration(plan.target_time_s)}")
-    text = "Stratégie jour J (indicative) : " + ", ".join(times)
+    label = "visé" if plan.target_time_s is not None else "temps estimé"
+    text = f"Stratégie jour J (indicative) : {label} {fmt_duration(plan.reference_time_s)}"
     climbs = sorted(
         sorted((s for s in plan.segments if s.kind == "montée"), key=lambda s: s.d_plus_m, reverse=True)[:3],
         key=lambda s: s.start_km,

@@ -177,7 +177,7 @@
         <Plan {version} onerror={failed} />
       {:else if route === "race"}
         {#if status?.goal}
-          <Race goal={status.goal} onerror={failed} />
+          <Race goal={status.goal} onerror={failed} onchanged={refresh} />
         {:else}
           <p class="card">Aucun objectif actif : le jour J se prépare à partir d'un objectif. <a href="#/goal">Créer un objectif</a></p>
         {/if}

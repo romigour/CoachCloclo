@@ -5,8 +5,15 @@
   import ErrorBanner from "../components/ErrorBanner.svelte";
   import ElevationProfile from "../components/race/ElevationProfile.svelte";
   import AidStations from "../components/race/AidStations.svelte";
+  import GoalEditDialog from "../components/GoalEditDialog.svelte";
 
-  let { goal, onerror: report }: { goal: Goal; onerror?: (e: unknown) => void } = $props();
+  let {
+    goal,
+    onerror: report,
+    onchanged,
+  }: { goal: Goal; onerror?: (e: unknown) => void; onchanged?: () => void } = $props();
+
+  let editing = $state(false);
 
   let view = $state<RaceView | null>(null);
   let draft = $state<RaceSettings | null>(null);
@@ -55,6 +62,13 @@
     goal.id;
     load();
   });
+
+  // comme depuis la page Objectif : la modification passe par une proposition de Claude
+  function edited() {
+    editing = false;
+    onchanged?.();
+    location.hash = "#/proposal";
+  }
 </script>
 
 <header class="page-head">
@@ -85,7 +99,7 @@
             Pas de temps visé, référence : prédiction
           {/if}
         </p>
-        <a href="#/goal">Modifier l'objectif</a>
+        <button type="button" onclick={() => (editing = true)}>Modifier l'objectif</button>
       </div>
       <div>
         <label for="race-start">Heure de départ</label>
@@ -210,6 +224,10 @@
     {/if}
     {#if view.export_error}<span class="error" role="alert">Échec de l'envoi : {view.export_error}</span>{/if}
   </div>
+{/if}
+
+{#if editing}
+  <GoalEditDialog {goal} onclose={() => (editing = false)} onsaved={edited} />
 {/if}
 
 <style>

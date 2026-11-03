@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, within } from "@testing-library/svelte";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
 import { afterEach, expect, test, vi } from "vitest";
 import Race from "./Race.svelte";
 import type { Goal, RaceSegment, RaceView } from "../lib/api";
@@ -48,12 +48,35 @@ test("a road goal shows the predicted time and its 10 segments, without aid stat
   expect(screen.queryByText("Ravitaillements")).toBeNull();
 });
 
-test("target time is read-only with link to goal", async () => {
+test("target time is read-only, editing the goal opens the prefilled dialog", async () => {
   mock(view({ target_time_s: 6720, target_source: "claude" }));
   render(Race, { goal });
   expect(await screen.findByText("Temps visé : 1 h 52 · estimé par Claude")).toBeVisible();
   expect(screen.queryByLabelText("Temps visé")).toBeNull();
-  expect(screen.getByRole("link", { name: "Modifier l'objectif" })).toHaveAttribute("href", "#/goal");
+  await fireEvent.click(screen.getByRole("button", { name: "Modifier l'objectif" }));
+  const dialog = screen.getByRole("dialog", { name: "Modifier l'objectif" });
+  expect(within(dialog).getByLabelText("Date de la course")).toHaveValue("2026-12-06");
+  await fireEvent.click(within(dialog).getByRole("button", { name: "Annuler" }));
+  expect(screen.queryByRole("dialog")).toBeNull();
+});
+
+test("saving the goal edit refreshes the app and shows the proposal", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (_url: string, init?: RequestInit) =>
+      new Response(JSON.stringify(init?.method === "PATCH" ? { goal, proposal_id: 9 } : view()), { status: 200 }),
+    ),
+  );
+  const onchanged = vi.fn();
+  location.hash = "#/race";
+  render(Race, { goal, onchanged });
+  await fireEvent.click(await screen.findByRole("button", { name: "Modifier l'objectif" }));
+  const dialog = screen.getByRole("dialog", { name: "Modifier l'objectif" });
+  await fireEvent.input(within(dialog).getByLabelText("Date de la course"), { target: { value: "2026-12-13" } });
+  await fireEvent.click(within(dialog).getByRole("button", { name: "Enregistrer" }));
+  await waitFor(() => expect(location.hash).toBe("#/proposal"));
+  expect(onchanged).toHaveBeenCalled();
+  expect(screen.queryByRole("dialog")).toBeNull();
 });
 
 test("a user-set target time says so", async () => {

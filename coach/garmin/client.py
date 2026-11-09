@@ -175,9 +175,14 @@ class GarminClient:
     def start_login(
         cls, email: str, password: str, tokenstore: Path
     ) -> tuple[Literal["ok", "needs_mfa"], GarminClient | dict]:
-        """Démarre la connexion. Le `state` MFA est à garder côté serveur."""
+        """Démarre la connexion. Le `state` MFA est à garder côté serveur.
+
+        Les identifiants saisis priment : `login()` reçoit volontairement aucun
+        tokenstore, sinon la bibliothèque réutiliserait les tokens enregistrés
+        (périmés ou d'un autre compte) sans jamais essayer le mot de passe.
+        """
         api = Garmin(email, password, return_on_mfa=True)
-        status, state = _map_login_errors(lambda: api.login(str(tokenstore)))
+        status, state = _map_login_errors(api.login)
         if status == "needs_mfa":
             return "needs_mfa", state
         # En mode return_on_mfa, la bibliothèque ne persiste pas les tokens et

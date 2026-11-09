@@ -220,6 +220,7 @@ class FakeGarminCtor:
         FakeGarminCtor.instances.append(self)
 
     def login(self, tokenstore=None):
+        self.login_tokenstore = tokenstore
         if FakeGarminCtor.login_error:
             raise FakeGarminCtor.login_error
         return FakeGarminCtor.login_result
@@ -252,6 +253,14 @@ def test_start_login_needs_mfa(ctor, tmp_path):
 def test_start_login_ok_persists_tokens(ctor, tmp_path):
     status, client = GarminClient.start_login("a@b.c", "pw", tmp_path)
     assert status == "ok" and isinstance(client, GarminClient)
+    assert ctor.instances[0].dumped == [str(tmp_path)]
+
+
+def test_start_login_ignores_saved_tokens(ctor, tmp_path):
+    """Les identifiants saisis priment : des tokens enregistrés (périmés ou d'un
+    autre compte) ne doivent pas court-circuiter la connexion par mot de passe."""
+    GarminClient.start_login("a@b.c", "pw", tmp_path)
+    assert ctor.instances[0].login_tokenstore is None
     assert ctor.instances[0].dumped == [str(tmp_path)]
 
 

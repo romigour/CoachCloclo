@@ -14,7 +14,13 @@ from datetime import date
 from pathlib import Path
 from typing import Any, Literal
 
-from garminconnect import (
+from coach.certs import install_system_ca
+from coach.config import data_dir
+
+# Avant l'import de garminconnect : curl_cffi lit ses certificats à l'import.
+install_system_ca(data_dir())
+
+from garminconnect import (  # noqa: E402
     Garmin,
     GarminConnectAuthenticationError,
     GarminConnectConnectionError,
@@ -22,7 +28,7 @@ from garminconnect import (
     GarminConnectTooManyRequestsError,
 )
 
-from coach.garmin.port import (
+from coach.garmin.port import (  # noqa: E402
     ActivitySummary,
     GarminAuthRequired,
     GarminRateLimited,

@@ -104,7 +104,10 @@ def generate_plan(repo: Repo, garmin: GarminPort, llm: LLMProvider) -> PlanRespo
             pace_available=pace_available, estimate_min_s=estimate_min_s,
             first_week=first_week, fixed_counts=fixed_counts,
         )
-        + constraint_errors(planned_from_plan(cycle, p), constraints, fixed_counts=fixed_counts),
+        # génération : aucune séance avant aujourd'hui (régénération ou départ en milieu de semaine)
+        + constraint_errors(
+            planned_from_plan(cycle, p), constraints, fixed_counts=fixed_counts, reject_past=True
+        ),
     )
     with repo.transaction() as db:
         todo = select(Session).where(

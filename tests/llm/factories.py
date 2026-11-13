@@ -33,14 +33,15 @@ def make_plan(
 ) -> PlanResponse:
     """Plan de `n_weeks` semaines avec `per_week[i]` séances (orders 1..k) en semaine i+1.
 
-    `estimated_time_s` devient l'estimation de l'objectif `goal_id`.
+    `estimated_time_s` devient l'estimation de l'objectif `goal_id`. Les séances tombent le jeudi : la
+    génération refuse un jour passé, et l'aujourd'hui par défaut du faux Garmin est un mercredi.
     """
     weeks = [
         WeekSpec(
             week_index=w,
             focus=f"Semaine {w}",
             sessions=[
-                make_session(week_index=w, order=o, target_kind=target_kind)
+                make_session(week_index=w, order=o, target_kind=target_kind, suggested_day="jeudi")
                 for o in range(1, per_week[w - 1] + 1)
             ],
         )

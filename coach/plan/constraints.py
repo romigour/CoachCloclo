@@ -24,6 +24,7 @@ class PlanConstraints:
     plan_start: date | None = None  # lundi de la semaine 1 ; sert à situer une semaine allégée ou une course
     race_dates: tuple[date, ...] = ()  # jours de course des objectifs du cycle
     sessions_per_week: int | None = None  # limite d'une semaine, dont chaque course prend une place
+    end_date: date | None = None  # fin du cycle (course qui le termine) : aucune séance après
 
     @classmethod
     def of(
@@ -38,6 +39,7 @@ class PlanConstraints:
             plan_start=cycle.plan_start,
             race_dates=tuple(sorted({g.race_date for g in goals})),
             sessions_per_week=cycle.sessions_per_week,
+            end_date=cycle.end_date,
         )
 
 
@@ -130,11 +132,17 @@ def allowed_days(c: PlanConstraints, d: date) -> set[str]:
 
 
 def constraint_errors(
-    planned: list[Planned], c: PlanConstraints, *, fixed_counts: Mapping[int, int] | None = None
+    planned: list[Planned],
+    c: PlanConstraints,
+    *,
+    fixed_counts: Mapping[int, int] | None = None,
+    reject_past: bool = False,
 ) -> list[str]:
     """Violations des règles de disponibilité ; vide si tout est respecté.
 
     `fixed_counts` (séances done/missed/sync_error par semaine) compte dans la limite d'une semaine allégée.
+    `reject_past` (génération) : aucune séance non exportée avant `c.today`. Un ajustement ne l'active pas :
+    ses séances à faire de la semaine courante peuvent déjà être passées sans être marquées manquées.
     """
     errors: list[str] = []
     periods = blocked_periods(c)
@@ -166,6 +174,15 @@ def constraint_errors(
                 errors.append(f"{p.label} : séance exportée {race}, à retirer (op remove)")
             else:
                 errors.append(f"{p.label} : tombe {race}")
+        if c.end_date is not None and p.date > c.end_date:
+            if p.exported:
+                errors.append(
+                    f"{p.label} : séance exportée après la fin du cycle ({_fmt(c.end_date)}), à retirer (op remove)"
+                )
+            else:
+                errors.append(f"{p.label} : tombe après la fin du cycle ({_fmt(c.end_date)})")
+        if reject_past and not p.exported and p.date < c.today:
+            errors.append(f"{p.label} : tombe avant aujourd'hui ({_fmt(p.date)})")
     errors += _light_week_count_errors(planned, c, fixed_counts or {})
     errors += _race_week_count_errors(planned, c, fixed_counts or {})
     errors += _bike_errors(planned, c)

@@ -10,7 +10,7 @@ from coach.services import CoachError
 from coach.services.context import refresh_snapshot
 from coach.services.goals import GoalError
 from coach.services.plans import PlanSettingsUpdate, accept_plan, generate_plan, update_plan_settings
-from tests.llm.factories import make_session, valid_plan_json
+from tests.llm.factories import make_plan, make_session, valid_plan_json
 from tests.services.test_goals import METRICS, _proposals, first_goal, monday_garmin  # noqa: F401 (fixture)
 from tests.services.test_goals import accepted_goal as _accepted_goal
 from tests.services.test_sync import adjustment_json
@@ -123,7 +123,7 @@ def _plan_from(first_week: int, per_week: dict[int, int], estimates: dict[int, i
     (goal_id -> secondes) vaut par défaut 5 h 30 pour l'objectif 1."""
     weeks = [
         WeekSpec(week_index=w, focus=f"Semaine {w}",
-                 sessions=[make_session(week_index=w, order=o) for o in range(1, k + 1)])
+                 sessions=[make_session(week_index=w, order=o, suggested_day="jeudi") for o in range(1, k + 1)])
         for w, k in sorted(per_week.items()) if w >= first_week
     ]
     estimates = {1: 19800} if estimates is None else estimates
@@ -171,7 +171,7 @@ def test_regenerate_keeps_fixed_sessions(repo, fake_garmin):
 
 def test_generate_plan_retries_on_unavailable_day(repo, fake_garmin):
     _goal(repo, fake_garmin, available_days=["mardi", "jeudi", "samedi"])
-    bad = valid_plan_json(n_weeks=14, per_week=3).replace('"mardi"', '"lundi"')
+    bad = valid_plan_json(n_weeks=14, per_week=3).replace('"jeudi"', '"lundi"')
     llm = FakeLLMProvider([bad, valid_plan_json(n_weeks=14, per_week=3)])
     generate_plan(repo, fake_garmin, llm)
     assert "lundi n'est pas un jour possible" in llm.calls[1]
@@ -334,3 +334,24 @@ def test_accept_rejected_while_plan_must_be_regenerated(repo, fake_garmin):
     generate_plan(repo, fake_garmin, FakeLLMProvider([valid_plan_json(14, 3)]))
     accept_plan(repo)
     assert repo.active_cycle().plan_accepted is True
+
+
+def test_generate_rejects_session_before_today(repo, fake_garmin):
+    """Aujourd'hui mercredi 04/11 : une séance de la semaine 1 placée le mardi est déjà passée."""
+    _goal(repo, fake_garmin)
+    past = valid_plan_json(14, 3).replace('"jeudi"', '"mardi"')
+    llm = FakeLLMProvider([past, valid_plan_json(14, 3)])
+    generate_plan(repo, fake_garmin, llm)
+    assert "semaine 1, séance 1 : tombe avant aujourd'hui (03/11)" in llm.calls[1]
+    assert "semaine 2, séance 1 : tombe avant aujourd'hui" not in llm.calls[1]
+
+
+def test_generate_rejects_session_after_cycle_end(repo, fake_garmin):
+    """Course (fin du cycle) le mercredi 03/02/2027 : une séance le jeudi de la semaine 14 est refusée."""
+    _goal(repo, fake_garmin, race_date=date(2027, 2, 3))
+    late = make_plan(14, [3] * 13 + [1], estimated_time_s=19800)
+    ok = late.model_copy(deep=True)
+    ok.weeks[-1].sessions[0].suggested_day = "lundi"
+    llm = FakeLLMProvider([late.model_dump_json(), ok.model_dump_json()])
+    generate_plan(repo, fake_garmin, llm)
+    assert "semaine 14, séance 1 : tombe après la fin du cycle (03/02)" in llm.calls[1]

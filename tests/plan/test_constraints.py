@@ -76,8 +76,8 @@ def test_planned_from_plan_labels_and_dates():
     plan = make_plan(2, [1, 2])
     planned = planned_from_plan(cycle, plan)
     assert [p.label for p in planned] == ["semaine 1, séance 1", "semaine 2, séance 1", "semaine 2, séance 2"]
-    assert planned[0].date == date(2026, 10, 27)  # mardi de la semaine 1
-    assert planned[1].date == date(2026, 11, 3)
+    assert planned[0].date == date(2026, 10, 29)  # jeudi de la semaine 1
+    assert planned[1].date == date(2026, 11, 5)
     assert not any(p.exported for p in planned)
 
 
@@ -456,3 +456,38 @@ def test_constraints_of_reads_race_dates_and_sessions_per_week():
     assert c.race_dates == (date(2026, 12, 20), date(2027, 1, 31))
     assert c.sessions_per_week == 4
     assert PlanConstraints.of(make_cycle(), TODAY).race_dates == ()
+
+
+# --- fin du cycle et jours passés -----------------------------------------------------------
+
+
+def test_session_after_cycle_end_rejected():
+    """Course (fin du cycle) le mercredi 18/11 : rien après, une séance exportée est à retirer."""
+    c = PlanConstraints(available_days=ALL_DAYS, long_run_day=None, today=TODAY, end_date=date(2026, 11, 18))
+    p = [
+        Planned("semaine 3, séance 1", make_session(week_index=3, suggested_day="mardi"), date(2026, 11, 17), False),
+        Planned("semaine 3, séance 2", make_session(week_index=3, suggested_day="samedi"), date(2026, 11, 21), False),
+        Planned("séance 9", make_session(week_index=3, suggested_day="jeudi"), date(2026, 11, 19), True),
+    ]
+    assert constraint_errors(p, c) == [
+        "semaine 3, séance 2 : tombe après la fin du cycle (18/11)",
+        "séance 9 : séance exportée après la fin du cycle (18/11), à retirer (op remove)",
+    ]
+    # sans fin connue : pas de contrôle
+    assert constraint_errors(p, _constraints()) == []
+
+
+def test_constraints_of_reads_end_date():
+    assert PlanConstraints.of(make_cycle(end_date=date(2027, 2, 7)), TODAY).end_date == date(2027, 2, 7)
+
+
+def test_session_before_today_rejected_only_when_asked():
+    """Génération : aucune séance (non exportée) avant aujourd'hui ; un ajustement n'est pas concerné."""
+    c = PlanConstraints(available_days=ALL_DAYS, long_run_day=None, today=date(2026, 11, 4))
+    p = [
+        Planned("semaine 1, séance 1", make_session(suggested_day="mardi"), date(2026, 11, 3), False),
+        Planned("semaine 1, séance 2", make_session(suggested_day="mercredi"), date(2026, 11, 4), False),
+        Planned("séance 3", make_session(suggested_day="lundi"), date(2026, 11, 2), True),
+    ]
+    assert constraint_errors(p, c, reject_past=True) == ["semaine 1, séance 1 : tombe avant aujourd'hui (03/11)"]
+    assert constraint_errors(p, c) == []

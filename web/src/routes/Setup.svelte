@@ -54,7 +54,7 @@
     // L'app synchronise et choisit la page ; sans elle, on retombe sur objectif / plan.
     if (onconnected) return onconnected();
     onchanged?.();
-    location.hash = status?.goal ? "#/plan" : "#/goal";
+    location.hash = status?.cycle ? "#/plan" : "#/goal";
   }
 
   async function reimport() {
@@ -102,7 +102,7 @@
     <ul class="plain">
       <li>Garmin : <strong>{GARMIN_LABEL[status.garmin]}</strong></li>
       <li>Claude : <strong>{status.llm_mode === "cli" ? "Claude Code (CLI)" : "Clé API"}</strong></li>
-      <li>Objectif : <strong>{status.goal ? `${status.goal.distance_km} km (${status.goal.type})` : "aucun"}</strong></li>
+      <li>Objectif : <strong>{status.next_goal ? `${status.next_goal.distance_km} km (${status.next_goal.type})` : "aucun"}</strong></li>
     </ul>
   {:else}
     <p>Chargement…</p>

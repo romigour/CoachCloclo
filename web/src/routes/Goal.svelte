@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { api, type Goal, type Plan } from "../lib/api";
+  import { api, cycleGoal, type Cycle, type Goal, type Plan } from "../lib/api";
   import { formatDate, todayIso, WEEKDAYS } from "../lib/dates";
   import { goalTimeLabel, parseTargetTime } from "../lib/race";
   import { daysUntil } from "../lib/week";
@@ -10,6 +10,7 @@
   import Icon from "../components/Icon.svelte";
   import AvailabilityFields, { availabilityValid } from "../components/AvailabilityFields.svelte";
   import GoalEditDialog from "../components/GoalEditDialog.svelte";
+  import PlanSettingsDialog from "../components/PlanSettingsDialog.svelte";
 
   let { onchanged, today = todayIso() }: { onchanged?: () => void; today?: string } = $props();
 
@@ -36,12 +37,14 @@
 
   let goal = $state<Goal | null>(null);
   let active = $state<Goal | null>(null);
+  let cycle = $state<Cycle | null>(null); // cycle en cours (plan validé), pour ses réglages
   let plan = $state<Plan | null>(null);
   let summary = $state("");
   let busy = $state("");
   let error = $state<unknown>(null);
   let selected = $state<number | null>(null);
   let editing = $state(false);
+  let editingSettings = $state(false);
 
   const weeksLeft = $derived(raceDate && raceDate > today ? Math.ceil(daysUntil(today, raceDate) / 7) : null);
   const selection = $derived.by(() => {
@@ -52,27 +55,29 @@
     return null;
   });
 
-  // reprend un brouillon existant (objectif actif non validé)
+  // reprend un brouillon existant (cycle actif non validé)
   onMount(async () => {
     try {
       const p = await api.plan();
-      if (p.goal && !p.goal.plan_accepted && p.weeks.length) {
-        goal = p.goal;
+      const g = cycleGoal(p);
+      if (p.cycle && !p.cycle.plan_accepted && p.weeks.length && g) {
+        goal = g;
         plan = p;
-      } else if (p.goal?.plan_accepted) {
-        active = p.goal;
+      } else if (p.cycle?.plan_accepted) {
+        active = g;
+        cycle = p.cycle;
       }
     } catch (e) {
       error = e;
     }
   });
 
-  async function generate(g: Goal) {
+  async function generate() {
     busy = "Claude construit ton plan… (cela peut prendre une minute)";
-    const r = await api.generate(g.id);
+    const r = await api.generate();
     summary = r.summary;
     plan = await api.plan();
-    if (plan.goal) goal = plan.goal; // reprend le temps estimé par Claude
+    goal = cycleGoal(plan) ?? goal; // reprend le temps estimé par Claude
   }
 
   async function submit(e: Event) {
@@ -97,7 +102,7 @@
         long_run_day: longRunDay || undefined,
         include_bike: includeBike,
       });
-      await generate(goal);
+      await generate();
     } catch (err) {
       error = err;
     } finally {
@@ -109,7 +114,7 @@
     if (!goal) return;
     error = null;
     try {
-      await generate(goal);
+      await generate();
     } catch (err) {
       error = err;
     } finally {
@@ -122,7 +127,7 @@
     error = null;
     busy = "Validation…";
     try {
-      await api.accept(goal.id);
+      await api.accept();
       onchanged?.();
       location.hash = "#/today";
     } catch (err) {
@@ -134,6 +139,7 @@
 
   function edited() {
     editing = false;
+    editingSettings = false;
     onchanged?.();
     location.hash = "#/proposal";
   }
@@ -284,7 +290,10 @@
           <h3>Objectif en cours</h3>
           <p>{goalLabel(active)} · course le {formatDate(active.race_date)}</p>
           {#if goalTimeLabel(active)}<p class="meta">{goalTimeLabel(active)}</p>{/if}
-          <div class="row"><button type="button" onclick={() => (editing = true)}>Modifier</button></div>
+          <div class="row">
+            <button type="button" onclick={() => (editing = true)}>Modifier</button>
+            {#if cycle}<button type="button" onclick={() => (editingSettings = true)}>Réglages du plan</button>{/if}
+          </div>
           <p class="meta">Un nouvel objectif remplacera ce plan.</p>
         </section>
       {/if}
@@ -310,4 +319,8 @@
 
 {#if editing && active}
   <GoalEditDialog goal={active} {today} onclose={() => (editing = false)} onsaved={edited} />
+{/if}
+
+{#if editingSettings && cycle}
+  <PlanSettingsDialog {cycle} onclose={() => (editingSettings = false)} onsaved={edited} />
 {/if}

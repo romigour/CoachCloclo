@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { api, type Activity, type Plan } from "../lib/api";
+  import { api, cycleGoal, type Activity, type Plan } from "../lib/api";
   import { formatDate, formatDay, todayIso } from "../lib/dates";
   import { currentWeek, focusSession, openSessions, sessionDate } from "../lib/week";
   import ErrorBanner from "../components/ErrorBanner.svelte";
@@ -23,6 +23,7 @@
   let reloads = $state(0); // incrémenté à chaque rechargement du plan, pour rafraîchir la liste des imprévus
 
   const now = $derived(plan ? currentWeek(plan.weeks, today) : null);
+  const goal = $derived(plan ? cycleGoal(plan) : null);
   const selection = $derived.by(() => {
     for (const w of plan?.weeks ?? []) {
       const s = w.sessions.find((x) => x.id === selected);
@@ -71,24 +72,24 @@
 
 <header class="page-head">
   <div>
-    {#if plan?.goal}
+    {#if goal}
       <p class="eyebrow">
-        {plan.goal.distance_km.toLocaleString("fr-FR")} km {plan.goal.type === "trail" ? `trail · ${plan.goal.d_plus_m} m D+` : "route"}
-        · course le {formatDate(plan.goal.race_date)}
+        {goal.distance_km.toLocaleString("fr-FR")} km {goal.type === "trail" ? `trail · ${goal.d_plus_m} m D+` : "route"}
+        · course le {formatDate(goal.race_date)}
       </p>
     {/if}
     <h1>Programme</h1>
   </div>
-  {#if plan?.goal?.plan_accepted}
+  {#if plan?.cycle?.plan_accepted}
     <button onclick={() => (declaring = true)}>Signaler un imprévu</button>
   {/if}
 </header>
 
 <ErrorBanner {error} onpin={load} />
 
-{#if declaring && plan?.goal}
+{#if declaring && plan?.cycle}
   <EventDialog
-    goal={plan.goal}
+    cycle={plan.cycle}
     weeks={plan.weeks}
     sessions={openSessions(plan.weeks, today)}
     {today}
@@ -101,13 +102,13 @@
 {/if}
 
 {#if plan}
-  {#if !plan.goal}
+  {#if !plan.cycle}
     <p class="card">Aucun objectif. <a href="#/goal">Créer un objectif</a></p>
-  {:else if !plan.goal.plan_accepted}
+  {:else if !plan.cycle.plan_accepted}
     <p class="card">Le plan n'est pas encore validé. <a href="#/goal">Relire le brouillon</a></p>
   {:else}
-    <InjuryBanner injury={plan.open_injury ?? null} goalId={plan.goal.id} {today} onproposal={goProposal} onresumed={load} />
-    <EventList goalId={plan.goal.id} {today} reload={reloads} onproposal={goProposal} onchanged={load} />
+    <InjuryBanner injury={plan.open_injury ?? null} {today} onproposal={goProposal} onresumed={load} />
+    <EventList {today} reload={reloads} onproposal={goProposal} onchanged={load} />
     <section aria-label="Avancement du plan">
       <div class="weeks-bar" style:grid-template-columns="repeat({plan.weeks.length}, minmax(0, 1fr))">
         {#each plan.weeks as w (w.week_index)}

@@ -6,9 +6,8 @@ import type { Goal } from "../lib/api";
 afterEach(() => vi.unstubAllGlobals());
 
 const goal: Goal = {
-  id: 3, type: "route", distance_km: 21.1, d_plus_m: 0, race_date: "2027-03-01", sessions_per_week: 4,
-  plan_start: "2027-01-01", plan_accepted: true, gpx_summary: null, target_time_s: 6720, target_source: "claude",
-  available_days: ["lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche"], long_run_day: "dimanche", include_bike: false,
+  id: 3, type: "route", distance_km: 21.1, d_plus_m: 0, race_date: "2027-03-01", priority: "principal", status: "active",
+  gpx_summary: null, target_time_s: 6720, target_source: "claude",
 };
 
 function mock(status = 200, body: unknown = { goal, proposal_id: 9 }) {
@@ -64,39 +63,21 @@ test("no change or invalid time disables save", async () => {
   expect(save).toBeEnabled();
 });
 
-test("changing only the days sends only available_days", async () => {
-  const f = mock();
-  const onsaved = vi.fn();
-  open({ onsaved });
-  await fireEvent.click(screen.getByRole("checkbox", { name: "Lundi" }));
-  await fireEvent.click(screen.getByRole("button", { name: "Enregistrer" }));
-  await waitFor(() => expect(onsaved).toHaveBeenCalled());
-  expect(patchBody(f)).toEqual({ available_days: ["mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche"] });
-});
-
-test("choosing Aucun sends an empty long_run_day", async () => {
-  const f = mock();
-  const onsaved = vi.fn();
-  open({ onsaved });
-  await fireEvent.change(screen.getByLabelText("Jour de la sortie longue"), { target: { value: "" } });
-  await fireEvent.click(screen.getByRole("button", { name: "Enregistrer" }));
-  await waitFor(() => expect(onsaved).toHaveBeenCalled());
-  expect(patchBody(f)).toEqual({ long_run_day: "" });
-});
-
-test("too few days disables save", async () => {
+test("only date and target time: plan settings live in their own dialog", () => {
   open();
-  for (const d of ["Lundi", "Mardi", "Mercredi", "Jeudi"]) await fireEvent.click(screen.getByRole("checkbox", { name: d }));
-  expect(screen.getByText("Coche au moins 4 jours")).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Enregistrer" })).toBeDisabled();
+  expect(screen.queryByRole("group", { name: "Jours possibles" })).toBeNull();
+  expect(screen.queryByLabelText("Jour de la sortie longue")).toBeNull();
+  expect(screen.queryByRole("checkbox", { name: /Inclure du vélo/ })).toBeNull();
 });
 
-test("sends include_bike when the bike option changes", async () => {
+test("sends the new race date to the goal endpoint", async () => {
   const f = mock();
   const onsaved = vi.fn();
   open({ onsaved });
-  await fireEvent.click(screen.getByRole("checkbox", { name: /Inclure du vélo/ }));
+  await fireEvent.input(screen.getByLabelText("Date de la course"), { target: { value: "2027-03-08" } });
   await fireEvent.click(screen.getByRole("button", { name: "Enregistrer" }));
   await waitFor(() => expect(onsaved).toHaveBeenCalledWith(9));
-  expect(patchBody(f)).toEqual({ include_bike: true });
+  const calls = f.mock.calls as unknown as [string, RequestInit][];
+  expect(calls.find(([, i]) => i.method === "PATCH")![0]).toBe("/api/goals/3");
+  expect(patchBody(f)).toEqual({ race_date: "2027-03-08" });
 });

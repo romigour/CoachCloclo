@@ -20,7 +20,7 @@ function mock(result: unknown) {
 }
 
 test("no banner without an open injury", () => {
-  render(InjuryBanner, { injury: null, goalId: 3 });
+  render(InjuryBanner, { injury: null });
   expect(screen.queryByText(/Arrêt depuis/)).toBeNull();
 });
 
@@ -28,7 +28,7 @@ test("resuming sends the day's date by default", async () => {
   const f = mock({ event_id: 4, proposal_id: 8, error: null });
   const onproposal = vi.fn();
   const onresumed = vi.fn();
-  render(InjuryBanner, { injury, goalId: 3, today: "2026-11-03", onproposal, onresumed });
+  render(InjuryBanner, { injury, today: "2026-11-03", onproposal, onresumed });
   expect(screen.getByText("Arrêt depuis le 01/11")).toBeVisible();
   await fireEvent.click(screen.getByRole("button", { name: "Signaler la reprise" }));
   expect(screen.getByLabelText("Date de reprise")).toHaveValue("2026-11-03");
@@ -42,11 +42,11 @@ test("resuming sends the day's date by default", async () => {
 test("a Claude failure offers a retry that requests an adjustment", async () => {
   const f = mock({ event_id: 4, proposal_id: null, error: "Claude indisponible" });
   const onproposal = vi.fn();
-  render(InjuryBanner, { injury, goalId: 3, today: "2026-11-03", onproposal });
+  render(InjuryBanner, { injury, today: "2026-11-03", onproposal });
   await fireEvent.click(screen.getByRole("button", { name: "Signaler la reprise" }));
   await fireEvent.click(screen.getByRole("button", { name: "Confirmer la reprise" }));
   await screen.findByText("Claude indisponible");
   await fireEvent.click(screen.getByRole("button", { name: "Réessayer" }));
   await waitFor(() => expect(onproposal).toHaveBeenCalledWith(12));
-  expect(f.mock.calls.some((c) => c[0] === "/api/goals/3/adjust")).toBe(true);
+  expect(f.mock.calls.some((c) => c[0] === "/api/cycle/adjust")).toBe(true);
 });

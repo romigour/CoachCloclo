@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { api, type Activity, type Plan, type Status } from "../lib/api";
+  import { api, type Activity, type Goal, type Plan, type Status } from "../lib/api";
   import { formatActivity } from "../lib/activity";
   import { formatDay, todayIso } from "../lib/dates";
   import { STATUS_LABEL } from "../lib/labels";
@@ -30,6 +30,8 @@
   });
   const sessions = $derived(plan?.weeks.flatMap((w) => w.sessions) ?? []);
   const doneCount = $derived(sessions.filter((s) => s.status === "done").length);
+  // la prochaine course du cycle : c'est elle que le compte à rebours vise
+  const goal = $derived(plan?.cycle ? (plan.goals[0] ?? null) : null);
   const lastActivity = $derived([...activities].sort((a, b) => b.date.localeCompare(a.date))[0] ?? null);
 
   async function load() {
@@ -60,7 +62,7 @@
   }
 
   const capitalize = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
-  const goalLabel = (g: NonNullable<Plan["goal"]>) =>
+  const goalLabel = (g: Goal) =>
     `${g.distance_km.toLocaleString("fr-FR")} km ${g.type === "trail" ? `trail · ${g.d_plus_m} m D+` : "route"}`;
 </script>
 
@@ -71,19 +73,19 @@
     </p>
     <h1>Aujourd'hui</h1>
   </div>
-  {#if plan?.goal?.plan_accepted}
+  {#if plan?.cycle?.plan_accepted}
     <button onclick={() => (declaring = true)}>Signaler un imprévu</button>
   {/if}
-  {#if plan?.goal}
-    <p>{goalLabel(plan.goal)} · <strong>J-{daysUntil(today, plan.goal.race_date)}</strong></p>
+  {#if goal}
+    <p>{goalLabel(goal)} · <strong>J-{daysUntil(today, goal.race_date)}</strong></p>
   {/if}
 </header>
 
 <ErrorBanner {error} onpin={load} />
 
-{#if declaring && plan?.goal}
+{#if declaring && plan?.cycle}
   <EventDialog
-    goal={plan.goal}
+    cycle={plan.cycle}
     weeks={plan.weeks}
     sessions={openSessions(plan.weeks, today)}
     {today}
@@ -96,12 +98,12 @@
 {/if}
 
 {#if plan}
-  {#if !plan.goal}
+  {#if !plan.cycle}
     <p class="card">Aucun objectif pour l'instant. <a href="#/goal">Créer un objectif</a></p>
-  {:else if !plan.goal.plan_accepted}
+  {:else if !plan.cycle.plan_accepted}
     <p class="card">Ton plan n'est pas encore validé. <a href="#/goal">Relire le brouillon</a></p>
   {:else}
-    <InjuryBanner injury={plan.open_injury ?? null} goalId={plan.goal.id} {today} onproposal={goProposal} onresumed={load} />
+    <InjuryBanner injury={plan.open_injury ?? null} {today} onproposal={goProposal} onresumed={load} />
     <section class="week-strip" aria-label="Semaine en cours">
       {#each strip as d (d.date)}
         {@const s = d.sessions[0]}
@@ -169,7 +171,7 @@
           </div>
           <div class="stats">
             <div class="stat"><strong>{doneCount} / {sessions.length}</strong><span>séances réalisées</span></div>
-            <div class="stat"><strong>{daysUntil(today, plan.goal.race_date)} j</strong><span>avant la course</span></div>
+            {#if goal}<div class="stat"><strong>{daysUntil(today, goal.race_date)} j</strong><span>avant la course</span></div>{/if}
           </div>
         </section>
 

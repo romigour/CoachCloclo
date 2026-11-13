@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/svelte";
 import { afterEach, expect, test, vi } from "vitest";
 import Plan from "./Plan.svelte";
-import type { CoachEvent, Plan as PlanData } from "../lib/api";
+import type { CoachEvent, Cycle, Goal, Plan as PlanData } from "../lib/api";
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -12,13 +12,17 @@ const injury: CoachEvent = {
   id: 4, kind: "injury", start_date: "2026-11-01", end_date: null, max_sessions: null, days: null,
   session_id: null, note: null,
 };
-const goal = {
-  id: 1, type: "route", distance_km: 21.1, d_plus_m: 0, race_date: "2026-12-06", sessions_per_week: 3,
-  plan_start: "2026-10-26", plan_accepted: true, gpx_summary: null, target_time_s: null, target_source: null,
-  available_days: ["lundi", "mercredi", "samedi"], long_run_day: null, include_bike: false,
-} as PlanData["goal"];
-const planWith = (open_injury: CoachEvent | null): PlanData => ({
-  goal, weeks: [{ week_index: 1, week_monday: "2026-10-26", sessions: [] }], open_injury,
+const cycle: Cycle = {
+  id: 1, status: "active", plan_start: "2026-10-26", end_date: "2026-12-06", sessions_per_week: 3,
+  available_days: ["lundi", "mercredi", "samedi"], long_run_day: null, include_bike: false, plan_accepted: true,
+  needs_generation: false,
+};
+const goal: Goal = {
+  id: 1, type: "route", distance_km: 21.1, d_plus_m: 0, race_date: "2026-12-06", priority: "principal", status: "active",
+  gpx_summary: null, target_time_s: null, target_source: null,
+};
+const planWith = (open_injury: CoachEvent | null, over: Partial<PlanData> = {}): PlanData => ({
+  cycle, goals: [goal], horizon: [], weeks: [{ week_index: 1, week_monday: "2026-10-26", sessions: [] }], open_injury, ...over,
 });
 
 /** `resumed` : après la reprise, le plan n'a plus d'arrêt ouvert et l'imprévu est clos. */
@@ -27,7 +31,7 @@ function mock(opts: { injury: boolean }) {
   const f = vi.fn(async (url: string, init?: RequestInit) => {
     const json = (b: unknown) => new Response(JSON.stringify(b), { status: 200 });
     if (url === "/api/plan") return json(planWith(opts.injury && !resumed ? injury : null));
-    if (url === "/api/goals/1/events")
+    if (url === "/api/cycle/events")
       return json(opts.injury ? [{ ...injury, end_date: resumed ? "2026-11-02" : null }] : []);
     if (url === "/api/events/4/resume") {
       resumed = true;
@@ -62,4 +66,25 @@ test("resuming reloads the plan, clears the list and goes to the proposal", asyn
   await waitFor(() => expect(planCalls(f)).toBeGreaterThan(before));
   await waitFor(() => expect(screen.queryByText(/Arrêt depuis/)).toBeNull());
   await waitFor(() => expect(screen.queryByRole("button", { name: "Supprimer" })).toBeNull());
+});
+
+test("the header shows the cycle's goal and the plan is read from the cycle", async () => {
+  mock({ injury: false });
+  render(Plan, { today: "2026-11-03" });
+  expect(await screen.findByText(/21,1 km route · course le/)).toBeVisible();
+  expect(screen.getByRole("button", { name: "Signaler un imprévu" })).toBeVisible();
+});
+
+test("without a cycle, the plan invites to create a goal", async () => {
+  vi.stubGlobal("fetch", vi.fn(async () =>
+    new Response(JSON.stringify({ cycle: null, goals: [], horizon: [], open_injury: null, weeks: [] }), { status: 200 })));
+  render(Plan, { today: "2026-11-03" });
+  expect(await screen.findByRole("link", { name: "Créer un objectif" })).toHaveAttribute("href", "#/goal");
+});
+
+test("a draft cycle sends back to the draft", async () => {
+  vi.stubGlobal("fetch", vi.fn(async () =>
+    new Response(JSON.stringify(planWith(null, { cycle: { ...cycle, plan_accepted: false } })), { status: 200 })));
+  render(Plan, { today: "2026-11-03" });
+  expect(await screen.findByRole("link", { name: "Relire le brouillon" })).toBeVisible();
 });

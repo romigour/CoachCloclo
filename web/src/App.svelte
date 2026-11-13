@@ -35,7 +35,7 @@
   /** Page d'accueil : le plan en cours d'abord, sinon les statistiques, sinon l'objectif à fixer. */
   function home(): string {
     if (status?.garmin === "auth_required") return "#/setup";
-    if (status?.goal?.plan_accepted) return "#/today";
+    if (status?.cycle?.plan_accepted) return "#/today";
     return status?.has_activities ? "#/stats" : "#/goal";
   }
 
@@ -160,7 +160,7 @@
 
     {#if syncing}
       <p class="card busy" role="status">
-        {status?.goal ? "Analyse de ta séance par Claude…" : "Synchronisation Garmin…"}
+        {status?.cycle ? "Analyse de ta séance par Claude…" : "Synchronisation Garmin…"}
       </p>
     {/if}
 
@@ -176,8 +176,8 @@
       {:else if route === "plan"}
         <Plan {version} onerror={failed} />
       {:else if route === "race"}
-        {#if status?.goal}
-          <Race goal={status.goal} onerror={failed} onchanged={refresh} />
+        {#if status?.next_goal}
+          <Race goal={status.next_goal} onerror={failed} onchanged={refresh} />
         {:else}
           <p class="card">Aucun objectif actif : le jour J se prépare à partir d'un objectif. <a href="#/goal">Créer un objectif</a></p>
         {/if}

@@ -13,10 +13,18 @@ let setupBody: Record<string, unknown> | null = null; // null : 404, comme sous 
 
 const idle = { status: "idle", imported: 0, error: null };
 
-const plan = {
-  goal: { id: 1, type: "route", distance_km: 21, d_plus_m: 0, race_date: "2027-02-07", sessions_per_week: 3, plan_start: "2026-11-09", plan_accepted: true, gpx_summary: null },
-  weeks: [],
+const cycle = {
+  id: 1, status: "active", plan_start: "2026-11-09", end_date: "2027-02-07", sessions_per_week: 3,
+  available_days: ["lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche"], long_run_day: null,
+  include_bike: false, plan_accepted: true, needs_generation: false,
 };
+const goal = {
+  id: 1, type: "route", distance_km: 21, d_plus_m: 0, race_date: "2027-02-07", priority: "principal", status: "active",
+  target_time_s: null, target_source: null, gpx_summary: null,
+};
+const noGoal = { cycle: null, goals: [], next_goal: null };
+
+const plan = { cycle, goals: [goal], horizon: [], open_injury: null, weeks: [] };
 
 beforeEach(() => {
   calls.length = 0;
@@ -26,7 +34,7 @@ beforeEach(() => {
   afterSync = null;
   setupBody = null;
   localStorage.clear();
-  statusBody = { garmin: "ok", llm_mode: "cli", pending_proposal_id: null, goal: plan.goal, has_activities: false, history: idle };
+  statusBody = { garmin: "ok", llm_mode: "cli", pending_proposal_id: null, cycle, goals: [goal], next_goal: goal, has_activities: false, history: idle };
   location.hash = "";
   vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
     const method = init?.method ?? "GET";
@@ -40,7 +48,7 @@ beforeEach(() => {
     else if (url === "/api/stats/activities") { statsCalls++; body = { activities: [] }; }
     else if (url === "/api/stats/records") body = { records: [] };
     else if (url === "/api/plan") body = plan;
-    else if (/^\/api\/goals\/\d+\/events$/.test(url)) body = [];
+    else if (url === "/api/cycle/events") body = [];
     else if (url === "/api/settings") body = { llm_mode: "cli", anthropic_model: null, anthropic_api_key_set: false };
     else if (url === "/api/garmin/login") body = { status: "ok" };
     else if (url === "/api/sync") {
@@ -85,21 +93,21 @@ test("default route is today when the plan is accepted, even with activities", a
 });
 
 test("default route is stats when activities exist without an accepted plan", async () => {
-  statusBody = { ...statusBody, has_activities: true, goal: { ...plan.goal, plan_accepted: false } };
+  statusBody = { ...statusBody, has_activities: true, cycle: { ...cycle, plan_accepted: false } };
   render(App);
   await waitFor(() => expect(location.hash).toBe("#/stats"));
   syncDone?.();
 });
 
 test("default route is the goal without plan nor activities", async () => {
-  statusBody = { ...statusBody, goal: null };
+  statusBody = { ...statusBody, ...noGoal };
   render(App);
   await waitFor(() => expect(location.hash).toBe("#/goal"));
   syncDone?.();
 });
 
 test("auto-sync runs without a goal and says Garmin", async () => {
-  statusBody = { ...statusBody, goal: null };
+  statusBody = { ...statusBody, ...noGoal };
   render(App);
   expect(await screen.findAllByText("Synchronisation Garmin…")).not.toHaveLength(0);
   await waitFor(() => expect(syncs()).toBe(1));
@@ -150,7 +158,7 @@ async function loginToGarmin() {
 
 test("first Garmin login syncs, then opens stats once activities exist", async () => {
   syncInstant = true;
-  statusBody = { ...statusBody, garmin: "auth_required", goal: null };
+  statusBody = { ...statusBody, garmin: "auth_required", ...noGoal };
   location.hash = "#/setup";
   render(App);
   await screen.findByText("Connexion Garmin");
@@ -164,7 +172,7 @@ test("first Garmin login syncs, then opens stats once activities exist", async (
 
 test("first Garmin login without any activity after sync goes to the goal", async () => {
   syncInstant = true;
-  statusBody = { ...statusBody, garmin: "auth_required", goal: null };
+  statusBody = { ...statusBody, garmin: "auth_required", ...noGoal };
   location.hash = "#/setup";
   render(App);
   statusBody = { ...statusBody, garmin: "ok" };
@@ -176,7 +184,7 @@ test("first Garmin login without any activity after sync goes to the goal", asyn
 test("a failed sync after the first Garmin login stays on settings with its error", async () => {
   syncInstant = true;
   syncFails = true;
-  statusBody = { ...statusBody, garmin: "auth_required", goal: null };
+  statusBody = { ...statusBody, garmin: "auth_required", ...noGoal };
   location.hash = "#/setup";
   await new Promise((r) => setTimeout(r, 0)); // laisse passer le hashchange initial (il efface l'erreur)
   render(App);
@@ -277,7 +285,7 @@ test("propose Connecte Claude quand la génération échoue faute de Claude", as
 });
 
 test("la page Jour J sans objectif actif renvoie vers l'objectif", async () => {
-  statusBody = { ...statusBody, goal: null };
+  statusBody = { ...statusBody, ...noGoal };
   location.hash = "#/race";
   render(App);
   const link = await screen.findByRole("link", { name: "Créer un objectif" });

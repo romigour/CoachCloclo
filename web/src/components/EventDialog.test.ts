@@ -1,14 +1,14 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/svelte";
 import { afterEach, expect, test, vi } from "vitest";
 import EventDialog from "./EventDialog.svelte";
-import type { Goal, Session, Week } from "../lib/api";
+import type { Cycle, Session, Week } from "../lib/api";
 
 afterEach(() => vi.unstubAllGlobals());
 
-const goal: Goal = {
-  id: 3, type: "route", distance_km: 21.1, d_plus_m: 0, race_date: "2026-12-06", sessions_per_week: 3,
-  plan_start: "2026-10-26", plan_accepted: true, gpx_summary: null, target_time_s: null, target_source: null,
-  available_days: ["lundi", "mercredi", "samedi"], long_run_day: null, include_bike: false,
+const cycle: Cycle = {
+  id: 3, status: "active", plan_start: "2026-10-26", end_date: "2026-12-06", sessions_per_week: 3,
+  available_days: ["lundi", "mercredi", "samedi"], long_run_day: null, include_bike: false, plan_accepted: true,
+  needs_generation: false,
 };
 const session = (id: number, title: string): Session => ({
   id, order: id, type: "EF", title, description: "", target_kind: "pace", status: "todo", suggested_day: "mercredi",
@@ -32,7 +32,7 @@ function mock(responses: Record<string, unknown>) {
 const callTo = (f: ReturnType<typeof mock>, path: string) => f.mock.calls.find((c) => c[0] === path)!;
 const bodyOf = (f: ReturnType<typeof mock>, path: string) => JSON.parse((callTo(f, path)[1] as RequestInit).body as string);
 
-const open = (props = {}) => render(EventDialog, { goal, weeks, sessions, today: "2026-11-03", ...props });
+const open = (props = {}) => render(EventDialog, { cycle, weeks, sessions, today: "2026-11-03", ...props });
 const choose = (name: string) => fireEvent.click(screen.getByRole("button", { name }));
 
 test("first step offers the four kinds", () => {
@@ -56,7 +56,7 @@ test("injury has an optional resume date", async () => {
   expect(screen.getByRole("button", { name: "Envoyer" })).toBeEnabled();
 });
 
-test("light week asks for the week, max sessions and the goal's days", async () => {
+test("light week asks for the week, max sessions and the plan's days", async () => {
   open();
   await choose("Semaine allégée");
   expect(screen.getByLabelText("Semaine")).toBeVisible();
@@ -87,7 +87,7 @@ test("end before start blocks sending", async () => {
 });
 
 test("light week sends the chosen monday and max_sessions", async () => {
-  const f = mock({ "/api/goals/3/events": { event_id: 1, proposal_id: 12, error: null } });
+  const f = mock({ "/api/cycle/events": { event_id: 1, proposal_id: 12, error: null } });
   const onproposal = vi.fn();
   open({ onproposal });
   await choose("Semaine allégée");
@@ -96,26 +96,26 @@ test("light week sends the chosen monday and max_sessions", async () => {
   await fireEvent.click(screen.getByRole("checkbox", { name: "Mercredi" }));
   await fireEvent.click(screen.getByRole("button", { name: "Envoyer" }));
   await waitFor(() => expect(onproposal).toHaveBeenCalledWith(12));
-  expect(bodyOf(f, "/api/goals/3/events")).toEqual({
+  expect(bodyOf(f, "/api/cycle/events")).toEqual({
     kind: "light_week", start_date: "2026-11-09", end_date: "2026-11-15", max_sessions: 2, days: ["mercredi"],
   });
 });
 
 test("fatigue sends the session and the note", async () => {
-  const f = mock({ "/api/goals/3/events": { event_id: 1, proposal_id: 5, error: null } });
+  const f = mock({ "/api/cycle/events": { event_id: 1, proposal_id: 5, error: null } });
   open();
   await choose("Fatigue / séance ratée");
   await fireEvent.change(screen.getByLabelText("Séance ratée (facultatif)"), { target: { value: "8" } });
   await fireEvent.input(screen.getByLabelText("Précisions (facultatif)"), { target: { value: " jambes lourdes " } });
   await fireEvent.click(screen.getByRole("button", { name: "Envoyer" }));
   await waitFor(() => expect(f).toHaveBeenCalled());
-  expect(bodyOf(f, "/api/goals/3/events")).toEqual({ kind: "fatigue", session_id: 8, note: "jambes lourdes" });
+  expect(bodyOf(f, "/api/cycle/events")).toEqual({ kind: "fatigue", session_id: 8, note: "jambes lourdes" });
 });
 
 test("a Claude error keeps the event and Réessayer asks for the adjustment", async () => {
   const f = mock({
-    "/api/goals/3/events": { event_id: 1, proposal_id: null, error: "Claude indisponible" },
-    "/api/goals/3/adjust": { proposal_id: 21 },
+    "/api/cycle/events": { event_id: 1, proposal_id: null, error: "Claude indisponible" },
+    "/api/cycle/adjust": { proposal_id: 21 },
   });
   const onproposal = vi.fn();
   open({ onproposal });
@@ -125,26 +125,26 @@ test("a Claude error keeps the event and Réessayer asks for the adjustment", as
   expect(onproposal).not.toHaveBeenCalled();
   await fireEvent.click(screen.getByRole("button", { name: "Réessayer" }));
   await waitFor(() => expect(onproposal).toHaveBeenCalledWith(21));
-  expect(f.mock.calls.filter((c) => c[0] === "/api/goals/3/events")).toHaveLength(1);
-  expect((callTo(f, "/api/goals/3/adjust")[1] as RequestInit).method).toBe("POST");
+  expect(f.mock.calls.filter((c) => c[0] === "/api/cycle/events")).toHaveLength(1);
+  expect((callTo(f, "/api/cycle/adjust")[1] as RequestInit).method).toBe("POST");
 });
 
 test("injury sends the day before the planned resume as the last blocked day", async () => {
-  const f = mock({ "/api/goals/3/events": { event_id: 1, proposal_id: 5, error: null } });
+  const f = mock({ "/api/cycle/events": { event_id: 1, proposal_id: 5, error: null } });
   open();
   await choose("Blessure / maladie");
   await fireEvent.input(screen.getByLabelText("Reprise prévue (facultatif)"), { target: { value: "2026-11-10" } });
   await fireEvent.click(screen.getByRole("button", { name: "Envoyer" }));
   await waitFor(() => expect(f).toHaveBeenCalled());
-  expect(bodyOf(f, "/api/goals/3/events")).toEqual({ kind: "injury", start_date: "2026-11-03", end_date: "2026-11-09" });
+  expect(bodyOf(f, "/api/cycle/events")).toEqual({ kind: "injury", start_date: "2026-11-03", end_date: "2026-11-09" });
 });
 
 test("injury resuming the day it starts keeps end_date at the start", async () => {
-  const f = mock({ "/api/goals/3/events": { event_id: 1, proposal_id: 5, error: null } });
+  const f = mock({ "/api/cycle/events": { event_id: 1, proposal_id: 5, error: null } });
   open();
   await choose("Blessure / maladie");
   await fireEvent.input(screen.getByLabelText("Reprise prévue (facultatif)"), { target: { value: "2026-11-03" } });
   await fireEvent.click(screen.getByRole("button", { name: "Envoyer" }));
   await waitFor(() => expect(f).toHaveBeenCalled());
-  expect(bodyOf(f, "/api/goals/3/events")).toEqual({ kind: "injury", start_date: "2026-11-03", end_date: "2026-11-03" });
+  expect(bodyOf(f, "/api/cycle/events")).toEqual({ kind: "injury", start_date: "2026-11-03", end_date: "2026-11-03" });
 });

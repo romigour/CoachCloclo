@@ -5,13 +5,11 @@
 
   let {
     injury,
-    goalId,
     today = todayIso(),
     onproposal,
     onresumed,
   }: {
     injury: CoachEvent | null;
-    goalId: number;
     today?: string;
     onproposal?: (proposalId: number) => void;
     /** La reprise est enregistrée (avec ou sans proposition) : la page recharge son plan. */
@@ -52,7 +50,7 @@
     busy = true;
     error = null;
     try {
-      const r = await api.requestAdjustment(goalId);
+      const r = await api.requestAdjustment();
       failure = null;
       onproposal?.(r.proposal_id);
     } catch (e) {

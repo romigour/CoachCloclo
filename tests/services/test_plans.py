@@ -5,7 +5,7 @@ import pytest
 from coach.garmin.port import FakeGarminClient, Metrics
 from coach.llm.provider import FakeLLMProvider, LLMInvalidResponse
 from coach.llm.schemas import PlanResponse, WeekSpec
-from coach.plan.models import ALL_DAYS, Goal, Session
+from coach.plan.models import ALL_DAYS, Cycle, Goal, Proposal, Session
 from coach.services import CoachError
 from coach.services.context import refresh_snapshot
 from coach.services.goals import GoalError
@@ -228,3 +228,30 @@ def test_update_plan_settings_requires_accepted_plan(repo, monday_garmin):
     with pytest.raises(GoalError, match="validé"):
         update_plan_settings(repo, monday_garmin, llm, PlanSettingsUpdate(include_bike=True))
     assert llm.calls == []
+
+
+def test_generate_plan_makes_pending_stale(repo, fake_garmin):
+    _goal(repo, fake_garmin)
+    old = repo.add(Proposal(analysis="avant", changes_json="[]"))
+    generate_plan(repo, fake_garmin, FakeLLMProvider([valid_plan_json(14, 3)]))
+    assert _proposals(repo) == [(old.id, "stale")]
+
+
+def test_generate_ignores_fixed_sessions_after_end(repo, fake_garmin):
+    _goal(repo, fake_garmin)
+    generate_plan(repo, fake_garmin, FakeLLMProvider([valid_plan_json(14, 3)]))
+    cid = _cid(repo)
+    sessions = repo.sessions(cid)
+    with repo.transaction() as db:
+        done = db.get(Session, sessions[0].id)
+        done.status = "done"
+        late = db.get(Session, next(s.id for s in sessions if s.week_index == 13 and s.order == 1))
+        late.status, late.scheduled_date = "exported", date(2027, 1, 26)
+        c = db.get(Cycle, cid)
+        c.end_date = date(2027, 1, 17)  # 11 semaines : la séance exportée est au-delà
+        g = db.get(Goal, _active_goal(repo).id)
+        g.race_date = c.end_date
+        db.add_all([done, late, c, g])
+    llm = FakeLLMProvider([_plan_from(1, {1: 2, **{w: 3 for w in range(2, 12)}})])
+    generate_plan(repo, fake_garmin, llm)
+    assert f"id={late.id} |" not in llm.calls[0] and f"id={done.id} | semaine 1" in llm.calls[0]

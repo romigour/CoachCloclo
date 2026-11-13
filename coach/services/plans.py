@@ -25,6 +25,7 @@ from coach.services.goals import (
     _save_change,
     check_availability,
     normalize_days,
+    stale_pending,
 )
 
 
@@ -63,8 +64,11 @@ def generate_plan(repo: Repo, garmin: GarminPort, llm: LLMProvider) -> PlanRespo
     first_week = 1
     if any(s.status != "todo" for s in sessions):
         first_week = max(1, calendar.week_of(cycle, today))
+    # séances fixes : faites, manquées ou exportées, de la semaine courante à la fin du plan
     fixed = [
-        s for s in sessions if s.status != "todo" and not s.pending_removal and s.week_index >= first_week
+        s for s in sessions
+        if s.status != "todo" and not s.pending_removal and first_week <= s.week_index <= n
+        and (s.scheduled_date or calendar.suggested_date(cycle, s.week_index, s.suggested_day)) <= cycle.end_date
     ]
     fixed_counts: dict[int, int] = {}
     for s in fixed:
@@ -104,6 +108,7 @@ def generate_plan(repo: Repo, garmin: GarminPort, llm: LLMProvider) -> PlanRespo
         c.plan_accepted = False
         c.needs_generation = False
         db.add(c)
+        stale_pending(db)  # les propositions portaient sur le plan remplacé
         g = db.get(Goal, main.id)
         if g is not None and g.target_source == "claude":
             g.target_time_s = plan.estimated_time_s

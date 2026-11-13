@@ -116,7 +116,7 @@ def test_first_goal_creates_cycle_and_needs_generation(repo, fake_garmin):
     cycle = repo.active_cycle()
     assert (cycle.plan_start, cycle.end_date, cycle.sessions_per_week) == (date(2026, 11, 2), date(2027, 2, 7), 3)
     assert cycle.available_days() == ["mardi", "jeudi", "samedi"] and cycle.long_run_day == "samedi"
-    assert cycle.include_bike is True and cycle.plan_accepted is False
+    assert cycle.include_bike is True and cycle.plan_accepted is False and cycle.needs_generation is True
     assert goal.priority == "secondaire" and [g.id for g in repo.goals_in(cycle)] == [goal.id]
     assert llm.calls == []
 
@@ -598,3 +598,34 @@ def test_remove_goal_garmin_error_keeps_goal(repo, coach_home, monday_garmin):
 def test_remove_unknown_goal(repo, monday_garmin):
     with pytest.raises(GoalError, match="introuvable ou archivé"):
         remove_goal(repo, monday_garmin, FakeLLMProvider([]), 999)
+
+
+def test_draft_shorter_end_removes_late_sessions(repo, monday_garmin):
+    goal = accepted_goal(repo, monday_garmin)
+    update_goal(repo, monday_garmin, FakeLLMProvider([]), goal.id, GoalUpdate(race_date=date(2027, 2, 21)))
+    assert repo.active_cycle().plan_accepted is False  # régénération en attente : brouillon
+    monday_garmin.fail_on = {"delete_workout"}  # garde la trace des séances exportées à retirer
+    llm = FakeLLMProvider([])
+    _, result = add_goal(repo, monday_garmin, llm, other_input(race_date=date(2027, 1, 17), priority="principal"))
+    assert result == ChangeResult(proposal_id=None, needs_generation=True) and llm.calls == []
+    cycle = repo.active_cycle()
+    assert cycle.end_date == date(2027, 1, 17)  # 11 semaines
+    late = [s for s in repo.sessions(cycle.id) if s.week_index > 11]
+    assert [(s.week_index, s.pending_removal) for s in late] == [(13, True), (14, True)]
+    assert monday_garmin.schedules == {}
+    # la génération suivante ne transmet pas ces séances comme fixes
+    from tests.services.test_plans import _plan_from
+
+    gen = FakeLLMProvider([_plan_from(1, {w: 3 for w in range(1, 12)})])
+    from coach.services.plans import generate_plan
+
+    generate_plan(repo, monday_garmin, gen)
+    assert "fixées" not in gen.calls[0] and "| semaine 13 |" not in gen.calls[0]
+
+
+def test_regenerate_change_makes_pending_stale(repo, monday_garmin):
+    goal = accepted_goal(repo, monday_garmin)
+    old = repo.add(Proposal(analysis="avant", changes_json="[]"))
+    _, result = update_goal(repo, monday_garmin, FakeLLMProvider([]), goal.id, GoalUpdate(race_date=date(2027, 2, 21)))
+    assert result.needs_generation is True
+    assert _proposals(repo) == [(old.id, "stale")]

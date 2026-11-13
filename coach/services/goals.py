@@ -142,23 +142,37 @@ def _save_change(
     puis retire de la montre les séances exportées ; renvoie l'id de la proposition."""
     from coach.services.adjust import save_proposal  # import tardif : adjust importe race_strategy, qui importe ce module
 
-    to_clean: list[int] = []
     with repo.transaction() as db:
         apply(db)
-        for sid in removed_ids:
-            s = db.get(Session, sid)
-            if s is None:
-                continue
-            if s.status == "todo":
-                db.delete(s)
-            elif s.status == "exported":
-                mark_for_cleanup(s, removal=True)
-                to_clean.append(s.id)
-                db.add(s)
+        to_clean = _remove_sessions(db, removed_ids)
         proposal_id = save_proposal(db, adj)
     # Retire les séances de la montre ; un échec Garmin les laisse en `sync_error` (à relancer).
-    sync_marked(repo, garmin, sorted(to_clean), zones)
+    sync_marked(repo, garmin, to_clean, zones)
     return proposal_id
+
+
+def _remove_sessions(db: DbSession, removed_ids: set[int]) -> list[int]:
+    """Supprime les séances `todo` et marque pour retrait les exportées ; renvoie ces dernières (à
+    retirer de la montre après commit)."""
+    to_clean: list[int] = []
+    for sid in sorted(removed_ids):
+        s = db.get(Session, sid)
+        if s is None:
+            continue
+        if s.status == "todo":
+            db.delete(s)
+        elif s.status == "exported":
+            mark_for_cleanup(s, removal=True)
+            to_clean.append(s.id)
+            db.add(s)
+    return to_clean
+
+
+def stale_pending(db: DbSession) -> None:
+    """Passe les propositions en attente à `stale` (le plan qu'elles ajustaient a changé)."""
+    for p in db.exec(select(Proposal).where(Proposal.status == "pending")).all():
+        p.status = "stale"
+        db.add(p)
 
 
 def _active_in(db: DbSession, cycle_id: int) -> Cycle:
@@ -183,9 +197,7 @@ def _close_cycle(db: DbSession, c: Cycle) -> list[int]:
             mark_for_cleanup(s, removal=True)
             to_clean.append(s.id)
             db.add(s)
-    for p in db.exec(select(Proposal).where(Proposal.status == "pending")).all():
-        p.status = "stale"
-        db.add(p)
+    stale_pending(db)
     return to_clean
 
 
@@ -261,17 +273,25 @@ def _reshape(
         proposal_id = _save_change(repo, garmin, zones, adj, removed_ids, apply)
         return saved["goal"], ChangeResult(proposal_id=proposal_id, needs_generation=False)
 
+    removed_ids: set[int] = set()
+    if kind in ("regenerate", "draft") and new_end < cycle.end_date:
+        # fin avancée : séances au-delà retirées comme pour un report de date
+        removed_ids = _removed_after(
+            repo.sessions(cycle.id), cycle, calendar.n_weeks(cycle.plan_start, new_end), new_end
+        )
     withdraw()
     to_clean: list[int] = []
     with repo.transaction() as db:
         c = _active_in(db, cycle.id)
         saved["goal"] = write(db)
         if kind in ("regenerate", "draft"):
-            # les séances existantes restent affichées jusqu'à « Générer »
+            # les autres séances restent affichées jusqu'à « Générer » ; le brouillon est périmé
             c.end_date = new_end
             c.needs_generation = True
             c.plan_accepted = False
             db.add(c)
+            to_clean = _remove_sessions(db, removed_ids)
+            stale_pending(db)
         elif kind == "close":
             to_clean = _close_cycle(db, c)
     if to_clean:
@@ -335,6 +355,7 @@ def _create_first(repo: Repo, garmin: GarminPort, data: GoalInput, summary: GpxS
         available_days_json=json.dumps(available_days),
         long_run_day=data.long_run_day,
         include_bike=data.include_bike,
+        needs_generation=True,
     )
     written: list[Path] = []
     try:

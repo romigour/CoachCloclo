@@ -101,6 +101,10 @@ def accepted_goal(repo, garmin, **overrides) -> Goal:
                 garmin.schedules[200 + w] = (100 + w, s.scheduled_date)
                 garmin.calendar.setdefault(s.scheduled_date, []).append(200 + w)
             repo.add(s)
+    with repo.transaction() as db:  # comme après une génération
+        c = db.get(Cycle, _cid(repo))
+        c.needs_generation = False
+        db.add(c)
     accept_plan(repo)
     return _goals(repo)[0]
 

@@ -323,3 +323,14 @@ def test_generate_rejects_session_on_race_day(repo, fake_garmin):
     llm = FakeLLMProvider([plan.model_dump_json(), _plan_json({7: 2, 14: 2}, {principal.id: 19800, secondary.id: 2700})])
     generate_plan(repo, fake_garmin, llm)
     assert "semaine 7, séance 2 : tombe le jour de la course du 20/12" in llm.calls[1]
+
+
+def test_accept_rejected_while_plan_must_be_regenerated(repo, fake_garmin):
+    """Cycle à régénérer (needs_generation) : le plan affiché est périmé, il ne peut pas être validé."""
+    _goal(repo, fake_garmin)
+    with pytest.raises(GoalError, match="Le plan doit d'abord être recalculé"):
+        accept_plan(repo)
+    assert repo.active_cycle().plan_accepted is False
+    generate_plan(repo, fake_garmin, FakeLLMProvider([valid_plan_json(14, 3)]))
+    accept_plan(repo)
+    assert repo.active_cycle().plan_accepted is True

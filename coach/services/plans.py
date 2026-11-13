@@ -197,5 +197,7 @@ def accept_plan(repo: Repo) -> None:
         cycle = db.exec(select(Cycle).where(Cycle.status == "active").order_by(Cycle.id.desc())).first()
         if cycle is None:
             raise GoalError(_NO_PLAN)
+        if cycle.needs_generation:  # le plan affiché ne tient plus compte des objectifs
+            raise GoalError("Le plan doit d'abord être recalculé")
         cycle.plan_accepted = True
         db.add(cycle)

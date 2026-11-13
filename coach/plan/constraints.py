@@ -199,11 +199,12 @@ def _bike_errors(planned: list[Planned], c: PlanConstraints) -> list[str]:
 def _long_run_day_free(
     c: PlanConstraints, monday: date, periods: list[tuple[date, date, str]], restricted: list[list[str] | None]
 ) -> bool:
-    """Vrai si le jour de sortie longue est bloqué ou exclu cette semaine-là (tout jour possible convient)."""
+    """Vrai si le jour de sortie longue est bloqué (imprévu, jour de course) ou exclu cette semaine-là
+    (tout jour possible convient)."""
     if any(c.long_run_day not in days for days in restricted):
         return True
     d = monday + timedelta(days=ALL_DAYS.index(c.long_run_day))
-    return any(start <= d <= end for start, end, _ in periods)
+    return d in c.race_dates or any(start <= d <= end for start, end, _ in periods)
 
 
 def _race_week_count_errors(planned: list[Planned], c: PlanConstraints, fixed_counts: Mapping[int, int]) -> list[str]:

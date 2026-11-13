@@ -543,3 +543,18 @@ def test_check_export_uses_light_week_days_for_availability(repo, fake_garmin):
     )
     assert "Jour hors de tes disponibilités" in check_export(repo, s.id, date(2026, 11, 11))  # mercredi
     assert "Jour hors de tes disponibilités" not in check_export(repo, s.id, date(2026, 11, 12))  # jeudi
+
+
+def test_export_and_move_warn_on_race_day(repo, fake_garmin, session_w3):
+    """Une séance placée le jour d'une course du cycle donne un avertissement, sans bloquer."""
+    from tests.plan.factories import make_goal
+
+    repo.add(make_goal(race_date=date(2026, 11, 12), type="route", distance_km=10, priority="plaisir"))
+    repo.add(make_goal(race_date=date(2026, 11, 13), status="archived"))  # objectif retiré : ignoré
+    assert check_export(repo, session_w3.id, D) == []
+    assert export_session(repo, fake_garmin, session_w3.id, D) == []
+    warning = "Ce jour-là, tu cours Course sur route de 10 km"
+    assert check_export(repo, session_w3.id, date(2026, 11, 12)) == [warning]
+    assert move_session(repo, fake_garmin, session_w3.id, date(2026, 11, 12)) == [warning]
+    assert repo.session(session_w3.id).scheduled_date == date(2026, 11, 12)
+    assert check_export(repo, session_w3.id, date(2026, 11, 13)) == []

@@ -4,7 +4,7 @@ from coach.analysis.laps import compare_session
 from coach.analysis.race_plan import RacePlan, Segment
 from coach.analysis.zones import compute_zones
 from coach.garmin.port import LapSummary
-from coach.llm.prompts import PRIORITY_RULES, SYSTEM_PROMPT, _session_line, build_adjustment_prompt, build_generation_prompt, race_text
+from coach.llm.prompts import PRIORITY_RULES, RACE_DAY_RULE, SYSTEM_PROMPT, _session_line, build_adjustment_prompt, build_generation_prompt, race_text
 from coach.llm.schemas import RepeatSpec, StepSpec
 from coach.plan.constraints import PlanConstraints
 from coach.plan.models import Event
@@ -491,22 +491,27 @@ def _adj_prompt(goals, horizon=()):
 
 
 def test_single_principal_prompt_unchanged():
-    """Un seul Principal sans horizon : texte d'avant les cycles, au nom du champ d'estimation près."""
+    """Un seul Principal sans horizon : texte d'avant les cycles, au nom du champ d'estimation et à la règle
+    du jour de course près."""
     today = " Aujourd'hui : mercredi 4 novembre 2026 (semaine 2)."
     user = make_goal(id=1, target_time_s=6600, target_source="user")
     assert _head(_gen([user])) == "\n\n".join([
-        _LINE + " Temps visé : 1 h 50." + today, _AVAIL_TEXT, _GEN_TEXT,
+        _LINE + " Temps visé : 1 h 50." + today, RACE_DAY_RULE, _AVAIL_TEXT, _GEN_TEXT,
         "Construis le plan pour atteindre ce temps visé (allures cibles, volume).",
     ])
-    assert _head(_adj_prompt([user])) == "\n\n".join([_LINE + " Temps visé : 1 h 50.", _AVAIL_TEXT, _ADJ_TEXT])
+    assert _head(_adj_prompt([user])) == "\n\n".join(
+        [_LINE + " Temps visé : 1 h 50.", RACE_DAY_RULE, _AVAIL_TEXT, _ADJ_TEXT]
+    )
     claude = make_goal(id=1, target_source="claude")
     assert _head(_gen([claude])) == "\n\n".join([
-        _LINE + today, _AVAIL_TEXT, _GEN_TEXT,
+        _LINE + today, RACE_DAY_RULE, _AVAIL_TEXT, _GEN_TEXT,
         "Estime d'abord un temps réaliste pour cette course d'après l'historique et les zones, "
         "indique-le dans estimated_times (goal_id 1, en secondes), puis construis le plan pour ce temps.",
     ])
     estimated = make_goal(id=1, target_source="claude", target_time_s=6720)
-    assert _head(_adj_prompt([estimated])) == "\n\n".join([_LINE + " Temps visé : 1 h 52.", _AVAIL_TEXT, _ADJ_TEXT])
+    assert _head(_adj_prompt([estimated])) == "\n\n".join(
+        [_LINE + " Temps visé : 1 h 52.", RACE_DAY_RULE, _AVAIL_TEXT, _ADJ_TEXT]
+    )
     for p in (_gen([user]), _adj_prompt([user])):
         assert PRIORITY_RULES not in p and "Objectifs suivants" not in p
 
@@ -536,9 +541,9 @@ def test_prompt_lists_goals_with_priority_and_rules():
     gen = _gen([_secondary(), principal])
     assert gen.startswith("Objectifs du cycle :\n") and "Le plan débute le 2026-10-26. Aujourd'hui : mercredi" in gen
     assert "Construis le plan pour atteindre les temps visés indiqués (allures cibles, volume)." in gen
-    for needle in ("Principal", "Secondaire", "Plaisir", "10 jours", "mini-affûtage", "remplace une séance",
-                   "aucune séance le jour d'une course", "compte comme une séance de sa semaine"):
+    for needle in ("Principal", "Secondaire", "Plaisir", "10 jours", "mini-affûtage", "remplace une séance"):
         assert needle in PRIORITY_RULES
+    assert "jour d'une course" not in PRIORITY_RULES  # règle donnée une seule fois (RACE_DAY_RULE)
 
 
 def test_prompt_rules_for_lone_non_principal_goal():
@@ -586,3 +591,18 @@ def test_prompt_horizon_principal_line():
     assert "Objectifs suivants" in p and "Termine ce cycle" not in p
     # sans Principal dans le cycle, aucun affûtage n'est demandé pour la dernière course
     assert "Termine ce cycle" not in _gen([_secondary()], [ultra])
+
+
+def test_race_day_rule_in_every_prompt():
+    """La règle du jour de course est contrôlée pour tout cycle : elle figure dans chaque prompt, une fois."""
+    assert RACE_DAY_RULE == "Aucune séance le jour d'une course ; la course compte comme une séance de sa semaine."
+    principal = make_goal(id=1, target_time_s=6600, target_source="user")
+    later = make_goal(id=5, race_date=date(2027, 5, 15), distance_km=80, target_source="claude")
+    cases = [
+        _gen([principal]), _adj_prompt([principal]),  # un seul Principal
+        _gen([principal], [later]), _adj_prompt([principal], [later]),  # un seul Principal et un horizon
+        _gen([_secondary(), principal]), _adj_prompt([_secondary(), principal]),  # plusieurs objectifs
+    ]
+    for p in cases:
+        assert p.count(RACE_DAY_RULE) == 1
+        assert p.count("jour d'une course") == 1

@@ -181,8 +181,9 @@ PRIORITY_RULES = """Préparation selon la priorité :
 - Secondaire : une séance spécifique dans les 10 jours avant, un mini-affûtage de quelques jours (volume \
 réduit, intensité conservée), une récupération après, sans casser la progression vers le Principal.
 - Plaisir : pas d'affûtage ; la course remplace une séance de sa semaine (souvent la sortie longue), avec une \
-récupération légère après si elle est longue.
-Pour toutes : aucune séance le jour d'une course, et une course compte comme une séance de sa semaine."""
+récupération légère après si elle est longue."""
+# rappelé dans tout prompt, un ou plusieurs objectifs : c'est contrôlé (constraint_errors)
+RACE_DAY_RULE = "Aucune séance le jour d'une course ; la course compte comme une séance de sa semaine."
 
 
 def _goal_id(goal: Goal) -> int:
@@ -254,10 +255,12 @@ def _first_principal(goals: list[Goal]) -> Goal | None:
 
 
 def _cycle_rules(goals: list[Goal], horizon: list[Goal]) -> list[str]:
-    """Règles de priorité (plusieurs objectifs ou un objectif non Principal) et horizon, une partie chacun."""
+    """Règles de priorité (plusieurs objectifs ou un objectif non Principal), règle du jour de course
+    (toujours) et horizon, une partie chacun."""
     parts: list[str] = []
     if len(goals) > 1 or any(g.priority != "principal" for g in goals):
         parts.append(PRIORITY_RULES)
+    parts.append(RACE_DAY_RULE)
     if horizon:
         text = "Objectifs suivants (préparés dans un cycle ultérieur, ne pas les anticiper) :\n" + "\n".join(
             _goal_line(g, with_time=False) for g in sorted(horizon, key=lambda g: g.race_date)

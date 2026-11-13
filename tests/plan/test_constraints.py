@@ -430,6 +430,21 @@ def test_week_cap_ignores_weeks_without_race_or_planned_session():
     assert constraint_errors(_week2(3), _race_constraints(date(2026, 11, 15))) == []  # sans limite connue
 
 
+def test_long_run_free_when_race_on_long_run_day():
+    """Course le dimanche, jour de sortie longue : la sortie longue de la semaine peut tomber un autre jour."""
+    c = PlanConstraints(
+        available_days=ALL_DAYS, long_run_day="dimanche", today=TODAY, plan_start=PLAN_START,
+        race_dates=(date(2026, 11, 15),),
+    )
+    sl = make_session(week_index=2, type="sortie_longue", suggested_day="samedi")
+    assert constraint_errors([Planned("séance 1", sl, date(2026, 11, 14), False)], c) == []
+    # une autre semaine, le dimanche reste imposé
+    sl3 = make_session(week_index=3, type="sortie_longue", suggested_day="samedi")
+    assert constraint_errors([Planned("séance 2", sl3, date(2026, 11, 21), False)], c) == [
+        "séance 2 : la sortie longue doit tomber le dimanche"
+    ]
+
+
 def test_week_cap_never_negative():
     c = _race_constraints(date(2026, 11, 14), date(2026, 11, 15), sessions_per_week=1)
     assert constraint_errors(_week2(1), c) == ["semaine 2 : 1 séances pour 0 possibles (2 course(s) cette semaine)"]

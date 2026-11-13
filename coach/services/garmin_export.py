@@ -25,6 +25,7 @@ from coach.garmin.port import (
 from coach.llm.schemas import Change, GoalEstimate
 from coach.plan import calendar
 from coach.plan.constraints import allowed_days, blocked_periods
+from coach.plan.goals import goal_label
 from coach.plan.models import ALL_DAYS, Cycle, Goal, Proposal, Session
 from coach.plan.repo import Repo
 from coach.services import CoachError
@@ -81,7 +82,10 @@ def _warnings(repo: Repo, session: Session, d: date) -> list[str]:
     warnings = hard_session_warnings(session, d, repo.sessions(session.cycle_id))
     cycle = _cycle(repo, session)
     # `today = d` : un arrêt ouvert bloque jusqu'au dimanche de la semaine de `d`
-    constraints = load_constraints(repo, cycle, d)
+    goals = repo.goals_in(cycle)
+    constraints = load_constraints(repo, cycle, d, goals)
+    # non bloquant : l'athlète peut vouloir garder une séance (ex. échauffement) le jour d'une course
+    warnings += [f"Ce jour-là, tu cours {goal_label(g)}" for g in goals if g.race_date == d]
     if ALL_DAYS[d.weekday()] not in allowed_days(constraints, d):
         warnings.append(_UNAVAILABLE_DAY)
     for start, end, label in blocked_periods(constraints):

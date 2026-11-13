@@ -87,3 +87,19 @@ test("createGoal sans réglages du plan n'envoie pas sessions_per_week", async (
   expect(body.has("sessions_per_week")).toBe(false);
   expect(body.has("available_days")).toBe(false);
 });
+
+test("cycleGoal : premier Principal du cycle, même si un Plaisir le lendemain prolonge la fin", async () => {
+  const { cycleGoal } = await import("./api");
+  const base = {
+    type: "route" as const, d_plus_m: 0, status: "active" as const, gpx_summary: null, target_time_s: null,
+    target_source: null,
+  };
+  const principal = { ...base, id: 1, distance_km: 42.2, race_date: "2027-04-10", priority: "principal" as const };
+  const plaisir = { ...base, id: 2, distance_km: 10, race_date: "2027-04-11", priority: "plaisir" as const };
+  const cycle = { end_date: "2027-04-11" } as Parameters<typeof cycleGoal>[0]["cycle"];
+  expect(cycleGoal({ cycle, goals: [principal, plaisir] })?.id).toBe(1);
+  // sans Principal : la course qui termine le cycle
+  const secondaire = { ...principal, id: 3, priority: "secondaire" as const, race_date: "2027-03-20" };
+  expect(cycleGoal({ cycle, goals: [secondaire, plaisir] })?.id).toBe(2);
+  expect(cycleGoal({ cycle: null, goals: [principal] })).toBeNull();
+});

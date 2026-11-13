@@ -235,10 +235,21 @@ export type Plan = {
   open_injury?: CoachEvent | null;
 };
 
-/** Objectif qui termine le cycle (course du dernier jour), sinon le dernier objectif du cycle. */
+/** Cible du cycle : son premier Principal (comme `cycle_end` côté serveur), sinon la course du dernier
+ * jour, sinon le dernier objectif du cycle. Un Plaisir le lendemain du Principal prolonge la fin du cycle
+ * sans en devenir la cible. */
 export function cycleGoal(plan: Pick<Plan, "cycle" | "goals">): Goal | null {
-  if (!plan.cycle) return null;
-  return plan.goals.find((g) => g.race_date === plan.cycle!.end_date) ?? plan.goals.at(-1) ?? null;
+  const cycle = plan.cycle;
+  if (!cycle) return null;
+  const inCycle = [...plan.goals]
+    .filter((g) => g.race_date <= cycle.end_date)
+    .sort((a, b) => a.race_date.localeCompare(b.race_date) || a.id - b.id);
+  return (
+    inCycle.find((g) => g.priority === "principal") ??
+    plan.goals.find((g) => g.race_date === cycle.end_date) ??
+    plan.goals.at(-1) ??
+    null
+  );
 }
 
 export type Status = {

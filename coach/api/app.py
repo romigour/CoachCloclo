@@ -54,7 +54,7 @@ from coach.services.goals import (
     remove_goal,
     update_goal,
 )
-from coach.services.cycles import prepare_next_cycle
+from coach.services.cycles import NextCycleInput, prepare_next_cycle
 from coach.services.plans import PlanSettingsUpdate, accept_plan, generate_plan, update_plan_settings
 from coach.analysis.race_plan import RaceSettings
 from coach.services import race_strategy
@@ -505,7 +505,7 @@ def create_app(
         return {"cycle": _cycle_dict(cycle), "proposal_id": proposal_id}
 
     @api.post("/cycle/next")
-    def post_next_cycle(repo: RepoDep, garmin: GarminDep, body: PlanSettingsUpdate | None = None):
+    def post_next_cycle(repo: RepoDep, garmin: GarminDep, body: NextCycleInput | None = None):
         return _cycle_dict(prepare_next_cycle(repo, garmin, body))
 
     @api.post("/cycle/generate")

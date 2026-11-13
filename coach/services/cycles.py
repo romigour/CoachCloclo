@@ -3,6 +3,7 @@
 import json
 from datetime import date, timedelta
 
+from pydantic import Field
 from sqlmodel import select
 
 from coach.garmin.port import GarminPort
@@ -14,6 +15,12 @@ from coach.services.goals import GoalError, check_availability, normalize_days, 
 from coach.services.plans import PlanSettingsUpdate
 
 DEFAULT_SESSIONS_PER_WEEK = 3  # sans cycle précédent (cas limite : données migrées)
+
+
+class NextCycleInput(PlanSettingsUpdate):
+    """Réglages du cycle suivant : ceux du plan, plus le nombre de séances par semaine."""
+
+    sessions_per_week: int | None = Field(None, ge=2, le=7)
 
 
 def close_passed(repo: Repo, today: date) -> bool:
@@ -38,10 +45,12 @@ def _recovery_goal(repo: Repo, prev: Cycle) -> Goal | None:
     return next((g for g in repo.past_goals() if prev.plan_start <= g.race_date <= prev.end_date), None)
 
 
-def prepare_next_cycle(repo: Repo, garmin: GarminPort, data: PlanSettingsUpdate | None = None) -> Cycle:
+def prepare_next_cycle(
+    repo: Repo, garmin: GarminPort, data: PlanSettingsUpdate | NextCycleInput | None = None
+) -> Cycle:
     """Crée le cycle suivant, à générer : réglages du dernier cycle (surchargés par `data`), départ le
-    lundi suivant la fin de ce cycle (ou le lundi de cette semaine si on s'y prend tard), récupération
-    après sa dernière course et arrêt encore ouvert recopié."""
+    lundi suivant la fin de ce cycle (ou le lundi de cette semaine si on s'y prend tard, ou plus tôt si
+    une course tombe avant ce lundi), récupération après sa dernière course et arrêt encore ouvert recopié."""
     today = garmin.today()
     close_passed(repo, today)  # la synchro a pu ne pas encore passer depuis la course
     if repo.active_cycle() is not None:
@@ -50,7 +59,12 @@ def prepare_next_cycle(repo: Repo, garmin: GarminPort, data: PlanSettingsUpdate 
     start = calendar.plan_start(today)
     if prev is not None:
         start = max(start, prev.end_date + timedelta(days=7 - prev.end_date.weekday()))
-    goals = [g for g in repo.upcoming_goals() if g.race_date >= start]
+    upcoming = repo.upcoming_goals()
+    if not upcoming:
+        raise GoalError("Aucun objectif à venir")
+    # une course avant ce lundi (ex. le samedi qui suit une course du mardi) appartient au nouveau cycle
+    start = min(start, calendar.plan_start(upcoming[0].race_date))
+    goals = [g for g in upcoming if g.race_date >= start]
     end = cycle_end(goals)
     if end is None:
         raise GoalError("Aucun objectif à venir")
@@ -66,6 +80,8 @@ def prepare_next_cycle(repo: Repo, garmin: GarminPort, data: PlanSettingsUpdate 
             long_run_day = data.long_run_day or None  # "" : plus de jour imposé
         if data.include_bike is not None:
             include_bike = data.include_bike
+        if getattr(data, "sessions_per_week", None) is not None:
+            sessions_per_week = data.sessions_per_week
     check_availability(available_days, long_run_day, sessions_per_week)
 
     recovery = _recovery_goal(repo, prev) if prev else None

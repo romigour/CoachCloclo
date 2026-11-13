@@ -394,15 +394,22 @@ test("propose de préparer le cycle suivant quand un objectif reste à venir", a
   expect(card.getByRole("checkbox", { name: "Mardi" })).toBeChecked();
   expect(card.getByRole("checkbox", { name: "Lundi" })).not.toBeChecked();
   expect(card.getByRole("checkbox", { name: /Inclure du vélo/ })).toBeChecked();
+  const perWeek = within(card.getByRole("group", { name: "Séances par semaine" }));
+  expect(perWeek.getByRole("radio", { name: "3" })).toBeChecked();
   // pas de formulaire ni d'ajout tant que le cycle n'est pas préparé
   expect(screen.queryByLabelText("Distance (km)")).toBeNull();
   expect(screen.queryByRole("button", { name: "Ajouter un objectif" })).toBeNull();
   await fireEvent.click(card.getByRole("checkbox", { name: /Inclure du vélo/ }));
+  // 5 séances : il faut au moins 5 jours
+  await fireEvent.click(perWeek.getByRole("radio", { name: "5" }));
+  expect(card.getByRole("button", { name: "Préparer et générer" })).toBeDisabled();
+  await fireEvent.click(card.getByRole("checkbox", { name: "Lundi" }));
   await fireEvent.click(card.getByRole("button", { name: "Préparer et générer" }));
   await waitFor(() => expect(writes(f)).toEqual(["POST /api/cycle/next", "POST /api/cycle/generate"]));
   const next = f.mock.calls.find(([u]) => u === "/api/cycle/next")!;
   expect(JSON.parse((next[1] as RequestInit).body as string)).toEqual({
-    available_days: ["mardi", "jeudi", "samedi", "dimanche"], long_run_day: "dimanche", include_bike: false,
+    sessions_per_week: 5, available_days: ["lundi", "mardi", "jeudi", "samedi", "dimanche"], long_run_day: "dimanche",
+    include_bike: false,
   });
   expect(await screen.findByText("Cycle suivant prêt")).toBeVisible();
   expect(screen.queryByRole("region", { name: "Préparer le cycle suivant" })).toBeNull();

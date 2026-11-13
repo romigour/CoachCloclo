@@ -1248,11 +1248,12 @@ def test_status_reports_past_goals_and_cycle_to_prepare(make_client, repo):
 def test_post_next_cycle(make_client, repo):
     _, ran, upcoming = _finished_cycle(repo)
     client = make_client(llm=FakeLLMProvider([valid_plan_json(14, 4, estimated_time_s=None)]))
-    r = client.post("/api/cycle/next", json={"include_bike": True})
+    assert client.post("/api/cycle/next", json={"sessions_per_week": 9}).status_code == 422
+    r = client.post("/api/cycle/next", json={"include_bike": True, "sessions_per_week": 5})
     assert r.status_code == 200
     cycle = r.json()
     assert (cycle["plan_start"], cycle["end_date"]) == ("2026-11-02", "2027-02-07")
-    assert cycle["sessions_per_week"] == 4 and cycle["include_bike"] is True and cycle["needs_generation"] is True
+    assert cycle["sessions_per_week"] == 5 and cycle["include_bike"] is True and cycle["needs_generation"] is True
     status = client.get("/api/status").json()
     assert status["cycle"]["id"] == cycle["id"]
     # déjà un cycle en cours

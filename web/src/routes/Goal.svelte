@@ -24,6 +24,7 @@
   let nextDays = $state<string[]>([...WEEKDAYS]);
   let nextLongRun = $state("");
   let nextBike = $state(false);
+  let nextPerWeek = $state(3);
   let plan = $state<Plan | null>(null);
   let loaded = $state(false);
   let adding = $state(false);
@@ -39,7 +40,6 @@
   const upcoming = $derived(goals.filter((g) => g.status !== "done").sort(byDate));
   // cycle terminé et objectifs encore à venir : le cycle suivant est à préparer
   const toPrepare = $derived(loaded && cycle === null && upcoming.length > 0);
-  const nextPerWeek = $derived(lastCycle?.sessions_per_week ?? 3);
   const needsGeneration = $derived(!!cycle && (cycle.needs_generation || stale));
   const draft = $derived(!!cycle && !cycle.plan_accepted && !needsGeneration && !!plan?.weeks.length);
   // premier objectif : le formulaire s'affiche d'emblée
@@ -63,6 +63,7 @@
       nextDays = [...s.last_cycle.available_days];
       nextLongRun = s.last_cycle.long_run_day ?? "";
       nextBike = s.last_cycle.include_bike;
+      nextPerWeek = s.last_cycle.sessions_per_week;
     }
     stale = false;
     loaded = true;
@@ -124,7 +125,12 @@
     busy = "Préparation du cycle suivant…";
     let created = false;
     try {
-      await api.nextCycle({ available_days: nextDays, long_run_day: nextLongRun, include_bike: nextBike });
+      await api.nextCycle({
+        sessions_per_week: nextPerWeek,
+        available_days: nextDays,
+        long_run_day: nextLongRun,
+        include_bike: nextBike,
+      });
       created = true;
       onchanged?.();
       await generate();
@@ -246,6 +252,17 @@
       Ton cycle est terminé. Claude prépare le suivant jusqu'à ta prochaine course, en commençant par une
       récupération adaptée{#if pastGoals.length} à {goalLabel(pastGoals[0])}{/if}.
     </p>
+    <fieldset>
+      <legend>Séances par semaine</legend>
+      <div class="segmented">
+        {#each [2, 3, 4, 5, 6, 7] as n (n)}
+          <label>
+            <input type="radio" name="next-per-week" value={n} bind:group={nextPerWeek} />
+            <span>{n}</span>
+          </label>
+        {/each}
+      </div>
+    </fieldset>
     <AvailabilityFields bind:days={nextDays} bind:longRunDay={nextLongRun} bind:includeBike={nextBike} perWeek={nextPerWeek} />
     <div class="row">
       <button class="primary" onclick={prepareNext} disabled={!!busy || !availabilityValid(nextDays, nextPerWeek)}>

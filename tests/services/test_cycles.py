@@ -10,7 +10,7 @@ from coach.garmin.port import FakeGarminClient
 from coach.llm.provider import FakeLLMProvider
 from coach.plan import calendar
 from coach.plan.models import Cycle, Event, Goal, Proposal
-from coach.services.cycles import close_passed, prepare_next_cycle
+from coach.services.cycles import NextCycleInput, close_passed, prepare_next_cycle
 from coach.services.events import EventError, resume_injury
 from coach.services.goals import GoalError
 from coach.services.plans import PlanSettingsUpdate, generate_plan
@@ -86,6 +86,33 @@ def test_prepare_next_cycle_overrides_settings(repo):
     cycle = prepare_next_cycle(repo, _garmin(date(2027, 5, 24)), data)
     assert cycle.available_days() == ["lundi", "mercredi", "vendredi", "dimanche"]
     assert cycle.long_run_day is None and cycle.include_bike is False
+
+
+def test_prepare_next_cycle_changes_sessions_per_week(repo):
+    _finished(repo)
+    cycle = prepare_next_cycle(repo, _garmin(date(2027, 5, 24)), NextCycleInput(sessions_per_week=3))
+    assert cycle.sessions_per_week == 3 and cycle.available_days() == DAYS
+
+
+def test_prepare_next_cycle_checks_sessions_against_days(repo):
+    _finished(repo)
+    with pytest.raises(GoalError, match="au moins 5 jours"):
+        prepare_next_cycle(repo, _garmin(date(2027, 5, 24)), NextCycleInput(sessions_per_week=5))
+    with pytest.raises(ValueError):
+        NextCycleInput(sessions_per_week=8)
+    assert repo.active_cycle() is None
+
+
+def test_prepare_next_cycle_includes_race_before_next_monday(repo):
+    """Cycle fini un mardi, Plaisir le samedi suivant : la course appartient au nouveau cycle."""
+    repo.add(make_cycle(plan_start=date(2027, 3, 1), end_date=date(2027, 5, 18), status="done"))
+    repo.add(make_goal(race_date=date(2027, 5, 18), status="done"))
+    plaisir = repo.add(make_goal(race_date=date(2027, 5, 22), priority="plaisir", distance_km=10))
+    repo.add(make_goal(race_date=NEXT))
+    garmin = _garmin(date(2027, 5, 19))
+    cycle = prepare_next_cycle(repo, garmin)
+    assert (cycle.plan_start, cycle.end_date) == (date(2027, 5, 17), NEXT)
+    assert plaisir.id in [g.id for g in repo.goals_in(cycle)]
 
 
 def test_prepare_next_cycle_rejects_bad_settings(repo):

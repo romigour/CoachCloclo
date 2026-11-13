@@ -400,7 +400,8 @@ export type GoalInput = {
   distance_km: number;
   d_plus_m: number;
   race_date: string;
-  sessions_per_week: number;
+  /** Réglages du plan : seulement pour le premier objectif (aucun cycle actif). */
+  sessions_per_week?: number;
   target_time?: string;
   gpx?: File | null;
   available_days?: string[];
@@ -408,6 +409,12 @@ export type GoalInput = {
   include_bike?: boolean;
   priority?: Priority;
 };
+
+/** Effet d'un changement d'objectif sur le plan : proposition d'ajustement à relire, ou plan à régénérer. */
+export type PlanChange = { proposal_id: number | null; needs_generation: boolean };
+export type GoalChange = PlanChange & { goal: Goal };
+/** Corps de PATCH /api/goals/{id} : seuls les champs modifiés. */
+export type GoalUpdate = { race_date?: string; target_time?: string; priority?: Priority };
 
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
   const headers: Record<string, string> = {};
@@ -495,17 +502,18 @@ export const api = {
     f.set("distance_km", String(g.distance_km));
     f.set("d_plus_m", String(g.d_plus_m));
     f.set("race_date", g.race_date);
-    f.set("sessions_per_week", String(g.sessions_per_week));
+    if (g.sessions_per_week != null) f.set("sessions_per_week", String(g.sessions_per_week));
     if (g.target_time) f.set("target_time", g.target_time);
     if (g.gpx) f.set("gpx", g.gpx);
     if (g.available_days) f.set("available_days", g.available_days.join(","));
     if (g.long_run_day) f.set("long_run_day", g.long_run_day);
     if (g.include_bike) f.set("include_bike", "true");
     if (g.priority) f.set("priority", g.priority);
-    return post<Goal>("/goals", f);
+    return post<GoalChange>("/goals", f);
   },
-  updateGoal: (goalId: number, body: { race_date?: string; target_time?: string }) =>
-    patch<{ goal: Goal; proposal_id: number }>(`/goals/${goalId}`, body),
+  updateGoal: (goalId: number, body: GoalUpdate) => patch<GoalChange>(`/goals/${goalId}`, body),
+  /** Retire (archive) un objectif ; même effet sur le plan qu'un ajout. */
+  removeGoal: (goalId: number) => del<PlanChange>(`/goals/${goalId}`),
   updatePlanSettings: (body: PlanSettingsInput) => patch<{ cycle: Cycle; proposal_id: number }>("/cycle", body),
   generate: () => post<{ summary: string; weeks: number }>("/cycle/generate"),
   accept: () => post<{ status: string }>("/cycle/accept"),

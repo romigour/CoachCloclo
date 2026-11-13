@@ -1,52 +1,40 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { api, cycleGoal, type Cycle, type Goal, type Plan } from "../lib/api";
-  import { formatDate, todayIso, WEEKDAYS } from "../lib/dates";
-  import { goalTimeLabel, parseTargetTime } from "../lib/race";
-  import { daysUntil } from "../lib/week";
+  import { api, type Cycle, type Goal, type GoalInput, type Plan, type PlanChange } from "../lib/api";
+  import { formatDate, todayIso } from "../lib/dates";
+  import { goalLabel } from "../lib/goals";
+  import { goalTimeLabel } from "../lib/race";
   import ErrorBanner from "../components/ErrorBanner.svelte";
   import Calendar from "../components/Calendar.svelte";
   import SessionCard from "../components/SessionCard.svelte";
   import Icon from "../components/Icon.svelte";
-  import AvailabilityFields, { availabilityValid } from "../components/AvailabilityFields.svelte";
+  import GoalForm from "../components/GoalForm.svelte";
   import GoalEditDialog from "../components/GoalEditDialog.svelte";
   import PlanSettingsDialog from "../components/PlanSettingsDialog.svelte";
+  import PriorityBadge from "../components/PriorityBadge.svelte";
 
   let { onchanged, today = todayIso() }: { onchanged?: () => void; today?: string } = $props();
 
-  const PRESETS = [
-    { km: 10, label: "10 km" },
-    { km: 21.1, label: "Semi · 21,1 km" },
-    { km: 42.2, label: "Marathon · 42,2 km" },
-  ];
-
-  let type = $state<"route" | "trail">("route");
-  let distance = $state(21.1);
-  let dplus = $state(0);
-  let raceDate = $state("");
-  let perWeek = $state(4);
-  let days = $state<string[]>([...WEEKDAYS]);
-  let longRunDay = $state("");
-  let includeBike = $state(false);
-  let gpx = $state<File | null>(null);
-  let targetMode = $state<"claude" | "user">("claude");
-  const daysOk = $derived(availabilityValid(days, perWeek));
-  const ownTime = $derived(targetMode === "user");
-  let targetText = $state("");
-  let targetError = $state("");
-
-  let goal = $state<Goal | null>(null);
-  let active = $state<Goal | null>(null);
-  let cycle = $state<Cycle | null>(null); // cycle en cours (plan validé), pour ses réglages
+  let goals = $state<Goal[]>([]); // objectifs renvoyés par /status (à venir)
+  let cycle = $state<Cycle | null>(null);
   let plan = $state<Plan | null>(null);
+  let loaded = $state(false);
+  let adding = $state(false);
+  let stale = $state(false); // dernier changement : plan à régénérer (avant relecture du cycle)
   let summary = $state("");
   let busy = $state("");
   let error = $state<unknown>(null);
   let selected = $state<number | null>(null);
-  let editing = $state(false);
+  let editing = $state<Goal | null>(null);
   let editingSettings = $state(false);
 
-  const weeksLeft = $derived(raceDate && raceDate > today ? Math.ceil(daysUntil(today, raceDate) / 7) : null);
+  const byDate = (a: Goal, b: Goal) => a.race_date.localeCompare(b.race_date) || a.id - b.id;
+  const upcoming = $derived(goals.filter((g) => g.status !== "done").sort(byDate));
+  const ran = $derived(goals.filter((g) => g.status === "done").sort((a, b) => byDate(b, a)));
+  const needsGeneration = $derived(!!cycle && (cycle.needs_generation || stale));
+  const draft = $derived(!!cycle && !cycle.plan_accepted && !needsGeneration && !!plan?.weeks.length);
+  // premier objectif : le formulaire s'affiche d'emblée
+  const showForm = $derived(loaded && (adding || upcoming.length === 0));
   const selection = $derived.by(() => {
     for (const w of plan?.weeks ?? []) {
       const s = w.sessions.find((x) => x.id === selected);
@@ -55,18 +43,18 @@
     return null;
   });
 
-  // reprend un brouillon existant (cycle actif non validé)
+  async function load() {
+    const [p, s] = await Promise.all([api.plan(), api.status()]);
+    plan = p;
+    cycle = s.cycle ?? p.cycle;
+    goals = s.goals ?? [];
+    stale = false;
+    loaded = true;
+  }
+
   onMount(async () => {
     try {
-      const p = await api.plan();
-      const g = cycleGoal(p);
-      if (p.cycle && !p.cycle.plan_accepted && p.weeks.length && g) {
-        goal = g;
-        plan = p;
-      } else if (p.cycle?.plan_accepted) {
-        active = g;
-        cycle = p.cycle;
-      }
+      await load();
     } catch (e) {
       error = e;
     }
@@ -76,42 +64,45 @@
     busy = "Claude construit ton plan… (cela peut prendre une minute)";
     const r = await api.generate();
     summary = r.summary;
-    plan = await api.plan();
-    goal = cycleGoal(plan) ?? goal; // reprend le temps estimé par Claude
+    await load();
   }
 
-  async function submit(e: Event) {
-    e.preventDefault();
-    error = null;
-    targetError = "";
-    if (ownTime && !Number.isFinite(parseTargetTime(targetText))) {
-      targetError = "Temps visé invalide : format attendu h:mm, ex. 1:50";
+  /** Suite d'un ajout, d'une modification ou d'un retrait : proposition à relire, ou plan à régénérer. */
+  async function changed(r: PlanChange) {
+    onchanged?.();
+    if (r.proposal_id != null) {
+      location.hash = "#/proposal";
       return;
     }
-    busy = "Création de l'objectif…";
+    await load();
+    if (r.needs_generation) stale = true;
+  }
+
+  async function add(input: GoalInput) {
+    error = null;
+    const first = cycle === null; // le premier objectif crée le cycle : on génère le plan aussitôt
+    busy = first ? "Création de l'objectif…" : "Ajout de l'objectif… (Claude peut ajuster ton plan)";
+    let created = false;
     try {
-      goal = await api.createGoal({
-        type,
-        distance_km: distance,
-        d_plus_m: type === "trail" ? dplus : 0,
-        race_date: raceDate,
-        sessions_per_week: perWeek,
-        target_time: ownTime ? targetText.trim() : undefined,
-        gpx,
-        available_days: days,
-        long_run_day: longRunDay || undefined,
-        include_bike: includeBike,
-      });
-      await generate();
+      const r = await api.createGoal(input);
+      created = true;
+      adding = false;
+      if (first) {
+        onchanged?.();
+        await generate();
+      } else {
+        await changed(r);
+      }
     } catch (err) {
       error = err;
+      // l'objectif est enregistré même si la génération échoue : le bandeau « Générer » prendra le relais
+      if (created) await load().catch(() => {});
     } finally {
       busy = "";
     }
   }
 
   async function regenerate() {
-    if (!goal) return;
     error = null;
     try {
       await generate();
@@ -123,7 +114,6 @@
   }
 
   async function accept() {
-    if (!goal) return;
     error = null;
     busy = "Validation…";
     try {
@@ -137,25 +127,43 @@
     }
   }
 
-  function edited() {
-    editing = false;
+  async function remove(g: Goal) {
+    if (!confirm(`Retirer ${goalLabel(g)} du ${formatDate(g.race_date)} ?`)) return;
+    error = null;
+    busy = "Retrait de l'objectif… (Claude peut ajuster ton plan)";
+    try {
+      await changed(await api.removeGoal(g.id));
+    } catch (err) {
+      error = err;
+    } finally {
+      busy = "";
+    }
+  }
+
+  async function edited(r: PlanChange) {
+    editing = null;
+    try {
+      await changed(r);
+    } catch (err) {
+      error = err;
+    }
+  }
+
+  function settingsSaved() {
     editingSettings = false;
     onchanged?.();
     location.hash = "#/proposal";
   }
 
-  function pickFile(e: Event) {
-    gpx = (e.target as HTMLInputElement).files?.[0] ?? null;
-  }
-
-  const goalLabel = (g: Goal) =>
-    `${g.distance_km.toLocaleString("fr-FR")} km ${g.type === "trail" ? `trail · ${g.d_plus_m} m D+` : "route"}`;
+  /** « 800 m D+ · 18 avril 2027 » (D+ seulement pour un trail). */
+  const details = (g: Goal) =>
+    [g.type === "trail" ? `${g.d_plus_m} m D+` : "", formatDate(g.race_date)].filter(Boolean).join(" · ");
 </script>
 
 <header class="page-head">
   <div>
     <p class="eyebrow">Claude construit ton plan à partir de tes données Garmin</p>
-    <h1>{plan && goal ? "Brouillon du plan" : "Objectif"}</h1>
+    <h1>Objectifs</h1>
   </div>
 </header>
 
@@ -165,10 +173,15 @@
   <p class="card busy" role="status">{busy}</p>
 {/if}
 
-{#if plan && goal}
-  <section class="card stack">
-    <p class="meta">{goalLabel(goal)} · course le {formatDate(goal.race_date)} · {plan.weeks.length} semaines</p>
-    {#if goalTimeLabel(goal)}<p class="meta">{goalTimeLabel(goal)}</p>{/if}
+{#if needsGeneration}
+  <section class="card row spread" aria-label="Plan à recalculer">
+    <p>Le plan doit être recalculé pour tenir compte de tes objectifs.</p>
+    <button class="primary" onclick={regenerate} disabled={!!busy}>Générer</button>
+  </section>
+{:else if draft && plan}
+  <section class="card stack" aria-labelledby="draft-title">
+    <h2 id="draft-title">Brouillon du plan</h2>
+    <p class="meta">{plan.weeks.length} semaines</p>
     {#if summary}<p>{summary}</p>{/if}
     <div class="row">
       <button class="primary" onclick={accept} disabled={!!busy}>Valider le plan</button>
@@ -177,7 +190,7 @@
   </section>
   <div class="cols">
     <div class="col-main" style:flex-grow="3">
-      <Calendar weeks={plan.weeks} {today} {selected} readonly onselect={(id) => (selected = id)} />
+      <Calendar weeks={plan.weeks} {today} {selected} races={plan.goals} readonly onselect={(id) => (selected = id)} />
     </div>
     {#if selection}
       <aside class="col-side card" aria-label="Séance sélectionnée">
@@ -189,122 +202,73 @@
       </aside>
     {/if}
   </div>
-{:else}
-  <div class="cols">
-    <form class="col-main card lg stack" style:gap="26px" onsubmit={submit}>
-      <h2>Nouvel objectif</h2>
+{/if}
 
-      <fieldset>
-        <legend>Type de course</legend>
-        <div class="choices">
-          <label class="choice">
-            <input type="radio" name="type" value="route" bind:group={type} />
-            <span><strong>Route</strong>10 km, semi, marathon</span>
-          </label>
-          <label class="choice">
-            <input type="radio" name="type" value="trail" bind:group={type} />
-            <span><strong>Trail</strong>Avec dénivelé et tracé GPX</span>
-          </label>
-        </div>
-      </fieldset>
-
-      <div class="stack" style:gap="10px">
-        {#if type === "route"}
-          <div class="chips" role="group" aria-label="Distances courantes">
-            {#each PRESETS as p (p.km)}
-              <button type="button" aria-pressed={distance === p.km} onclick={() => (distance = p.km)}>{p.label}</button>
-            {/each}
-          </div>
-        {/if}
-        <div class="form-grid">
-          <label>
-            Distance (km)
-            <input type="number" step="0.1" min="1" bind:value={distance} required />
-          </label>
-          {#if type === "trail"}
-            <label>
-              Dénivelé positif (m)
-              <input type="number" min="0" step="10" bind:value={dplus} required />
-            </label>
-          {/if}
-          <label>
-            Date de la course
-            <input type="date" min={today} bind:value={raceDate} required />
-            {#if weeksLeft}<span class="hint">Dans {weeksLeft} semaines environ</span>{/if}
-          </label>
-        </div>
-      </div>
-
-      <fieldset>
-        <legend>Séances par semaine</legend>
-        <div class="segmented">
-          {#each [2, 3, 4, 5, 6, 7] as n (n)}
-            <label>
-              <input type="radio" name="per-week" value={n} bind:group={perWeek} />
-              <span>{n}</span>
-            </label>
-          {/each}
-        </div>
-      </fieldset>
-
-      <AvailabilityFields bind:days bind:longRunDay bind:includeBike {perWeek} />
-
-      <fieldset>
-        <legend>Temps visé</legend>
-        <div class="choices">
-          <label class="choice">
-            <input type="radio" name="target" value="claude" bind:group={targetMode} />
-            <span><strong>Laisser Claude estimer</strong></span>
-          </label>
-          <label class="choice">
-            <input type="radio" name="target" value="user" bind:group={targetMode} />
-            <span><strong>Je fixe mon temps</strong></span>
-          </label>
-        </div>
-        {#if ownTime}
-          <label>
-            Temps visé (h:mm)
-            <input type="text" inputmode="numeric" placeholder="1:50" bind:value={targetText} />
-            {#if targetError}<span class="hint" role="alert">{targetError}</span>{/if}
-          </label>
-        {/if}
-      </fieldset>
-
-      <label class="drop">
-        <Icon name="upload" size={22} />
-        <span>
-          <strong>Tracé GPX {gpx ? `· ${gpx.name}` : ""}</strong>
-          Facultatif · clique pour choisir le fichier
-        </span>
-        <input type="file" accept=".gpx,application/gpx+xml" onchange={pickFile} />
-      </label>
-
-      <div class="actions row end">
-        <button class="primary" disabled={!!busy || !daysOk}>Générer le plan avec Claude</button>
-      </div>
-    </form>
-
-    <aside class="col-side">
-      {#if active}
-        <section class="card stack">
-          <h3>Objectif en cours</h3>
-          <p>{goalLabel(active)} · course le {formatDate(active.race_date)}</p>
-          {#if goalTimeLabel(active)}<p class="meta">{goalTimeLabel(active)}</p>{/if}
+<div class="cols">
+  <div class="col-main stack">
+    {#if upcoming.length}
+      <section class="card stack" aria-labelledby="goals-title">
+        <div class="row spread">
+          <h2 id="goals-title">À venir</h2>
           <div class="row">
-            <button type="button" onclick={() => (editing = true)}>Modifier</button>
             {#if cycle}<button type="button" onclick={() => (editingSettings = true)}>Réglages du plan</button>{/if}
+            {#if !adding}<button type="button" class="primary" onclick={() => (adding = true)}>Ajouter un objectif</button>{/if}
           </div>
-          <p class="meta">Un nouvel objectif remplacera ce plan.</p>
-        </section>
-      {/if}
-      <section class="card stack">
-        <h3>Aperçu</h3>
-        {#if weeksLeft}
-          <p class="stat"><strong>{weeksLeft} semaines</strong><span>de préparation, {perWeek} séances par semaine</span></p>
-        {:else}
-          <p class="empty">Choisis la date de la course pour voir la durée du plan.</p>
-        {/if}
+        </div>
+        <ul class="plain goals" aria-label="Objectifs à venir">
+          {#each upcoming as g (g.id)}
+            <li class="goal">
+              <div class="stack" style:gap="4px">
+                <div class="row">
+                  <PriorityBadge priority={g.priority} />
+                  <strong>{goalLabel(g)}</strong>
+                </div>
+                <span class="meta">{details(g)}</span>
+                {#if goalTimeLabel(g)}<span class="meta">{goalTimeLabel(g)}</span>{/if}
+              </div>
+              <div class="row">
+                <button type="button" onclick={() => (editing = g)} disabled={!!busy}>Modifier</button>
+                <a class="button" href="#/race/{g.id}">Jour J</a>
+                <button type="button" onclick={() => remove(g)} disabled={!!busy}>Retirer</button>
+              </div>
+            </li>
+          {/each}
+        </ul>
       </section>
+    {:else if cycle}
+      <div class="row end">
+        <button type="button" onclick={() => (editingSettings = true)}>Réglages du plan</button>
+      </div>
+    {/if}
+
+    {#if showForm}
+      <GoalForm
+        {cycle}
+        firstGoal={upcoming.length === 0}
+        {today}
+        busy={!!busy}
+        onsubmit={add}
+        oncancel={upcoming.length ? () => (adding = false) : undefined}
+      />
+    {/if}
+
+    {#if ran.length}
+      <details class="card">
+        <summary>Objectifs courus</summary>
+        <ul class="plain stack" style:gap="6px">
+          {#each ran as g (g.id)}
+            <li class="row">
+              <PriorityBadge priority={g.priority} />
+              <span>{goalLabel(g)} · {details(g)}</span>
+            </li>
+          {/each}
+        </ul>
+      </details>
+    {/if}
+  </div>
+
+  {#if showForm}
+    <aside class="col-side">
       <section class="tip stack" style:gap="8px">
         <strong>Données utilisées par Claude</strong>
         <ul class="plain stack" style:gap="4px">
@@ -314,13 +278,23 @@
         </ul>
       </section>
     </aside>
-  </div>
-{/if}
+  {/if}
+</div>
 
-{#if editing && active}
-  <GoalEditDialog goal={active} {today} onclose={() => (editing = false)} onsaved={edited} />
+{#if editing}
+  <GoalEditDialog goal={editing} {today} onclose={() => (editing = null)} onsaved={edited} />
 {/if}
 
 {#if editingSettings && cycle}
-  <PlanSettingsDialog {cycle} onclose={() => (editingSettings = false)} onsaved={edited} />
+  <PlanSettingsDialog {cycle} onclose={() => (editingSettings = false)} onsaved={settingsSaved} />
 {/if}
+
+<style>
+  .goals { display: flex; flex-direction: column; }
+  .goal {
+    display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 12px;
+    padding: 12px 0; border-top: 1px solid var(--divider);
+  }
+  .goal:first-child { border-top: none; }
+  summary { cursor: pointer; font-weight: 600; }
+</style>

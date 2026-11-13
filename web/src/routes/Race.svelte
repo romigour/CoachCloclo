@@ -1,5 +1,8 @@
 <script lang="ts">
-  import { api, type Goal, type RaceSettings, type RaceView } from "../lib/api";
+  import { api, type Cycle, type Goal, type PlanChange, type RaceSettings, type RaceView } from "../lib/api";
+  import { formatDate } from "../lib/dates";
+  import { goalLabel } from "../lib/goals";
+  import { PRIORITY_LABELS } from "../lib/labels";
   import { fmtDuration, isDirty, settingsError, targetLabel } from "../lib/race";
   import { fmtClock, fmtDay, fmtNumber, fmtPace } from "../lib/stats/format";
   import ErrorBanner from "../components/ErrorBanner.svelte";
@@ -8,10 +11,28 @@
   import GoalEditDialog from "../components/GoalEditDialog.svelte";
 
   let {
-    goal,
+    goals,
+    goalId,
+    cycle = null,
     onerror: report,
     onchanged,
-  }: { goal: Goal; onerror?: (e: unknown) => void; onchanged?: () => void } = $props();
+  }: {
+    /** Objectifs à venir, au choix dans le sélecteur. */
+    goals: Goal[];
+    /** Objectif affiché d'abord (le prochain par défaut). */
+    goalId: number;
+    /** Cycle actif : un objectif au-delà de sa fin (horizon) n'a pas encore de temps estimé. */
+    cycle?: Cycle | null;
+    onerror?: (e: unknown) => void;
+    onchanged?: () => void;
+  } = $props();
+
+  // suit `goalId` quand il change (lien Jour J d'un autre objectif), modifiable par le sélecteur
+  let selectedId = $derived(goalId);
+  const goal = $derived(goals.find((g) => g.id === selectedId) ?? goals[0]);
+  const inHorizon = $derived(!cycle || goal.race_date > cycle.end_date);
+  const NO_REFERENCE = "Pas de temps de référence";
+  const HORIZON_TIME = "Temps estimé à la préparation de son cycle, ou fixe un temps visé";
 
   let editing = $state(false);
 
@@ -25,6 +46,8 @@
   const formError = $derived(current ? settingsError(current) : null);
 
   const plan = $derived(view?.plan ?? null);
+  // un objectif de l'horizon attend son cycle pour être estimé : HORIZON_TIME remplace le message générique
+  const warnings = $derived((plan?.warnings ?? []).filter((w) => !(inHorizon && w.startsWith(NO_REFERENCE))));
   const hasTarget = $derived(plan?.target_time_s != null);
   // les données Garmin ne servent qu'à l'estimation de repli et aux zones FC du trail
   const usesBasis = $derived(!hasTarget || view?.goal_type === "trail");
@@ -65,11 +88,13 @@
     load();
   });
 
-  // comme depuis la page Objectif : la modification passe par une proposition de Claude
-  function edited() {
+  // comme depuis la page Objectifs : la modification passe par une proposition de Claude
+  function edited(r: PlanChange) {
     editing = false;
     onchanged?.();
-    location.hash = "#/proposal";
+    if (r.proposal_id != null) location.hash = "#/proposal";
+    else if (r.needs_generation) location.hash = "#/goal"; // le bandeau « Générer » y attend
+    else load();
   }
 </script>
 
@@ -78,6 +103,14 @@
     <p class="eyebrow">{fmtDay(goal.race_date)}</p>
     <h1>Jour J</h1>
   </div>
+  <label class="pick">
+    Objectif
+    <select bind:value={selectedId}>
+      {#each goals as g (g.id)}
+        <option value={g.id}>{goalLabel(g)} · {formatDate(g.race_date)} ({PRIORITY_LABELS[g.priority]})</option>
+      {/each}
+    </select>
+  </label>
 </header>
 
 <ErrorBanner {error} onpin={load} />
@@ -89,7 +122,7 @@
         <p class="meta">{hasTarget ? "Temps visé" : "Estimation d'après tes données Garmin"}</p>
         <p class="big">{plan.reference_time_s ? fmtDuration(plan.reference_time_s) : "—"}</p>
         <p class="meta">
-          {#if hasTarget}{view.target_source === "claude" ? "estimé par Claude" : "fixé par toi"}{:else}Pas de temps visé{/if}
+          {#if hasTarget}{view.target_source === "claude" ? "estimé par Claude" : "fixé par toi"}{:else if inHorizon}{HORIZON_TIME}{:else}Pas de temps visé{/if}
         </p>
         <button type="button" onclick={() => (editing = true)}>Modifier l'objectif</button>
       </div>
@@ -115,9 +148,9 @@
       {/if}
     </div>
 
-    {#if plan.warnings.length}
+    {#if warnings.length}
       <ul class="warnings" aria-label="Avertissements">
-        {#each plan.warnings as w, i (i)}<li>{w}</li>{/each}
+        {#each warnings as w, i (i)}<li>{w}</li>{/each}
       </ul>
     {/if}
   </section>
@@ -229,6 +262,7 @@
 {/if}
 
 <style>
+  .pick { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--muted); }
   .head-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 16px; align-items: start; }
   .big { font-size: 26px; font-weight: 700; margin: 0; }
   .scroll { overflow-x: auto; }

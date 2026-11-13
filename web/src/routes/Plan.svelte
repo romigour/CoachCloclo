@@ -9,6 +9,8 @@
   import EventDialog from "../components/EventDialog.svelte";
   import InjuryBanner from "../components/InjuryBanner.svelte";
   import EventList from "../components/EventList.svelte";
+  import PriorityBadge from "../components/PriorityBadge.svelte";
+  import { goalLabel } from "../lib/goals";
 
   let {
     version = 0,
@@ -23,6 +25,7 @@
   let reloads = $state(0); // incrémenté à chaque rechargement du plan, pour rafraîchir la liste des imprévus
 
   const now = $derived(plan ? currentWeek(plan.weeks, today) : null);
+  // le titre décrit la cible du cycle : la course qui le termine
   const goal = $derived(plan ? cycleGoal(plan) : null);
   const selection = $derived.by(() => {
     for (const w of plan?.weeks ?? []) {
@@ -124,7 +127,7 @@
 
     <div class="cols">
       <div class="col-main" style:flex-grow="3">
-        <Calendar weeks={plan.weeks} {today} {selected} onselect={(id) => (selected = id)} />
+        <Calendar weeks={plan.weeks} {today} {selected} races={plan.goals} onselect={(id) => (selected = id)} />
       </div>
 
       {#if selection}
@@ -143,6 +146,21 @@
         </aside>
       {/if}
     </div>
+
+    {#if plan.horizon.length}
+      <section class="card stack" aria-labelledby="plan-next">
+        <h2 id="plan-next">Ensuite</h2>
+        <p class="meta">Ces courses seront préparées par le cycle suivant.</p>
+        <ul class="plain stack" style:gap="8px">
+          {#each plan.horizon as g (g.id)}
+            <li class="row">
+              <PriorityBadge priority={g.priority} />
+              <span>{goalLabel(g)}{g.type === "trail" ? ` · ${g.d_plus_m} m D+` : ""} · {formatDate(g.race_date)}</span>
+            </li>
+          {/each}
+        </ul>
+      </section>
+    {/if}
   {/if}
 {:else if !error}
   <p class="busy">Chargement…</p>

@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/svelte";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
 import { afterEach, expect, test, vi } from "vitest";
 import GoalEditDialog from "./GoalEditDialog.svelte";
 import type { Goal } from "../lib/api";
@@ -10,7 +10,8 @@ const goal: Goal = {
   gpx_summary: null, target_time_s: 6720, target_source: "claude",
 };
 
-function mock(status = 200, body: unknown = { goal, proposal_id: 9 }) {
+const RESULT = { goal, proposal_id: 9, needs_generation: false };
+function mock(status = 200, body: unknown = RESULT) {
   const f = vi.fn(async () => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } }));
   vi.stubGlobal("fetch", f);
   return f;
@@ -33,7 +34,7 @@ test("sends only changed fields", async () => {
   open({ onsaved });
   await fireEvent.input(screen.getByLabelText("Temps visé (h:mm)"), { target: { value: "1:55" } });
   await fireEvent.click(screen.getByRole("button", { name: "Enregistrer" }));
-  await waitFor(() => expect(onsaved).toHaveBeenCalledWith(9));
+  await waitFor(() => expect(onsaved).toHaveBeenCalledWith(RESULT));
   expect(patchBody(f)).toEqual({ target_time: "1:55" });
 });
 
@@ -76,8 +77,29 @@ test("sends the new race date to the goal endpoint", async () => {
   open({ onsaved });
   await fireEvent.input(screen.getByLabelText("Date de la course"), { target: { value: "2027-03-08" } });
   await fireEvent.click(screen.getByRole("button", { name: "Enregistrer" }));
-  await waitFor(() => expect(onsaved).toHaveBeenCalledWith(9));
+  await waitFor(() => expect(onsaved).toHaveBeenCalledWith(RESULT));
   const calls = f.mock.calls as unknown as [string, RequestInit][];
   expect(calls.find(([, i]) => i.method === "PATCH")![0]).toBe("/api/goals/3");
   expect(patchBody(f)).toEqual({ race_date: "2027-03-08" });
+});
+
+test("the priority is prefilled and sent only when changed", async () => {
+  const f = mock();
+  const onsaved = vi.fn();
+  open({ onsaved });
+  const group = screen.getByRole("group", { name: "Priorité" });
+  expect(within(group).getByRole("radio", { name: "Principal" })).toBeChecked();
+  await fireEvent.click(within(group).getByRole("radio", { name: "Plaisir" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Enregistrer" }));
+  await waitFor(() => expect(onsaved).toHaveBeenCalledWith(RESULT));
+  expect(patchBody(f)).toEqual({ priority: "plaisir" });
+});
+
+test("shows the gap message returned by the server", async () => {
+  const msg = "Course sur route de 10 km du 14/03/2027 (Secondaire) est à 13 jours : passe l'un des deux en Plaisir ou déplace-le";
+  mock(422, { code: "invalid", detail: msg });
+  open();
+  await fireEvent.click(within(screen.getByRole("group", { name: "Priorité" })).getByRole("radio", { name: "Secondaire" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Enregistrer" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(msg);
 });

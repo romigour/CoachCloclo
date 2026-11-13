@@ -18,6 +18,7 @@
   type Route = (typeof ROUTES)[number];
 
   let route = $state<Route | null>(parse());
+  let raceGoalId = $state<number | null>(parseGoalId()); // #/race/{id} : objectif choisi depuis la page Objectifs
   let status = $state<Status | null>(null);
   let setupAvailable = $state(false); // appli de bureau : l'écran d'accueil existe
   let error = $state<unknown>(null);
@@ -28,8 +29,13 @@
   let autoSyncStarted = false; // une seule synchro automatique par chargement de l'app
 
   function parse(): Route | null {
-    const name = location.hash.replace(/^#\//, "");
+    const name = location.hash.replace(/^#\//, "").replace(/^race\/\d+$/, "race");
     return (ROUTES as readonly string[]).includes(name) ? (name as Route) : null;
+  }
+
+  function parseGoalId(): number | null {
+    const m = /^#\/race\/(\d+)$/.exec(location.hash);
+    return m ? Number(m[1]) : null;
   }
 
   /** Page d'accueil : le plan en cours d'abord, sinon les statistiques, sinon l'objectif à fixer. */
@@ -94,6 +100,7 @@
   onMount(() => {
     const onhash = () => {
       route = parse();
+      raceGoalId = parseGoalId();
       error = null;
     };
     window.addEventListener("hashchange", onhash);
@@ -177,7 +184,13 @@
         <Plan {version} onerror={failed} />
       {:else if route === "race"}
         {#if status?.next_goal}
-          <Race goal={status.next_goal} onerror={failed} onchanged={refresh} />
+          <Race
+            goals={status.goals}
+            goalId={raceGoalId ?? status.next_goal.id}
+            cycle={status.cycle}
+            onerror={failed}
+            onchanged={refresh}
+          />
         {:else}
           <p class="card">Aucun objectif actif : le jour J se prépare à partir d'un objectif. <a href="#/goal">Créer un objectif</a></p>
         {/if}

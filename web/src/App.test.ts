@@ -77,7 +77,7 @@ test("auto-sync runs once per load, shows the Claude message, and survives navig
 
   location.hash = "#/goal";
   window.dispatchEvent(new HashChangeEvent("hashchange"));
-  await screen.findByText("Objectif", { selector: "h1" });
+  await screen.findByText("Objectifs", { selector: "h1" });
   location.hash = "#/plan";
   window.dispatchEvent(new HashChangeEvent("hashchange"));
   await screen.findByText("Programme", { selector: "h1" });
@@ -291,4 +291,16 @@ test("la page Jour J sans objectif actif renvoie vers l'objectif", async () => {
   const link = await screen.findByRole("link", { name: "Créer un objectif" });
   expect(link).toHaveAttribute("href", "#/goal");
   expect(screen.getByText(/Aucun objectif actif/)).toBeVisible();
+});
+
+test("le lien Jour J d'un objectif ouvre la page sur cet objectif", async () => {
+  syncInstant = true;
+  const other = { ...goal, id: 2, distance_km: 10, race_date: "2026-12-20", priority: "secondaire" };
+  statusBody = { ...statusBody, goals: [other, goal], next_goal: other };
+  location.hash = "#/race/1";
+  render(App);
+  const select = (await screen.findByLabelText("Objectif")) as HTMLSelectElement;
+  expect(select.value).toBe("1");
+  expect(screen.getByRole("link", { name: /Jour J/ })).toHaveAttribute("aria-current", "page");
+  await waitFor(() => expect(calls.some((c) => c.url === "/api/goals/1/race-plan")).toBe(true));
 });

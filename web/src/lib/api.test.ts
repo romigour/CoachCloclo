@@ -70,3 +70,20 @@ test("createGoal envoie la priorité quand elle est donnée", async () => {
   const body = (f.mock.calls as unknown as [string, RequestInit][])[0][1].body as FormData;
   expect(body.get("priority")).toBe("secondaire");
 });
+
+test("removeGoal envoie DELETE sur l'objectif", async () => {
+  const f = vi.fn(async () => new Response(JSON.stringify({ proposal_id: null, needs_generation: true }), { status: 200 }));
+  vi.stubGlobal("fetch", f);
+  expect(await api.removeGoal(3)).toEqual({ proposal_id: null, needs_generation: true });
+  const [url, init] = f.mock.calls[0] as unknown as [string, RequestInit];
+  expect(`${init.method} ${url}`).toBe("DELETE /api/goals/3");
+});
+
+test("createGoal sans réglages du plan n'envoie pas sessions_per_week", async () => {
+  const f = vi.fn(async () => new Response(JSON.stringify({}), { status: 200 }));
+  vi.stubGlobal("fetch", f);
+  await api.createGoal({ type: "route", distance_km: 10, d_plus_m: 0, race_date: "2027-03-01", priority: "plaisir" });
+  const body = (f.mock.calls as unknown as [string, RequestInit][])[0][1].body as FormData;
+  expect(body.has("sessions_per_week")).toBe(false);
+  expect(body.has("available_days")).toBe(false);
+});

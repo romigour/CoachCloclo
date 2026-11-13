@@ -1,6 +1,7 @@
 <script lang="ts">
   import { api, type Activity, type Goal, type Plan, type Status } from "../lib/api";
   import { formatActivity } from "../lib/activity";
+  import { nextRace } from "../lib/goals";
   import { formatDay, todayIso } from "../lib/dates";
   import { STATUS_LABEL } from "../lib/labels";
   import { currentWeek, days, daysUntil, focusSession, openSessions } from "../lib/week";
@@ -30,8 +31,8 @@
   });
   const sessions = $derived(plan?.weeks.flatMap((w) => w.sessions) ?? []);
   const doneCount = $derived(sessions.filter((s) => s.status === "done").length);
-  // la prochaine course du cycle : c'est elle que le compte à rebours vise
-  const goal = $derived(plan?.cycle ? (plan.goals[0] ?? null) : null);
+  // compte à rebours : la prochaine course du cycle (voir nextRace)
+  const goal = $derived(plan ? nextRace(plan, today) : null);
   const lastActivity = $derived([...activities].sort((a, b) => b.date.localeCompare(a.date))[0] ?? null);
 
   async function load() {

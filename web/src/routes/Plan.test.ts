@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/svelte";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
 import { afterEach, expect, test, vi } from "vitest";
 import Plan from "./Plan.svelte";
 import type { CoachEvent, Cycle, Goal, Plan as PlanData } from "../lib/api";
@@ -87,4 +87,42 @@ test("a draft cycle sends back to the draft", async () => {
     new Response(JSON.stringify(planWith(null, { cycle: { ...cycle, plan_accepted: false } })), { status: 200 })));
   render(Plan, { today: "2026-11-03" });
   expect(await screen.findByRole("link", { name: "Relire le brouillon" })).toBeVisible();
+});
+
+const week = { week_index: 1, week_monday: "2026-11-30", sessions: [] };
+const secondary: Goal = { ...goal, id: 2, type: "trail", distance_km: 20, d_plus_m: 800, race_date: "2026-12-05", priority: "secondaire" };
+const later: Goal = { ...goal, id: 3, distance_km: 10, race_date: "2027-03-14", priority: "plaisir" };
+
+test("montre une carte Course le jour d'un objectif dans le plan", async () => {
+  vi.stubGlobal("fetch", vi.fn(async (url: string) =>
+    new Response(JSON.stringify(url === "/api/plan" ? planWith(null, { goals: [secondary, goal], weeks: [week] }) : []), { status: 200 })));
+  render(Plan, { today: "2026-12-01" });
+  const calendar = await screen.findByRole("table", { name: "Calendrier du programme" });
+  const races = await within(calendar).findAllByRole("note", { name: /^Course/ });
+  expect(races).toHaveLength(2);
+  expect(races[0]).toHaveTextContent("Trail de 20 km");
+  expect(races[0]).toHaveTextContent("Secondaire");
+  expect(races[1]).toHaveTextContent("Course sur route de 21,1 km");
+  expect(races[1]).toHaveTextContent("Principal");
+  // samedi puis dimanche de la semaine
+  const cells = within(calendar).getAllByRole("cell");
+  expect(within(cells[5]).getByText("Trail de 20 km")).toBeVisible();
+  expect(within(cells[6]).getByText("Course sur route de 21,1 km")).toBeVisible();
+});
+
+test("liste les objectifs de l'horizon sous le plan", async () => {
+  vi.stubGlobal("fetch", vi.fn(async (url: string) =>
+    new Response(JSON.stringify(url === "/api/plan" ? planWith(null, { horizon: [later] }) : []), { status: 200 })));
+  render(Plan, { today: "2026-11-03" });
+  const next = await screen.findByRole("region", { name: "Ensuite" });
+  expect(next).toHaveTextContent("Course sur route de 10 km");
+  expect(next).toHaveTextContent("Plaisir");
+  expect(next).toHaveTextContent("14 mars 2027");
+});
+
+test("sans horizon, pas de liste Ensuite", async () => {
+  mock({ injury: false });
+  render(Plan, { today: "2026-11-03" });
+  await screen.findByRole("heading", { name: "Programme" });
+  expect(screen.queryByRole("region", { name: "Ensuite" })).toBeNull();
 });

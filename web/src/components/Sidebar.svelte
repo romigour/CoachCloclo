@@ -53,7 +53,7 @@
       {/if}
     </a>
     <a href="#/goal" class:active={route === "goal"} aria-current={route === "goal" ? "page" : undefined}>
-      <Icon name="flag" /> Objectif
+      <Icon name="flag" /> Objectifs
     </a>
     <a href="#/setup" class:active={route === "setup"} aria-current={route === "setup" ? "page" : undefined}>
       <Icon name="settings" /> Réglages

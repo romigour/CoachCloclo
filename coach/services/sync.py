@@ -15,6 +15,7 @@ from coach.services.activities import store_summaries
 from coach.services.adjust import ask_adjustment, save_proposal
 from coach.services.context import refresh_snapshot
 from coach.services.cycles import close_passed
+from coach.services.garmin_export import retry_pending_cleanup
 from coach.services.history import refresh_records
 from coach.services.laps import fetch_missing_laps
 
@@ -68,6 +69,8 @@ def sync(repo: Repo, garmin: GarminPort, llm: LLMProvider, *, now: datetime) -> 
     # après le rattachement (la séance du jour de course reste rattachable) et avant la proposition
     if close_passed(repo, today):
         cycle = None  # cycle clos : plus de proposition jusqu'au cycle suivant
+    # retraits Garmin restés en échec, y compris ceux d'un cycle terminé (plus affiché)
+    retry_pending_cleanup(repo, garmin, today)
 
     settings.last_sync_at = now
     settings.proposal_due = cycle is not None and (settings.proposal_due or bool(pairs or missed_ids))

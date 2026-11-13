@@ -334,3 +334,29 @@ def test_race_day_activity_still_matched_before_close(repo, coach_home, fake_gar
     assert r.matched == 1
     (s,) = repo.sessions(cycle.id)
     assert s.status == "done" and repo.activity_by_garmin_id(1).session_id == s.id
+
+
+def test_sync_retries_removal_of_done_cycle_sessions(repo, coach_home, fake_garmin):
+    """Une séance d'un cycle terminé restée à retirer de la montre est nettoyée à la synchro suivante."""
+    from coach.plan.models import Session
+
+    done = repo.add(make_cycle(plan_start=date(2026, 9, 7), end_date=date(2026, 11, 1), status="done"))
+    fake_garmin.workouts[700] = {}
+    fake_garmin.schedules[701] = (700, date(2026, 11, 5))
+    fake_garmin.calendar[date(2026, 11, 5)] = [701]
+    s = make_db_session(done.id, week_index=8, order=1)
+    s.status, s.sync_error, s.pending_removal = "sync_error", "Synchronisation Garmin échouée : x", True
+    s.pending_old_workout_id, s.pending_old_schedule_id = 700, 701
+    s = repo.add(s)
+    # remplacement inachevé d'une séance encore à venir : seul le nettoyage des anciens ids reste à faire
+    fake_garmin.workouts[710] = {}
+    replaced = make_db_session(done.id, week_index=8, order=2)
+    replaced.status, replaced.sync_error, replaced.scheduled_date = "sync_error", "x", date(2026, 11, 6)
+    replaced.garmin_workout_id, replaced.garmin_schedule_id = 720, 721
+    replaced.pending_old_workout_id = 710
+    replaced = repo.add(replaced)
+    sync(repo, fake_garmin, FakeLLMProvider([]), now=NOW)
+    with repo.transaction() as db:
+        assert db.get(Session, s.id) is None
+        assert db.get(Session, replaced.id).status == "exported"
+    assert fake_garmin.workouts == {} and fake_garmin.schedules == {}

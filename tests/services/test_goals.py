@@ -655,3 +655,35 @@ def test_regenerate_change_makes_pending_stale(repo, monday_garmin):
     _, result = update_goal(repo, monday_garmin, FakeLLMProvider([]), goal.id, GoalUpdate(race_date=date(2027, 2, 21)))
     assert result.needs_generation is True
     assert _proposals(repo) == [(old.id, "stale")]
+
+
+def test_remove_last_goal_cleans_sync_error_sessions(repo, monday_garmin):
+    """Clôture : une séance en `sync_error` qui tient encore des ids Garmin quitte aussi la montre."""
+    goal = accepted_goal(repo, monday_garmin)
+    cycle_id = _cid(repo)
+    w13, w14 = (next(s for s in repo.sessions(cycle_id) if s.week_index == w and s.order == 1) for w in (13, 14))
+    monday_garmin.workouts[900] = {}
+    monday_garmin.schedules[901] = (900, date(2027, 2, 2))
+    monday_garmin.calendar.setdefault(date(2027, 2, 2), []).append(901)
+    with repo.transaction() as db:
+        s = db.get(Session, w13.id)  # remplacement inachevé : la nouvelle version est sur la montre
+        s.status, s.sync_error = "sync_error", "Synchronisation Garmin échouée : x"
+        s.pending_old_workout_id = None
+        db.add(s)
+        s = db.get(Session, w14.id)  # ids actuels et anciens à la fois
+        s.status, s.sync_error = "sync_error", "Synchronisation Garmin échouée : x"
+        s.pending_old_workout_id, s.pending_old_schedule_id = 900, 901
+        db.add(s)
+    remove_goal(repo, monday_garmin, FakeLLMProvider([]), goal.id)
+    assert repo.sessions(cycle_id) == []
+    assert monday_garmin.workouts == {} and monday_garmin.schedules == {}
+
+
+def test_close_cycle_garmin_failure_leaves_sessions_to_retry(repo, monday_garmin):
+    """Retrait Garmin en échec à la clôture : les séances restent marquées pour retrait (relancé par la synchro)."""
+    goal = accepted_goal(repo, monday_garmin)
+    cycle_id = _cid(repo)
+    monday_garmin.fail_on = {"unschedule"}
+    remove_goal(repo, monday_garmin, FakeLLMProvider([]), goal.id)
+    left = repo.sessions(cycle_id)
+    assert len(left) == 2 and all((s.status, s.pending_removal) == ("sync_error", True) for s in left)

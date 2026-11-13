@@ -220,16 +220,18 @@ def _sync(repo: Repo, garmin: GarminPort, session_id: int, zones: Zones | None, 
                 garmin, session, zones, session.scheduled_date, state
             )
             session = repo.update(session)
-        if session.pending_old_schedule_id is not None:
-            garmin.unschedule(session.pending_old_schedule_id)
-            state["wrote"] = True
-            session.pending_old_schedule_id = None
-            session = repo.update(session)
-        if session.pending_old_workout_id is not None:
-            garmin.delete_workout(session.pending_old_workout_id)
-            state["wrote"] = True
-            session.pending_old_workout_id = None
-            session = repo.update(session)
+        # retrait : les ids actuels éventuels (séance en `sync_error` à la clôture d'un cycle) partent aussi
+        for schedule_attr, workout_attr in _ID_PAIRS if session.pending_removal else _ID_PAIRS[1:]:
+            if getattr(session, schedule_attr) is not None:
+                garmin.unschedule(getattr(session, schedule_attr))
+                state["wrote"] = True
+                setattr(session, schedule_attr, None)
+                session = repo.update(session)
+            if getattr(session, workout_attr) is not None:
+                garmin.delete_workout(getattr(session, workout_attr))
+                state["wrote"] = True
+                setattr(session, workout_attr, None)
+                session = repo.update(session)
     except (*_GARMIN_ERRORS, ValueError) as e:
         if early and isinstance(e, _EARLY_ERRORS) and not state["wrote"]:
             raise
@@ -255,6 +257,25 @@ def sync_marked(repo: Repo, garmin: GarminPort, session_ids: list[int], zones: Z
     renvoie les ids des séances restées en `sync_error`.
     """
     return [sid for sid in session_ids if not _sync(repo, garmin, sid, zones, early=False)]
+
+
+def retry_pending_cleanup(repo: Repo, garmin: GarminPort, today: date) -> list[int]:
+    """Relance, quel que soit leur cycle, les séances en `sync_error` qui ont encore quelque chose à
+    retirer de la montre (retrait, ou anciens ids d'un remplacement) ; un remplacement dont la nouvelle
+    version reste à téléverser à une date passée est laissé à l'athlète. Renvoie les ids encore en erreur."""
+    with repo.transaction() as db:
+        stmt = select(Session).where(Session.status == "sync_error").order_by(Session.id)
+        candidates = list(db.exec(stmt))
+    ids = [
+        s.id
+        for s in candidates
+        if s.pending_removal
+        or (
+            (s.pending_old_schedule_id is not None or s.pending_old_workout_id is not None)
+            and (s.garmin_schedule_id is not None or (s.scheduled_date is not None and s.scheduled_date >= today))
+        )
+    ]
+    return sync_marked(repo, garmin, ids, None)
 
 
 def retry_sync_error(repo: Repo, garmin: GarminPort, session_id: int) -> None:

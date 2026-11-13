@@ -183,9 +183,11 @@ def _active_in(db: DbSession, cycle_id: int) -> Cycle:
 
 
 def _close_cycle(db: DbSession, c: Cycle) -> list[int]:
-    """Clôt le cycle : séances `todo` supprimées, exportées marquées pour retrait, propositions périmées.
+    """Clôt le cycle : séances `todo` supprimées, exportées et en `sync_error` marquées pour retrait,
+    propositions périmées.
 
-    Renvoie les ids des séances à retirer de la montre (après commit).
+    Renvoie les ids des séances à retirer de la montre (après commit) ; un échec Garmin les laisse
+    marquées, la synchro relance leur retrait.
     """
     c.status = "done"
     db.add(c)
@@ -197,6 +199,14 @@ def _close_cycle(db: DbSession, c: Cycle) -> list[int]:
             mark_for_cleanup(s, removal=True)
             to_clean.append(s.id)
             db.add(s)
+        elif s.status == "sync_error":
+            if not s.pending_removal:
+                if s.pending_old_workout_id is None and s.pending_old_schedule_id is None:
+                    mark_for_cleanup(s, removal=True)
+                else:  # anciens ids encore là : le retrait enlève aussi les ids actuels (`_sync`)
+                    s.pending_removal = True
+                db.add(s)
+            to_clean.append(s.id)
     stale_pending(db)
     return to_clean
 

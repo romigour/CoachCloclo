@@ -12,7 +12,7 @@ from coach.plan.constraints import (
 )
 from coach.plan.models import ALL_DAYS, Event
 from tests.llm.factories import make_plan, make_session
-from tests.plan.factories import make_db_session, make_goal
+from tests.plan.factories import make_db_session, make_cycle
 
 TODAY = date(2026, 11, 2)
 
@@ -62,19 +62,19 @@ def test_long_run_on_long_run_day_and_no_long_run_day_are_accepted():
 
 
 def test_unchanged_todo_on_removed_day_is_rejected():
-    goal = make_goal(available_days_json=json.dumps(["mardi", "jeudi", "dimanche"]))
+    cycle = make_cycle(available_days_json=json.dumps(["mardi", "jeudi", "dimanche"]))
     s = make_db_session(1, suggested_day="lundi")
     s.id = 7
-    planned = planned_after_adjustment(goal, [s], AdjustmentResponse(analysis="", changes=[]))
-    assert constraint_errors(planned, PlanConstraints.of(goal, TODAY)) == [
+    planned = planned_after_adjustment(cycle, [s], AdjustmentResponse(analysis="", changes=[]))
+    assert constraint_errors(planned, PlanConstraints.of(cycle, TODAY)) == [
         "séance 7 : lundi n'est pas un jour possible"
     ]
 
 
 def test_planned_from_plan_labels_and_dates():
-    goal = make_goal()
+    cycle = make_cycle()
     plan = make_plan(2, [1, 2])
-    planned = planned_from_plan(goal, plan)
+    planned = planned_from_plan(cycle, plan)
     assert [p.label for p in planned] == ["semaine 1, séance 1", "semaine 2, séance 1", "semaine 2, séance 2"]
     assert planned[0].date == date(2026, 10, 27)  # mardi de la semaine 1
     assert planned[1].date == date(2026, 11, 3)
@@ -82,7 +82,7 @@ def test_planned_from_plan_labels_and_dates():
 
 
 def test_planned_after_adjustment_applies_remove_modify_add():
-    goal = make_goal()
+    cycle = make_cycle()
     kept, removed, modified, exported = (
         make_db_session(1, order=o, suggested_day="mardi") for o in (1, 2, 3, 4)
     )
@@ -101,7 +101,7 @@ def test_planned_after_adjustment_applies_remove_modify_add():
             Change(op="add", session=make_session(week_index=2, suggested_day="samedi", order=5), reason="r"),
         ],
     )
-    planned = planned_after_adjustment(goal, [kept, removed, modified, exported], adj)
+    planned = planned_after_adjustment(cycle, [kept, removed, modified, exported], adj)
 
     assert [p.label for p in planned] == ["séance 10", "séance 12", "séance 13", "ajout 4"]
     by_label = {p.label: p for p in planned}
@@ -114,9 +114,9 @@ def test_planned_after_adjustment_applies_remove_modify_add():
     assert by_label["ajout 4"].date == date(2026, 11, 7) and not by_label["ajout 4"].exported
 
 
-def test_constraints_of_goal():
-    goal = make_goal(available_days_json=json.dumps(["mardi", "dimanche"]), long_run_day="dimanche")
-    c = PlanConstraints.of(goal, TODAY)
+def test_constraints_of_cycle():
+    cycle = make_cycle(available_days_json=json.dumps(["mardi", "dimanche"]), long_run_day="dimanche")
+    c = PlanConstraints.of(cycle, TODAY)
     assert c.available_days == ("mardi", "dimanche")
     assert c.long_run_day == "dimanche"
     assert c.today == TODAY
@@ -135,7 +135,7 @@ def test_exported_long_run_ignores_long_run_day():
 
 
 def _ev(kind, start, end=None, **kw):
-    return Event(goal_id=1, kind=kind, start_date=start, end_date=end, **kw)
+    return Event(cycle_id=1, kind=kind, start_date=start, end_date=end, **kw)
 
 
 def _ec(*events, today=TODAY, available=ALL_DAYS, long_run_day=None):
@@ -301,13 +301,13 @@ def test_fatigue_does_not_block():
     assert constraint_errors(p, c) == []
 
 
-def test_constraints_of_goal_carries_plan_start():
-    assert PlanConstraints.of(make_goal(), TODAY).plan_start == date(2026, 10, 26)
+def test_constraints_of_cycle_carries_plan_start():
+    assert PlanConstraints.of(make_cycle(), TODAY).plan_start == date(2026, 10, 26)
 
 
 def test_constraints_of_reads_include_bike():
-    assert PlanConstraints.of(make_goal(), date(2026, 11, 2)).include_bike is False
-    assert PlanConstraints.of(make_goal(include_bike=True), date(2026, 11, 2)).include_bike is True
+    assert PlanConstraints.of(make_cycle(), date(2026, 11, 2)).include_bike is False
+    assert PlanConstraints.of(make_cycle(include_bike=True), date(2026, 11, 2)).include_bike is True
 
 
 def _bike_c(include_bike=True):

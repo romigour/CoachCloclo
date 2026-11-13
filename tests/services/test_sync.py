@@ -12,7 +12,7 @@ from coach.plan.models import Activity, Event, Proposal
 from coach.services.events import delete_event
 from tests.llm.factories import make_session
 from coach.services.sync import SyncResult, sync
-from tests.plan.factories import make_db_session, make_goal
+from tests.plan.factories import make_cycle, make_db_session, make_goal
 
 NOW = datetime(2026, 11, 4, 8, 0)
 METRICS = Metrics(hr_max=190, hr_rest=50, threshold_pace_s_km=300)
@@ -50,27 +50,29 @@ def fake_garmin():
     return FakeGarminClient(metrics=METRICS, activities=[run_summary()], today=date(2026, 11, 4))
 
 
-def _goal_with_sessions(repo, accepted: bool):
-    goal = repo.add(make_goal(plan_start=date(2026, 11, 2), plan_accepted=accepted))
+def _cycle_with_sessions(repo, accepted: bool):
+    """Cycle actif (objectif au 31/01/2027) avec deux semaines de séances."""
+    cycle = repo.add(make_cycle(plan_start=date(2026, 11, 2), plan_accepted=accepted))
+    repo.add(make_goal(plan_start=date(2026, 11, 2), race_date=cycle.end_date))
     for w in (1, 2):
         for o in (1, 2, 3):
-            s = make_db_session(goal.id, week_index=w, order=o)
+            s = make_db_session(cycle.id, week_index=w, order=o)
             if w == 1 and o in (1, 2):  # envoyées sur la montre mardi et mercredi : rattachables
                 s.status = "exported"
                 s.scheduled_date = date(2026, 11, 2 + o)
                 s.est_duration_min = 45.0
             repo.add(s)
-    return goal
+    return cycle
 
 
 @pytest.fixture
 def accepted_plan(repo):
-    return _goal_with_sessions(repo, True)
+    return _cycle_with_sessions(repo, True)
 
 
 @pytest.fixture
 def draft_plan(repo):
-    return _goal_with_sessions(repo, False)
+    return _cycle_with_sessions(repo, False)
 
 
 def test_sync_matches_and_creates_proposal(repo, coach_home, fake_garmin, accepted_plan):
@@ -271,7 +273,7 @@ def test_proposal_prompt_contains_step_detail(repo, coach_home, accepted_plan):
 
 
 def test_sync_skips_proposal_during_open_injury(repo, coach_home, fake_garmin, accepted_plan):
-    repo.add(Event(goal_id=accepted_plan.id, kind="injury", start_date=date(2026, 11, 3)))
+    repo.add(Event(cycle_id=accepted_plan.id, kind="injury", start_date=date(2026, 11, 3)))
     llm = FakeLLMProvider([adjustment_json()])
     r = sync(repo, fake_garmin, llm, now=NOW)
     assert r.matched == 1 and r.proposal_id is None and llm.calls == []
@@ -279,7 +281,7 @@ def test_sync_skips_proposal_during_open_injury(repo, coach_home, fake_garmin, a
 
 
 def test_deleting_open_injury_resumes_sync_proposals(repo, coach_home, fake_garmin, accepted_plan):
-    injury = repo.add(Event(goal_id=accepted_plan.id, kind="injury", start_date=date(2026, 11, 3)))
+    injury = repo.add(Event(cycle_id=accepted_plan.id, kind="injury", start_date=date(2026, 11, 3)))
     assert sync(repo, fake_garmin, FakeLLMProvider([adjustment_json()]), now=NOW).proposal_id is None
     delete_event(repo, injury.id)
     r = sync(repo, fake_garmin, FakeLLMProvider([adjustment_json()]), now=NOW)

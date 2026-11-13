@@ -25,7 +25,7 @@ from coach.garmin.port import (
 from coach.llm.schemas import Change
 from coach.plan import calendar
 from coach.plan.constraints import allowed_days, blocked_periods
-from coach.plan.models import ALL_DAYS, Goal, Proposal, Session
+from coach.plan.models import ALL_DAYS, Cycle, Proposal, Session
 from coach.plan.repo import Repo
 from coach.services import CoachError
 from coach.services.context import load_constraints
@@ -51,12 +51,12 @@ def _zones(repo: Repo) -> Zones:
     return Zones.model_validate_json(snap.zones_json)
 
 
-def _goal(repo: Repo, session: Session) -> Goal:
+def _cycle(repo: Repo, session: Session) -> Cycle:
     with repo.transaction() as db:
-        goal = db.get(Goal, session.goal_id)
-    if goal is None:
-        raise ExportError("Objectif introuvable")
-    return goal
+        cycle = db.get(Cycle, session.cycle_id)
+    if cycle is None:
+        raise ExportError("Plan introuvable")
+    return cycle
 
 
 def _get(repo: Repo, session_id: int) -> Session:
@@ -67,7 +67,7 @@ def _get(repo: Repo, session_id: int) -> Session:
 
 
 def _check_day(repo: Repo, session: Session, d: date) -> None:
-    if calendar.week_of(_goal(repo, session), d) != session.week_index:
+    if calendar.week_of(_cycle(repo, session), d) != session.week_index:
         raise ExportError("Le jour choisi doit appartenir à la semaine de la séance")
 
 
@@ -77,10 +77,10 @@ def _check_not_past(garmin: GarminPort, d: date) -> None:
 
 
 def _warnings(repo: Repo, session: Session, d: date) -> list[str]:
-    warnings = hard_session_warnings(session, d, repo.sessions(session.goal_id))
-    goal = _goal(repo, session)
+    warnings = hard_session_warnings(session, d, repo.sessions(session.cycle_id))
+    cycle = _cycle(repo, session)
     # `today = d` : un arrêt ouvert bloque jusqu'au dimanche de la semaine de `d`
-    constraints = load_constraints(repo, goal, d)
+    constraints = load_constraints(repo, cycle, d)
     if ALL_DAYS[d.weekday()] not in allowed_days(constraints, d):
         warnings.append(_UNAVAILABLE_DAY)
     for start, end, label in blocked_periods(constraints):
@@ -323,16 +323,16 @@ def apply_proposal(repo: Repo, garmin: GarminPort, proposal_id: int) -> list[int
         proposal = db.get(Proposal, proposal_id)
         if proposal is None or proposal.status != "pending":
             raise ExportError("Cette proposition n'est plus en attente")
-        goal: Goal | None = None
+        cycle: Cycle | None = None
         for c in changes:
             if c.op == "add":
-                if goal is None:
-                    goal = db.exec(
-                        select(Goal).where(Goal.status == "active").order_by(Goal.id.desc())
+                if cycle is None:
+                    cycle = db.exec(
+                        select(Cycle).where(Cycle.status == "active").order_by(Cycle.id.desc())
                     ).first()
-                    if goal is None:
-                        raise ExportError("Aucun objectif actif")
-                db.add(Session.from_spec(c.session, goal_id=goal.id))
+                    if cycle is None:
+                        raise ExportError("Aucun plan en cours")
+                db.add(Session.from_spec(c.session, cycle_id=cycle.id))
                 continue
             s = db.get(Session, c.session_id)
             if s is None:
@@ -344,7 +344,7 @@ def apply_proposal(repo: Repo, garmin: GarminPort, proposal_id: int) -> list[int
                     else "Séance déjà réalisée ou manquée : l'historique ne peut pas changer"
                 )
             if c.op == "modify":
-                fresh = Session.from_spec(c.session, goal_id=s.goal_id)
+                fresh = Session.from_spec(c.session, cycle_id=s.cycle_id)
                 for f in (
                     "week_index", "order", "suggested_day", "chaining_note", "type",
                     "sport", "target_kind", "title", "description", "steps_json",

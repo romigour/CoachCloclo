@@ -9,7 +9,7 @@ from coach.llm.schemas import RepeatSpec, StepSpec
 from coach.plan.constraints import PlanConstraints
 from coach.plan.models import Event
 from tests.llm.factories import make_session
-from tests.plan.factories import make_activity, make_db_session, make_goal
+from tests.plan.factories import make_activity, make_cycle, make_db_session, make_goal
 
 ZONES = compute_zones(
     threshold_pace_s_km=240, pred_10k_s=None, garmin_hr_zones=None, hr_max=190, hr_rest=50
@@ -26,33 +26,33 @@ def _db(id_, **kw):
 
 
 def test_generation_prompt_contains_constraints():
-    p = build_generation_prompt(make_goal(), ZONES, [], n_weeks=14, gpx_text="2 montées…")
+    p = build_generation_prompt(make_cycle(), [make_goal()], [], ZONES, [], n_weeks=14, gpx_texts=["2 montées…"])
     for needle in ["14 semaines", "3 séances", "trail", "2 montées", '"weeks"', "Z2", "seuil :", "semaine 1"]:
         assert needle in p
     assert p.rstrip().endswith("}")
 
 
 def test_generation_prompt_states_today_with_weekday():
-    goal = make_goal(plan_start=date(2026, 11, 2))
-    p = build_generation_prompt(goal, ZONES, [], n_weeks=14, gpx_text=None, today=date(2026, 11, 4))
+    cycle = make_cycle(plan_start=date(2026, 11, 2))
+    p = build_generation_prompt(cycle, [make_goal()], [], ZONES, [], n_weeks=14, gpx_texts=[], today=date(2026, 11, 4))
     assert "Aujourd'hui : mercredi 4 novembre 2026 (semaine 1)" in p
 
 
 def test_generation_prompt_without_pace_zones_forbids_pace():
-    p = build_generation_prompt(make_goal(type="route"), ZONES_NO_PACE, [], n_weeks=8, gpx_text=None)
+    p = build_generation_prompt(make_cycle(), [make_goal(type="route")], [], ZONES_NO_PACE, [], n_weeks=8, gpx_texts=[])
     assert "Aucune zone d'allure" in p
     assert "hr" in p
 
 
 def test_generation_prompt_with_pace_has_no_missing_phrase():
-    p = build_generation_prompt(make_goal(), ZONES, [], n_weeks=8, gpx_text=None)
+    p = build_generation_prompt(make_cycle(), [make_goal()], [], ZONES, [], n_weeks=8, gpx_texts=[])
     assert "Aucune zone d'allure" not in p
 
 
 def test_history_limited_to_8_weeks_most_recent_first_and_capped():
     last = date(2026, 11, 10)
     acts = [make_activity(garmin_activity_id=i, date=last - timedelta(days=i)) for i in range(0, 70)]
-    p = build_generation_prompt(make_goal(), ZONES, acts, n_weeks=8, gpx_text=None)
+    p = build_generation_prompt(make_cycle(), [make_goal()], [], ZONES, acts, n_weeks=8, gpx_texts=[])
     lines = [l for l in p.splitlines() if l.startswith("- 2026-")]
     assert 0 < len(lines) <= 56
     assert lines[0].startswith("- 2026-11-10")
@@ -63,7 +63,7 @@ def test_history_limited_to_8_weeks_most_recent_first_and_capped():
 def test_history_capped_at_60_lines():
     last = date(2026, 11, 10)
     acts = [make_activity(garmin_activity_id=i, date=last) for i in range(100)]
-    p = build_generation_prompt(make_goal(), ZONES, acts, n_weeks=8, gpx_text=None)
+    p = build_generation_prompt(make_cycle(), [make_goal()], [], ZONES, acts, n_weeks=8, gpx_texts=[])
     assert len([l for l in p.splitlines() if l.startswith("- 2026-")]) == 60
 
 
@@ -73,7 +73,7 @@ def test_adjustment_prompt_lists_ids_and_status():
     s3.scheduled_date = date(2026, 11, 12)
     a1 = make_activity(d_plus_m=120, avg_hr=150)
     p = build_adjustment_prompt(
-        make_goal(), ZONES, 4, done=[(s1, a1)], missed=[s2], upcoming=[s3, s4], history=[]
+        make_cycle(), [make_goal()], [], ZONES, 4, done=[(s1, a1)], missed=[s2], upcoming=[s3, s4], history=[]
     )
     assert "id=3 | semaine 1 |" in p and "statut exported | date 2026-11-12" in p
     assert "statut todo | date -" in p
@@ -141,13 +141,13 @@ def test_race_text_none_without_reference():
 def test_prompts_include_race_text():
     line = "Stratégie jour J (indicative) : visé 5 h 00."
     goal = make_goal()
-    gen = build_generation_prompt(goal, ZONES, [], n_weeks=14, gpx_text=None, race_text=line)
-    adj = build_adjustment_prompt(goal, ZONES, 1, [], [], [], [], race_text=line)
+    gen = build_generation_prompt(make_cycle(), [goal], [], ZONES, [], n_weeks=14, gpx_texts=[], race_texts=[line])
+    adj = build_adjustment_prompt(make_cycle(), [goal], [], ZONES, 1, [], [], [], [], race_texts=[line])
     for p in (gen, adj):
         assert line in p
         assert p.index(line) < p.index("Schéma JSON attendu")
-    assert "Stratégie jour J" not in build_generation_prompt(goal, ZONES, [], n_weeks=14, gpx_text=None)
-    assert "Stratégie jour J" not in build_adjustment_prompt(goal, ZONES, 1, [], [], [], [])
+    assert "Stratégie jour J" not in build_generation_prompt(make_cycle(), [goal], [], ZONES, [], n_weeks=14, gpx_texts=[])
+    assert "Stratégie jour J" not in build_adjustment_prompt(make_cycle(), [goal], [], ZONES, 1, [], [], [], [])
 
 
 # --- détail par étape ---
@@ -170,7 +170,7 @@ def _lap(index, step_order, duration_s, distance_m, avg_hr=None):
 def _adjustment(comparison, zones=ZONES_VMA):
     s1 = _db(1)
     return build_adjustment_prompt(
-        make_goal(), zones, 4, done=[(s1, make_activity())], missed=[], upcoming=[], history=[],
+        make_cycle(), [make_goal()], [], zones, 4, done=[(s1, make_activity())], missed=[], upcoming=[], history=[],
         comparisons={1: comparison},
     )
 
@@ -233,11 +233,11 @@ def test_adjustment_prompt_degraded_without_any_lap_has_no_dangling_header():
 def test_adjustment_prompt_without_comparison_unchanged():
     s1 = _db(1)
     args = dict(done=[(s1, make_activity())], missed=[], upcoming=[], history=[])
-    base = build_adjustment_prompt(make_goal(), ZONES, 4, **args)
-    assert build_adjustment_prompt(make_goal(), ZONES, 4, **args, comparisons=None) == base
-    assert build_adjustment_prompt(make_goal(), ZONES, 4, **args, comparisons={}) == base
+    base = build_adjustment_prompt(make_cycle(), [make_goal()], [], ZONES, 4, **args)
+    assert build_adjustment_prompt(make_cycle(), [make_goal()], [], ZONES, 4, **args, comparisons=None) == base
+    assert build_adjustment_prompt(make_cycle(), [make_goal()], [], ZONES, 4, **args, comparisons={}) == base
     other = {2: compare_session(make_session(), [], ZONES)}
-    assert build_adjustment_prompt(make_goal(), ZONES, 4, **args, comparisons=other).count("    ·") == 0
+    assert build_adjustment_prompt(make_cycle(), [make_goal()], [], ZONES, 4, **args, comparisons=other).count("    ·") == 0
     assert DETAIL_RULE not in base
 
 
@@ -254,13 +254,13 @@ def test_goal_text_includes_target():
 
 
 def test_generation_prompt_asks_estimate_in_claude_mode():
-    p = build_generation_prompt(make_goal(target_source="claude"), ZONES, [], n_weeks=14, gpx_text=None)
+    p = build_generation_prompt(make_cycle(), [make_goal(target_source="claude")], [], ZONES, [], n_weeks=14, gpx_texts=[])
     assert "estimated_time_s" in p and "Estime" in p
 
 
 def test_generation_prompt_regeneration_in_claude_mode_asks_estimate_again():
     goal = make_goal(target_source="claude", target_time_s=6720)
-    p = build_generation_prompt(goal, ZONES, [], n_weeks=14, gpx_text=None)
+    p = build_generation_prompt(make_cycle(), [goal], [], ZONES, [], n_weeks=14, gpx_texts=[])
     assert "estimated_time_s" in p
     assert "Construis le plan pour atteindre ce temps visé" not in p
     assert "Temps visé" not in p and "Estimation précédente : 1 h 52" in p
@@ -268,35 +268,35 @@ def test_generation_prompt_regeneration_in_claude_mode_asks_estimate_again():
 
 def test_generation_prompt_targets_user_time():
     goal = make_goal(target_time_s=6600, target_source="user")
-    p = build_generation_prompt(goal, ZONES, [], n_weeks=14, gpx_text=None)
+    p = build_generation_prompt(make_cycle(), [goal], [], ZONES, [], n_weeks=14, gpx_texts=[])
     assert "Construis le plan pour atteindre ce temps visé" in p and "Estime" not in p
 
 
 def test_generation_prompt_legacy_goal_has_no_target_instruction():
-    p = build_generation_prompt(make_goal(), ZONES, [], n_weeks=14, gpx_text=None)
+    p = build_generation_prompt(make_cycle(), [make_goal()], [], ZONES, [], n_weeks=14, gpx_texts=[])
     assert "Estime" not in p and "atteindre ce temps visé" not in p
 
 
 def test_adjustment_prompt_includes_change_note():
     p = build_adjustment_prompt(
-        make_goal(), ZONES, 4, [], [], [], [], change_note="L'athlète a modifié son objectif : X"
+        make_cycle(), [make_goal()], [], ZONES, 4, [], [], [], [], change_note="L'athlète a modifié son objectif : X"
     )
     assert p.index("L'athlète a modifié") < p.index("Nous sommes en semaine")
 
 
 def test_prompts_list_availability_and_session_day():
     c = PlanConstraints(available_days=("mardi", "jeudi", "dimanche"), long_run_day="dimanche", today=date(2026, 11, 2))
-    p = build_adjustment_prompt(make_goal(), ZONES, 1, [], [], [_db(1)], [], constraints=c)
+    p = build_adjustment_prompt(make_cycle(), [make_goal()], [], ZONES, 1, [], [], [_db(1)], [], constraints=c)
     assert "Jours possibles : mardi, jeudi, dimanche" in p
     assert "Sortie longue : le dimanche" in p
     assert "| mardi |" in p  # _session_line affiche le jour conseillé
-    g = build_generation_prompt(make_goal(), ZONES, [], n_weeks=14, gpx_text=None, constraints=c)
+    g = build_generation_prompt(make_cycle(), [make_goal()], [], ZONES, [], n_weeks=14, gpx_texts=[], constraints=c)
     assert "Jours possibles : mardi, jeudi, dimanche" in g
 
 
 def test_availability_block_omits_long_run_when_unset():
     c = PlanConstraints(available_days=("mardi", "jeudi"), long_run_day=None, today=date(2026, 11, 2))
-    p = build_generation_prompt(make_goal(), ZONES, [], n_weeks=14, gpx_text=None, constraints=c)
+    p = build_generation_prompt(make_cycle(), [make_goal()], [], ZONES, [], n_weeks=14, gpx_texts=[], constraints=c)
     assert "Jours possibles : mardi, jeudi." in p and "Sortie longue" not in p
 
 
@@ -305,18 +305,18 @@ def _events_prompt(*events, today=date(2026, 11, 2)):
         available_days=("mardi", "samedi"), long_run_day=None, today=today,
         events=tuple(events), plan_start=date(2026, 10, 19),
     )
-    return build_generation_prompt(make_goal(), ZONES, [], n_weeks=14, gpx_text=None, constraints=c)
+    return build_generation_prompt(make_cycle(), [make_goal()], [], ZONES, [], n_weeks=14, gpx_texts=[], constraints=c)
 
 
 def test_events_block_formats_each_kind():
     p = _events_prompt(
-        Event(goal_id=1, kind="unavailable", start_date=date(2026, 11, 5), end_date=date(2026, 11, 12), note="voyage"),
-        Event(goal_id=1, kind="injury", start_date=date(2026, 11, 3), note="genou"),
+        Event(cycle_id=1, kind="unavailable", start_date=date(2026, 11, 5), end_date=date(2026, 11, 12), note="voyage"),
+        Event(cycle_id=1, kind="injury", start_date=date(2026, 11, 3), note="genou"),
         Event(
             goal_id=1, kind="light_week", start_date=date(2026, 11, 2), end_date=date(2026, 11, 8),
             max_sessions=2, days_json='["mardi", "samedi"]',
         ),
-        Event(goal_id=1, kind="fatigue", start_date=date(2026, 11, 2), note="jambes lourdes"),
+        Event(cycle_id=1, kind="fatigue", start_date=date(2026, 11, 2), note="jambes lourdes"),
     )
     assert "Imprévus :" in p
     assert "- indisponible du 05/11/2026 au 12/11/2026 : voyage" in p
@@ -330,8 +330,8 @@ def test_events_block_formats_each_kind():
 
 def test_events_block_omits_optional_parts():
     p = _events_prompt(
-        Event(goal_id=1, kind="unavailable", start_date=date(2026, 11, 5), end_date=date(2026, 11, 12)),
-        Event(goal_id=1, kind="light_week", start_date=date(2026, 11, 2), end_date=date(2026, 11, 8), max_sessions=1),
+        Event(cycle_id=1, kind="unavailable", start_date=date(2026, 11, 5), end_date=date(2026, 11, 12)),
+        Event(cycle_id=1, kind="light_week", start_date=date(2026, 11, 2), end_date=date(2026, 11, 8), max_sessions=1),
     )
     assert "- indisponible du 05/11/2026 au 12/11/2026" + "\n" in p + "\n"
     assert "- semaine allégée (semaine 3) : 1 séance au plus" in p
@@ -340,23 +340,23 @@ def test_events_block_omits_optional_parts():
 
 def test_events_block_excludes_past_and_old_fatigue():
     p = _events_prompt(
-        Event(goal_id=1, kind="unavailable", start_date=date(2026, 10, 20), end_date=date(2026, 10, 25), note="passé"),
-        Event(goal_id=1, kind="fatigue", start_date=date(2026, 10, 10), note="ancienne"),
+        Event(cycle_id=1, kind="unavailable", start_date=date(2026, 10, 20), end_date=date(2026, 10, 25), note="passé"),
+        Event(cycle_id=1, kind="fatigue", start_date=date(2026, 10, 10), note="ancienne"),
     )
     assert "Imprévus" not in p
 
 
 def test_events_block_keeps_fatigue_within_14_days():
-    p = _events_prompt(Event(goal_id=1, kind="fatigue", start_date=date(2026, 10, 19), note="limite"))
+    p = _events_prompt(Event(cycle_id=1, kind="fatigue", start_date=date(2026, 10, 19), note="limite"))
     assert "- fatigue signalée le 19/10/2026 : limite" in p
 
 
 def test_adjustment_prompt_includes_events_block():
     c = PlanConstraints(
         available_days=("mardi",), long_run_day=None, today=date(2026, 11, 2),
-        events=(Event(goal_id=1, kind="injury", start_date=date(2026, 11, 3)),),
+        events=(Event(cycle_id=1, kind="injury", start_date=date(2026, 11, 3)),),
     )
-    p = build_adjustment_prompt(make_goal(), ZONES, 1, [], [], [], [], constraints=c)
+    p = build_adjustment_prompt(make_cycle(), [make_goal()], [], ZONES, 1, [], [], [], [], constraints=c)
     assert "- blessure/maladie depuis le 03/11/2026 (reprise non connue)" in p
 
 
@@ -364,8 +364,8 @@ def _bike_prompts(include_bike):
     c = PlanConstraints(
         available_days=("mardi", "samedi"), long_run_day=None, today=date(2026, 11, 2), include_bike=include_bike
     )
-    g = build_generation_prompt(make_goal(), ZONES, [], n_weeks=14, gpx_text=None, constraints=c)
-    a = build_adjustment_prompt(make_goal(), ZONES, 1, [], [], [_db(1)], [], constraints=c)
+    g = build_generation_prompt(make_cycle(), [make_goal()], [], ZONES, [], n_weeks=14, gpx_texts=[], constraints=c)
+    a = build_adjustment_prompt(make_cycle(), [make_goal()], [], ZONES, 1, [], [], [_db(1)], [], constraints=c)
     return g, a
 
 
@@ -383,7 +383,7 @@ def test_prompts_state_run_only_without_bike():
 
 
 def test_prompts_without_constraints_mention_no_sport_rule():
-    g = build_generation_prompt(make_goal(), ZONES, [], n_weeks=14, gpx_text=None)
+    g = build_generation_prompt(make_cycle(), [make_goal()], [], ZONES, [], n_weeks=14, gpx_texts=[])
     assert "Vélo autorisé" not in g and "course à pied" not in g
 
 
@@ -399,6 +399,17 @@ def test_prompts_ask_bike_steps_in_duration_only():
 
 def test_missed_sessions_flag_bike():
     run, bike = _db(1, title="Course ratée"), _db(2, sport="bike", title="Vélo raté")
-    p = build_adjustment_prompt(make_goal(), ZONES, 4, [], [run, bike], [], [])
+    p = build_adjustment_prompt(make_cycle(), [make_goal()], [], ZONES, 4, [], [run, bike], [], [])
     assert f"- Vélo raté ({bike.type}, vélo, semaine {bike.week_index})" in p
     assert f"- Course ratée ({run.type}, semaine {run.week_index})" in p
+
+
+def test_prompts_read_plan_settings_from_cycle():
+    """Début du plan et séances par semaine viennent du cycle, plus de l'objectif."""
+    cycle = make_cycle(plan_start=date(2026, 11, 9), sessions_per_week=5)
+    goal = make_goal(plan_start=date(2026, 10, 26), sessions_per_week=3)
+    gen = build_generation_prompt(cycle, [goal], [], ZONES, [], n_weeks=12, gpx_texts=["A", "B"], race_texts=["R1"])
+    adj = build_adjustment_prompt(cycle, [goal], [], ZONES, 1, [], [], [], [])
+    for p in (gen, adj):
+        assert "Le plan débute le 2026-11-09." in p and "5 séances" in p and "3 séances" not in p
+    assert "Profil du parcours (GPX) :\nA" in gen and "Profil du parcours (GPX) :\nB" in gen and "R1" in gen

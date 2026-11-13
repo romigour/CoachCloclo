@@ -47,8 +47,8 @@ def test_save_proposal_stales_previous(repo):
     assert status == {first: "stale", second: "pending"}
 
 
-def test_ask_adjustment_uses_received_goal_constraints(repo, coach_home, fake_garmin, accepted_plan):
-    """Les contraintes viennent du `goal` reçu (copie modifiée), pas de la base."""
+def test_ask_adjustment_uses_received_cycle_constraints(repo, coach_home, fake_garmin, accepted_plan):
+    """Les contraintes viennent du `cycle` reçu (copie modifiée), pas de la base."""
     edited = accepted_plan.model_copy(update={"available_days_json": '["jeudi", "samedi", "dimanche"]'})
     llm = FakeLLMProvider([adjustment_json(), adjustment_json()])
     with pytest.raises(LLMInvalidResponse):
@@ -62,7 +62,7 @@ def test_ask_adjustment_retries_when_session_falls_in_stored_unavailability(
 ):
     """Les imprévus enregistrés en base sont transmis à Claude et contrôlés (séances de la semaine 2 gardées)."""
     repo.add(Event(
-        goal_id=accepted_plan.id, kind="unavailable", start_date=date(2026, 11, 9), end_date=date(2026, 11, 15),
+        cycle_id=accepted_plan.id, kind="unavailable", start_date=date(2026, 11, 9), end_date=date(2026, 11, 15),
     ))
     llm = FakeLLMProvider([adjustment_json(), adjustment_json()])
     with pytest.raises(LLMInvalidResponse):
@@ -71,3 +71,14 @@ def test_ask_adjustment_retries_when_session_falls_in_stored_unavailability(
         )
     assert "- indisponible du 09/11/2026 au 15/11/2026" in llm.calls[0]
     assert "tombe pendant indisponibilité du 09/11 au 15/11" in llm.calls[1]
+
+
+def test_ask_adjustment_reads_goals_unless_given(repo, coach_home, fake_garmin, accepted_plan):
+    """Sans `goals`, l'objectif vient de la base ; sinon la copie modifiée transmise est décrite."""
+    llm = FakeLLMProvider([adjustment_json(), adjustment_json()])
+    sessions = repo.sessions(accepted_plan.id)
+    ask_adjustment(repo, fake_garmin, llm, accepted_plan, _zones(), sessions, TODAY)
+    assert "le 2027-01-31" in llm.calls[0] and "Temps visé" not in llm.calls[0]
+    edited = repo.goals_in(accepted_plan)[0].model_copy(update={"target_time_s": 14400})
+    ask_adjustment(repo, fake_garmin, llm, accepted_plan, _zones(), sessions, TODAY, goals=[edited])
+    assert "Temps visé : 4 h 00" in llm.calls[1]

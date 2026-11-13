@@ -11,7 +11,7 @@ from coach.analysis.compliance import (
 )
 from coach.llm.schemas import RepeatSpec, StepSpec
 from tests.llm.factories import make_session
-from tests.plan.factories import make_activity, make_db_session, make_goal
+from tests.plan.factories import make_activity, make_db_session, make_cycle
 
 TUE = date(2026, 11, 10)  # semaine 3 : 2026-11-09 .. 2026-11-15
 WED = date(2026, 11, 11)
@@ -100,12 +100,12 @@ def test_estimate_falls_back_when_est_missing():
 
 
 def test_mark_missed_only_finished_weeks():
-    goal = make_goal()
+    cycle = make_cycle()
     old = _session(1, status="todo", scheduled=None, week=2)
     old_exported = _session(2, status="exported", scheduled=date(2026, 11, 3), week=2)
     current = _session(3, status="todo", scheduled=None, week=3)
     done = _session(4, status="done", scheduled=None, week=2)
-    missed = mark_missed([old, old_exported, current, done], goal, date(2026, 11, 11))
+    missed = mark_missed([old, old_exported, current, done], cycle, date(2026, 11, 11))
     assert sorted(missed) == [1, 2]
 
 
@@ -156,22 +156,22 @@ def test_sync_error_pending_removal_not_matched():
 
 
 def test_mark_missed_includes_sync_error_but_not_pending_removal():
-    goal = make_goal()
+    cycle = make_cycle()
     err = _session(1, status="sync_error", scheduled=date(2026, 11, 3), week=2)
     removing = _session(2, status="sync_error", scheduled=date(2026, 11, 3), week=2)
     removing.pending_removal = True
-    assert mark_missed([err, removing], goal, date(2026, 11, 11)) == [1]
+    assert mark_missed([err, removing], cycle, date(2026, 11, 11)) == [1]
 
 
 def test_sync_error_awaiting_cleanup_neither_matched_nor_missed():
     # d'anciens ids Garmin restent à nettoyer : la synchro (sans écriture Garmin) n'y touche pas
-    goal = make_goal()
+    cycle = make_cycle()
     s = _session(1, status="sync_error", scheduled=date(2026, 11, 3), week=2)
     s.pending_old_workout_id = 1000
     assert match_activities([s], [_act(10, d=date(2026, 11, 3))]) == []
-    assert mark_missed([s], goal, date(2026, 11, 11)) == []
+    assert mark_missed([s], cycle, date(2026, 11, 11)) == []
     s.pending_old_workout_id, s.pending_old_schedule_id = None, 5000
-    assert mark_missed([s], goal, date(2026, 11, 11)) == []
+    assert mark_missed([s], cycle, date(2026, 11, 11)) == []
 
 
 def test_warning_counts_scheduled_sync_error_as_exported():

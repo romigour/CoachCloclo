@@ -19,14 +19,14 @@ from coach.services.laps import (
     latest_zones,
     session_comparison,
 )
-from tests.plan.factories import make_activity, make_db_session, make_goal
+from tests.plan.factories import make_activity, make_db_session, make_cycle
 
 LAP = LapSummary(index=0, duration_s=600, distance_m=1800, step_order=1)
 
 
 def _matched_activity(repo, garmin_id=1):
-    goal = repo.add(make_goal())
-    session = repo.add(make_db_session(goal.id))
+    cycle = repo.add(make_cycle())
+    session = repo.add(make_db_session(cycle.id))
     activity = repo.add(make_activity(garmin_activity_id=garmin_id, session_id=session.id))
     return session, activity
 
@@ -75,8 +75,8 @@ def _recording(garmin, behaviour):
 
 
 def _many_matched(repo, n):
-    goal = repo.add(make_goal())
-    session = repo.add(make_db_session(goal.id))
+    cycle = repo.add(make_cycle())
+    session = repo.add(make_db_session(cycle.id))
     return [repo.add(make_activity(garmin_activity_id=i, session_id=session.id)) for i in range(1, n + 1)]
 
 
@@ -141,8 +141,8 @@ def test_fetch_laps_never_raises(repo, error):
 
 
 def test_session_comparison_reasons(repo):
-    goal = repo.add(make_goal())
-    session = repo.add(make_db_session(goal.id))
+    cycle = repo.add(make_cycle())
+    session = repo.add(make_db_session(cycle.id))
     assert session_comparison(repo, session, None) == "no_activity"
 
     activity = repo.add(make_activity(session_id=session.id))

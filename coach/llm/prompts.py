@@ -10,7 +10,7 @@ from coach.analysis.zones import Zones
 from coach.llm.schemas import AdjustmentResponse, PlanResponse, Weekday
 from coach.plan.calendar import week_of
 from coach.plan.constraints import PlanConstraints
-from coach.plan.models import Activity, Event, Goal, Session
+from coach.plan.models import Activity, Cycle, Event, Goal, Session
 
 HISTORY_WEEKS = 8
 HISTORY_MAX_LINES = 60
@@ -177,8 +177,7 @@ def _goal_text(goal: Goal, *, generation: bool = False) -> str:
     """`generation` : un temps issu d'une estimation de Claude est présenté comme estimation précédente."""
     text = (
         f"Objectif : course de type {goal.type}, {goal.distance_km:g} km, "
-        f"{goal.d_plus_m} m de D+, le {goal.race_date.isoformat()}. "
-        f"Le plan débute le {goal.plan_start.isoformat()}."
+        f"{goal.d_plus_m} m de D+, le {goal.race_date.isoformat()}."
     )
     if goal.target_time_s is not None:
         if generation and goal.target_source == "claude":
@@ -186,6 +185,19 @@ def _goal_text(goal: Goal, *, generation: bool = False) -> str:
         else:
             text += f" Temps visé : {fmt_duration(goal.target_time_s)}."
     return text
+
+
+def _main_goal(goals: list[Goal]) -> Goal:
+    """Objectif décrit dans le prompt : le premier Principal du cycle, sinon le premier (un seul en pratique)."""
+    if not goals:
+        raise ValueError("le cycle n'a aucun objectif")
+    return next((g for g in goals if g.priority == "principal"), goals[0])
+
+
+def _cycle_text(cycle: Cycle, goals: list[Goal], *, generation: bool = False) -> str:
+    """Objectif du cycle suivi du début du plan (texte d'un cycle à objectif unique)."""
+    start = f" Le plan débute le {cycle.plan_start.isoformat()}."
+    return _goal_text(_main_goal(goals), generation=generation) + start
 
 
 _BIKE_RULE = (
@@ -246,9 +258,9 @@ def _events_text(c: PlanConstraints) -> str | None:
     return "Imprévus :\n" + "\n".join(_event_line(e, c) for e in events)
 
 
-def _today_text(goal: Goal, today: dt.date) -> str:
+def _today_text(cycle: Cycle, today: dt.date) -> str:
     """« Aujourd'hui : mercredi 4 novembre 2026 (semaine 1). »"""
-    week = week_of(goal, today)
+    week = week_of(cycle, today)
     return (
         f"Aujourd'hui : {_WEEKDAYS[today.weekday()]} {today.day} {_MONTHS[today.month - 1]} "
         f"{today.year} (semaine {week})."
@@ -285,22 +297,32 @@ def _schema_text(model) -> str:
 
 
 def build_generation_prompt(
-    goal: Goal,
+    cycle: Cycle,
+    goals: list[Goal],
+    horizon: list[Goal],
     zones: Zones,
     history: list[Activity],
     n_weeks: int,
-    gpx_text: str | None,
+    gpx_texts: list[str],
     today: dt.date | None = None,
-    race_text: str | None = None,
+    race_texts: list[str] = (),
     constraints: PlanConstraints | None = None,
+    *,
+    first_week: int = 1,
+    fixed: list[Session] = (),
+    recovery_note: str | None = None,
 ) -> str:
-    """Prompt de génération du plan complet ; `today` situe le jour courant dans la semaine 1."""
+    """Prompt de génération du plan complet du cycle ; `today` situe le jour courant dans la semaine 1.
+
+    `horizon`, `first_week`, `fixed` et `recovery_note` ne sont pas encore repris dans le texte.
+    """
+    goal = _main_goal(goals)
     parts = [
-        _goal_text(goal, generation=True) + (" " + _today_text(goal, today) if today is not None else ""),
+        _cycle_text(cycle, goals, generation=True) + (" " + _today_text(cycle, today) if today is not None else ""),
         *([_availability_text(constraints)] if constraints is not None else []),
         *([t] if constraints is not None and (t := _events_text(constraints)) else []),
-        f"Construis un plan de {n_weeks} semaines, avec au plus {goal.sessions_per_week} séances "
-        f"par semaine ({goal.sessions_per_week} séances). Aujourd'hui correspond à la semaine 1 ; "
+        f"Construis un plan de {n_weeks} semaines, avec au plus {cycle.sessions_per_week} séances "
+        f"par semaine ({cycle.sessions_per_week} séances). Aujourd'hui correspond à la semaine 1 ; "
         f"la dernière semaine se termine à la course. Numérote les semaines de 1 à {n_weeks} "
         "et les séances de chaque semaine à partir de 1 (champ order).",
     ]
@@ -315,10 +337,8 @@ def build_generation_prompt(
         _zones_text(zones),
         _history_text(history),
     ]
-    if gpx_text:
-        parts.append("Profil du parcours (GPX) :\n" + gpx_text)
-    if race_text:
-        parts.append(race_text)
+    parts += ["Profil du parcours (GPX) :\n" + t for t in gpx_texts if t]
+    parts += [t for t in race_texts if t]
     parts.append("Schéma JSON attendu :\n" + _schema_text(PlanResponse))
     return "\n\n".join(parts)
 
@@ -347,7 +367,9 @@ def _done_block(s: Session, a: Activity, comparisons: dict[int, StepComparison])
 
 
 def build_adjustment_prompt(
-    goal: Goal,
+    cycle: Cycle,
+    goals: list[Goal],
+    horizon: list[Goal],
     zones: Zones,
     current_week: int,
     done: list[tuple[Session, Activity]],
@@ -355,7 +377,7 @@ def build_adjustment_prompt(
     upcoming: list[Session],
     history: list[Activity],
     comparisons: dict[int, StepComparison] | None = None,
-    race_text: str | None = None,
+    race_texts: list[str] = (),
     change_note: str | None = None,
     constraints: PlanConstraints | None = None,
 ) -> str:
@@ -363,14 +385,15 @@ def build_adjustment_prompt(
 
     `comparisons` (clé = Session.id) ajoute le détail par étape sous les séances réalisées concernées.
     `change_note` signale une modification de l'objectif, insérée juste après le descriptif de l'objectif.
+    `horizon` n'est pas encore repris dans le texte.
     """
     comparisons = comparisons or {}
     parts = [
-        _goal_text(goal),
+        _cycle_text(cycle, goals),
         *([change_note] if change_note else []),
         *([_availability_text(constraints)] if constraints is not None else []),
         *([t] if constraints is not None and (t := _events_text(constraints)) else []),
-        f"Nous sommes en semaine {current_week} du plan, à raison de {goal.sessions_per_week} séances "
+        f"Nous sommes en semaine {current_week} du plan, à raison de {cycle.sessions_per_week} séances "
         "maximum par semaine. Analyse les séances réalisées et manquées, puis propose des ajustements "
         "pour les séances à venir (liste vide si aucun changement n'est utile).",
         _zones_text(zones),
@@ -384,11 +407,10 @@ def build_adjustment_prompt(
         "modifiées (op modify, avec session_id) ou supprimées (op remove) ; les séances `done`, "
         "`missed` ou `sync_error` sont intouchables. Une séance `exported` reste dans sa semaine ; "
         "chaque session_id apparaît au plus une fois. Un ajout (op add) ou une modification doit "
-        f"respecter le maximum de {goal.sessions_per_week} séances par semaine et viser la semaine "
+        f"respecter le maximum de {cycle.sessions_per_week} séances par semaine et viser la semaine "
         f"{current_week} ou une suivante.",
         _history_text(history),
     ]
-    if race_text:
-        parts.append(race_text)
+    parts += [t for t in race_texts if t]
     parts.append("Schéma JSON attendu :\n" + _schema_text(AdjustmentResponse))
     return "\n\n".join(parts)

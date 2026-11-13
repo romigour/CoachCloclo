@@ -16,7 +16,8 @@ from coach.llm.provider import FakeLLMProvider, LLMError, LLMUsageLimit
 from coach.plan.models import Activity, AthleteSnapshot, Race
 from coach.services.history import HistoryState, save_state
 from tests.llm.factories import valid_plan_json
-from tests.plan.factories import make_activity, make_db_session, make_goal
+from coach.plan.repo import Repo, make_engine
+from tests.plan.factories import make_activity, make_cycle, make_db_session
 from tests.services.test_sync import adjustment_json
 
 FIXTURES = Path(__file__).parent.parent / "fixtures" / "gpx"
@@ -79,7 +80,7 @@ def fake_garmin():
 
 @pytest.fixture
 def make_client(repo, fake_garmin):
-    def build(*, lan=False, garmin=None, llm=None, login=None, **kw):
+    def build(*, lan=False, garmin=None, llm=None, login=None, db=None, **kw):
         def garmin_factory():
             if garmin == "auth":
                 raise GarminAuthRequired("pas de jetons")
@@ -89,7 +90,7 @@ def make_client(repo, fake_garmin):
             lan=lan,
             garmin_factory=garmin_factory,
             llm_factory=lambda: llm or FakeLLMProvider([]),
-            repo=repo,
+            repo=db or repo,
             login_client=login or FakeLogin(False),
             extra_hosts={"testserver"},
             **kw,
@@ -123,7 +124,8 @@ def test_status_reports_auth_required(make_client):
     assert r.status_code == 200
     body = r.json()
     assert body["garmin"] == "auth_required"
-    assert body["goal"] is None and body["pending_proposal_id"] is None
+    assert body["cycle"] is None and body["next_goal"] is None and body["goals"] == []
+    assert body["pending_proposal_id"] is None
     assert body["llm_mode"] == "cli"
 
 
@@ -183,13 +185,16 @@ def test_goal_with_gpx_created(make_client):
 
 def test_generate_accept_and_plan(make_client):
     client = make_client(llm=FakeLLMProvider([valid_plan_json(14, 3)]))
-    assert client.get("/api/plan").json() == {"goal": None, "weeks": []}
+    assert client.get("/api/plan").json() == {
+        "cycle": None, "goals": [], "horizon": [], "open_injury": None, "weeks": []
+    }
     goal = _create_goal(client).json()
-    assert client.post(f"/api/goals/{goal['id']}/generate").status_code == 200
-    assert client.post(f"/api/goals/{goal['id']}/accept").json() == {"status": "ok"}
+    assert client.post("/api/cycle/generate").status_code == 200
+    assert client.post("/api/cycle/accept").json() == {"status": "ok"}
 
     plan = client.get("/api/plan").json()
-    assert plan["goal"]["id"] == goal["id"] and plan["goal"]["plan_accepted"] is True
+    assert [g["id"] for g in plan["goals"]] == [goal["id"]] and plan["horizon"] == []
+    assert plan["cycle"]["plan_accepted"] is True and plan["cycle"]["end_date"] == goal["race_date"]
     assert len(plan["weeks"]) == 14
     week1 = plan["weeks"][0]
     assert week1["week_index"] == 1 and week1["week_monday"] == "2026-11-02"
@@ -197,13 +202,15 @@ def test_generate_accept_and_plan(make_client):
     s = week1["sessions"][0]
     assert s["status"] == "todo" and isinstance(s["steps"], list) and s["steps"][0]["kind"] == "warmup"
     assert s["suggested_day"] and s["scheduled_date"] is None and s["sync_error"] is None
-    assert client.get("/api/status").json()["goal"]["id"] == goal["id"]
+    status = client.get("/api/status").json()
+    assert status["next_goal"]["id"] == goal["id"] and status["next_goal"]["priority"] == "principal"
+    assert [g["id"] for g in status["goals"]] == [goal["id"]] and status["cycle"]["id"] == plan["cycle"]["id"]
 
 
 def _accepted_goal(client) -> dict:
     goal = _create_goal(client).json()
-    client.post(f"/api/goals/{goal['id']}/generate")
-    client.post(f"/api/goals/{goal['id']}/accept")
+    client.post("/api/cycle/generate")
+    client.post("/api/cycle/accept")
     return goal
 
 
@@ -230,8 +237,8 @@ def test_patch_goal_invalid(make_client):
 def test_export_check_returns_warnings(make_client):
     client = make_client(llm=FakeLLMProvider([valid_plan_json(14, 3)]))
     goal = _create_goal(client).json()
-    client.post(f"/api/goals/{goal['id']}/generate")
-    client.post(f"/api/goals/{goal['id']}/accept")
+    client.post("/api/cycle/generate")
+    client.post("/api/cycle/accept")
     sid = client.get("/api/plan").json()["weeks"][0]["sessions"][0]["id"]
     r = client.get(f"/api/sessions/{sid}/export-check", params={"date": "2026-11-03"})
     assert r.status_code == 200 and r.json() == {"warnings": []}
@@ -243,9 +250,20 @@ def test_post_goal_available_days(make_client):
     client = make_client()
     r = _create_goal(client, available_days="mardi,jeudi,dimanche", long_run_day="dimanche")
     assert r.status_code == 200
-    assert r.json()["available_days"] == ["mardi", "jeudi", "dimanche"]
-    assert r.json()["long_run_day"] == "dimanche"
-    assert _create_goal(make_client()).json()["available_days"][0] == "lundi"  # absent : 7 jours
+    cycle = client.get("/api/status").json()["cycle"]
+    assert cycle["available_days"] == ["mardi", "jeudi", "dimanche"]
+    assert cycle["long_run_day"] == "dimanche"
+    client = make_client()
+    _create_goal(client)
+    assert client.get("/api/status").json()["cycle"]["available_days"][0] == "lundi"  # absent : 7 jours
+
+
+def test_post_goal_priority(make_client):
+    client = make_client()
+    assert _create_goal(client).json()["priority"] == "principal"  # absent : principal
+    assert _create_goal(client, priority="plaisir").json()["priority"] == "plaisir"
+    r = _create_goal(client, priority="inconnue")
+    assert r.status_code == 422 and r.json()["code"] == "invalid"
 
 
 def test_post_goal_invalid_available_day(make_client):
@@ -261,30 +279,72 @@ def test_post_goal_too_few_available_days(make_client):
 def test_plan_exposes_available_days(make_client):
     client = make_client(llm=FakeLLMProvider([valid_plan_json(14, 3)]))
     goal = _create_goal(client, available_days="mardi,jeudi,dimanche").json()
-    client.post(f"/api/goals/{goal['id']}/generate")
-    client.post(f"/api/goals/{goal['id']}/accept")
-    assert client.get("/api/plan").json()["goal"]["available_days"] == ["mardi", "jeudi", "dimanche"]
+    client.post("/api/cycle/generate")
+    client.post("/api/cycle/accept")
+    assert client.get("/api/plan").json()["cycle"]["available_days"] == ["mardi", "jeudi", "dimanche"]
 
 
-def test_patch_goal_available_days(make_client):
+def test_patch_cycle_available_days(make_client):
     client = make_client(llm=FakeLLMProvider([valid_plan_json(14, 3), adjustment_json(), adjustment_json()]))
-    goal = _accepted_goal(client)
+    _accepted_goal(client)
     r = client.patch(
-        f"/api/goals/{goal['id']}",
+        "/api/cycle",
         json={"available_days": ["mardi", "jeudi", "dimanche"], "long_run_day": "dimanche"},
     )
     assert r.status_code == 200
-    assert r.json()["goal"]["available_days"] == ["mardi", "jeudi", "dimanche"]
-    assert r.json()["goal"]["long_run_day"] == "dimanche"
-    r = client.patch(f"/api/goals/{goal['id']}", json={"long_run_day": ""})
-    assert r.status_code == 200 and r.json()["goal"]["long_run_day"] is None
+    assert r.json()["cycle"]["available_days"] == ["mardi", "jeudi", "dimanche"]
+    assert r.json()["cycle"]["long_run_day"] == "dimanche"
+    r = client.patch("/api/cycle", json={"long_run_day": ""})
+    assert r.status_code == 200 and r.json()["cycle"]["long_run_day"] is None
+
+
+def test_patch_goal_ignores_plan_settings(make_client):
+    client = make_client(llm=FakeLLMProvider([valid_plan_json(14, 3)]))
+    goal = _accepted_goal(client)
+    r = client.patch(f"/api/goals/{goal['id']}", json={"include_bike": True})
+    assert r.status_code == 422 and r.json()["detail"] == "Aucune modification"
+
+
+def test_patch_cycle_settings_asks_adjustment(make_client):
+    client = make_client(llm=FakeLLMProvider([valid_plan_json(14, 3), adjustment_json()]))
+    _accepted_goal(client)
+    r = client.patch("/api/cycle", json={"include_bike": True})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["cycle"]["include_bike"] is True and isinstance(body["proposal_id"], int)
+    assert client.get("/api/proposals/pending").json()["id"] == body["proposal_id"]
+    assert client.get("/api/status").json()["cycle"]["include_bike"] is True
+
+
+def test_patch_cycle_without_plan_is_422(make_client):
+    r = make_client().patch("/api/cycle", json={"include_bike": True})
+    assert r.status_code == 422 and r.json()["detail"] == "Aucun plan en cours"
+
+
+def test_generate_without_cycle_is_422(make_client):
+    client = make_client(llm=FakeLLMProvider([valid_plan_json(14, 3)]))
+    for url in ("/api/cycle/generate", "/api/cycle/accept"):
+        r = client.post(url)
+        assert r.status_code == 422 and r.json() == {"code": "invalid", "detail": "Aucun plan en cours"}
+
+
+def test_status_after_migration(make_client, tmp_path):
+    from tests.plan.test_repo import _old_db_with_plan
+
+    path = tmp_path / "old.db"
+    _old_db_with_plan(path)
+    body = make_client(db=Repo(make_engine(path))).get("/api/status").json()
+    assert body["cycle"]["id"] == 7 and body["cycle"]["plan_accepted"] is True
+    assert body["cycle"]["sessions_per_week"] == 4 and body["cycle"]["end_date"] == "2027-01-31"
+    assert body["next_goal"]["id"] == 7 and body["next_goal"]["priority"] == "principal"
+    assert [g["id"] for g in body["goals"]] == [7]
 
 
 def test_export_check_warns_on_unavailable_day(make_client):
     client = make_client(llm=FakeLLMProvider([valid_plan_json(14, 3)]))
     goal = _create_goal(client, available_days="mardi,jeudi,dimanche").json()
-    client.post(f"/api/goals/{goal['id']}/generate")
-    client.post(f"/api/goals/{goal['id']}/accept")
+    client.post("/api/cycle/generate")
+    client.post("/api/cycle/accept")
     sid = client.get("/api/plan").json()["weeks"][0]["sessions"][0]["id"]
     r = client.get(f"/api/sessions/{sid}/export-check", params={"date": "2026-11-02"})  # lundi
     assert "Jour hors de tes disponibilités" in r.json()["warnings"]
@@ -295,8 +355,8 @@ def test_export_check_warns_on_unavailable_day(make_client):
 def test_export_and_unschedule(make_client, fake_garmin):
     client = make_client(llm=FakeLLMProvider([valid_plan_json(14, 3)]))
     goal = _create_goal(client).json()
-    client.post(f"/api/goals/{goal['id']}/generate")
-    client.post(f"/api/goals/{goal['id']}/accept")
+    client.post("/api/cycle/generate")
+    client.post("/api/cycle/accept")
     # zones nécessaires à l'export : générées par la génération (snapshot)
     sid = client.get("/api/plan").json()["weeks"][0]["sessions"][0]["id"]
     r = client.post(f"/api/sessions/{sid}/export", json={"date": "2026-11-03"})  # avant aujourd'hui
@@ -317,7 +377,7 @@ def test_sync_returns_result(make_client):
 def test_manual_match(make_client, repo):
     client = make_client(llm=FakeLLMProvider([valid_plan_json(14, 3)]))
     goal = _create_goal(client).json()
-    client.post(f"/api/goals/{goal['id']}/generate")
+    client.post("/api/cycle/generate")
     sid = client.get("/api/plan").json()["weeks"][0]["sessions"][0]["id"]
     from datetime import date
 
@@ -337,8 +397,8 @@ LAP = LapSummary(index=0, duration_s=600, distance_m=1800, avg_hr=140, step_orde
 
 def _db_session(repo, **kw):
     """Séance persistée (un échauffement Z2 de 10 min) sans activité."""
-    goal = repo.add(make_goal())
-    return repo.add(make_db_session(goal.id, **kw))
+    cycle = repo.add(make_cycle())
+    return repo.add(make_db_session(cycle.id, **kw))
 
 
 def _zones() -> Zones:
@@ -448,9 +508,9 @@ def test_manual_match_ok_when_laps_fail(make_client, repo):
 
 
 def test_rematched_activity_keeps_its_laps(make_client, repo):
-    goal = repo.add(make_goal())
-    first = repo.add(make_db_session(goal.id))
-    second = repo.add(make_db_session(goal.id, order=2))
+    cycle = repo.add(make_cycle())
+    first = repo.add(make_db_session(cycle.id))
+    second = repo.add(make_db_session(cycle.id, order=2))
     act = repo.add(make_activity(garmin_activity_id=7, session_id=first.id))
     repo.save_laps(act.id, [LAP])
     garmin = CountingGarmin(laps={7: [LAP]})
@@ -466,9 +526,9 @@ def test_activities_of_plan_week(make_client, repo):
     from datetime import date
 
     client = make_client(llm=FakeLLMProvider([valid_plan_json(14, 3)]))
-    assert client.get("/api/activities?week=1").json() == []  # pas d'objectif
+    assert client.get("/api/activities?week=1").json() == []  # pas de cycle
     goal = _create_goal(client).json()
-    monday = date.fromisoformat(client.get("/api/plan").json()["goal"]["plan_start"])
+    monday = date.fromisoformat(client.get("/api/plan").json()["cycle"]["plan_start"])
     from datetime import timedelta
 
     inside = repo.add(Activity(garmin_activity_id=11, date=monday + timedelta(days=6), type_key="running",
@@ -529,7 +589,7 @@ def test_activities_respects_host_and_pin(make_client):
 def test_llm_limit_maps_to_429_with_code(make_client):
     client = make_client(llm=LimitedLLM())
     goal = _create_goal(client).json()
-    r = client.post(f"/api/goals/{goal['id']}/generate")
+    r = client.post("/api/cycle/generate")
     assert r.status_code == 429
     assert r.json()["code"] == "llm_limit"
 
@@ -537,7 +597,7 @@ def test_llm_limit_maps_to_429_with_code(make_client):
 def test_generic_llm_error_maps_to_502_on_generate(make_client):
     client = make_client(llm=BrokenLLM())
     goal = _create_goal(client).json()
-    r = client.post(f"/api/goals/{goal['id']}/generate")
+    r = client.post("/api/cycle/generate")
     assert r.status_code == 502
     assert r.json() == {
         "code": "llm_error",
@@ -552,8 +612,8 @@ def test_generic_llm_error_maps_to_502_on_sync(make_client, fake_garmin):
 
     client = make_client(llm=FakeLLMProvider([valid_plan_json(14, 3)]))
     goal = _create_goal(client).json()
-    client.post(f"/api/goals/{goal['id']}/generate")
-    client.post(f"/api/goals/{goal['id']}/accept")
+    client.post("/api/cycle/generate")
+    client.post("/api/cycle/accept")
     session = client.get("/api/plan").json()["weeks"][0]["sessions"][0]
     assert client.post(f"/api/sessions/{session['id']}/export", json={"date": "2026-11-05"}).status_code == 200
     fake_garmin._activities = [
@@ -997,12 +1057,12 @@ def _event_client(make_client, *extra):
 
 def test_post_event_creates_it_and_proposal(make_client):
     client, goal = _event_client(make_client, adjustment_json())
-    r = client.post(f"/api/goals/{goal['id']}/events", json={**UNAVAILABLE, "note": "voyage"})
+    r = client.post("/api/cycle/events", json={**UNAVAILABLE, "note": "voyage"})
     assert r.status_code == 200
     body = r.json()
     assert isinstance(body["event_id"], int) and isinstance(body["proposal_id"], int) and body["error"] is None
     assert client.get("/api/proposals/pending").json()["id"] == body["proposal_id"]
-    assert client.get(f"/api/goals/{goal['id']}/events").json() == [
+    assert client.get("/api/cycle/events").json() == [
         {
             "id": body["event_id"], "kind": "unavailable", "start_date": "2026-10-10", "end_date": "2026-10-12",
             "max_sessions": None, "days": None, "session_id": None, "note": "voyage",
@@ -1012,14 +1072,14 @@ def test_post_event_creates_it_and_proposal(make_client):
 
 def test_post_event_claude_failure_keeps_event(make_client):
     client, goal = _event_client(make_client, "pas du json")
-    body = client.post(f"/api/goals/{goal['id']}/events", json=UNAVAILABLE).json()
+    body = client.post("/api/cycle/events", json=UNAVAILABLE).json()
     assert body["proposal_id"] is None and body["error"]
-    assert len(client.get(f"/api/goals/{goal['id']}/events").json()) == 1
+    assert len(client.get("/api/cycle/events").json()) == 1
 
 
 def test_post_event_invalid_returns_422(make_client):
     client, goal = _event_client(make_client)
-    url = f"/api/goals/{goal['id']}/events"
+    url = "/api/cycle/events"
     for body in (
         {"kind": "inconnu"},
         {"kind": "unavailable", "start_date": "2026-11-10"},  # fin manquante (service)
@@ -1029,21 +1089,29 @@ def test_post_event_invalid_returns_422(make_client):
         assert r.status_code == 422 and r.json()["code"] == "invalid"
 
 
-def test_post_event_unknown_goal_returns_422(make_client):
-    r = make_client().post("/api/goals/999/events", json=UNAVAILABLE)
-    assert r.status_code == 422 and r.json()["code"] == "invalid"
+def test_post_event_without_cycle_returns_422(make_client):
+    r = make_client().post("/api/cycle/events", json=UNAVAILABLE)
+    assert r.status_code == 422 and r.json() == {"code": "invalid", "detail": "Aucun plan en cours"}
 
 
-def test_get_events_unknown_goal_is_404(make_client):
-    r = make_client().get("/api/goals/999/events")
-    assert r.status_code == 404 and r.json() == {"code": "not_found", "detail": "Objectif introuvable"}
+def test_post_event_on_draft_plan_returns_422(make_client):
+    client = make_client(llm=FakeLLMProvider([valid_plan_json(14, 3)]))
+    _create_goal(client)
+    client.post("/api/cycle/generate")
+    r = client.post("/api/cycle/events", json=UNAVAILABLE)
+    assert r.status_code == 422 and r.json()["detail"] == "Le plan doit être validé"
+
+
+def test_get_events_without_cycle_is_empty(make_client):
+    r = make_client().get("/api/cycle/events")
+    assert r.status_code == 200 and r.json() == []
 
 
 def test_delete_event(make_client):
     client, goal = _event_client(make_client, adjustment_json())
-    event_id = client.post(f"/api/goals/{goal['id']}/events", json=UNAVAILABLE).json()["event_id"]
+    event_id = client.post("/api/cycle/events", json=UNAVAILABLE).json()["event_id"]
     assert client.delete(f"/api/events/{event_id}").json() == {"status": "ok"}
-    assert client.get(f"/api/goals/{goal['id']}/events").json() == []
+    assert client.get("/api/cycle/events").json() == []
 
 
 def test_delete_event_unknown_is_404(make_client):
@@ -1055,19 +1123,19 @@ def test_resume_injury_and_open_injury_in_plan(make_client):
     # un arrêt ouvert bloque tout le plan : la réponse vide est refusée (2 essais) tant qu'il n'est pas clos
     client, goal = _event_client(make_client, adjustment_json(), adjustment_json(), adjustment_json())
     injury = {"kind": "injury", "start_date": "2026-10-01", "note": "genou"}
-    event_id = client.post(f"/api/goals/{goal['id']}/events", json=injury).json()["event_id"]
+    event_id = client.post("/api/cycle/events", json=injury).json()["event_id"]
     open_injury = client.get("/api/plan").json()["open_injury"]
     assert open_injury["id"] == event_id and open_injury["end_date"] is None and open_injury["note"] == "genou"
 
     r = client.post(f"/api/events/{event_id}/resume", json={"date": "2026-10-10"})
     assert r.status_code == 200 and r.json()["event_id"] == event_id and r.json()["error"] is None
     assert client.get("/api/plan").json()["open_injury"] is None
-    assert client.get(f"/api/goals/{goal['id']}/events").json()[0]["end_date"] == "2026-10-09"
+    assert client.get("/api/cycle/events").json()[0]["end_date"] == "2026-10-09"
 
 
 def test_resume_invalid_returns_422(make_client):
     client, goal = _event_client(make_client, adjustment_json())
-    event_id = client.post(f"/api/goals/{goal['id']}/events", json=UNAVAILABLE).json()["event_id"]
+    event_id = client.post("/api/cycle/events", json=UNAVAILABLE).json()["event_id"]
     r = client.post(f"/api/events/{event_id}/resume", json={"date": "2026-11-20"})  # pas un arrêt ouvert
     assert r.status_code == 422 and r.json()["code"] == "invalid"
     r = client.post(f"/api/events/{event_id}/resume", json={"date": "pas une date"})
@@ -1086,13 +1154,13 @@ def test_plan_open_injury_is_null_without_injury(make_client):
 
 def test_post_adjust(make_client):
     client, goal = _event_client(make_client, adjustment_json())
-    body = client.post(f"/api/goals/{goal['id']}/adjust").json()
+    body = client.post("/api/cycle/adjust").json()
     assert isinstance(body["proposal_id"], int)
     assert client.get("/api/proposals/pending").json()["id"] == body["proposal_id"]
 
 
-def test_post_adjust_invalid_goal_returns_422(make_client):
-    r = make_client().post("/api/goals/999/adjust")
+def test_post_adjust_without_cycle_returns_422(make_client):
+    r = make_client().post("/api/cycle/adjust")
     assert r.status_code == 422 and r.json()["code"] == "invalid"
 
 
@@ -1100,19 +1168,20 @@ def test_post_adjust_llm_limit_maps_to_429(make_client):
     client = make_client(llm=FakeLLMProvider([valid_plan_json(14, 3)]))
     goal = _accepted_goal(client)
     limited = make_client(llm=LimitedLLM())
-    r = limited.post(f"/api/goals/{goal['id']}/adjust")
+    r = limited.post("/api/cycle/adjust")
     assert r.status_code == 429 and r.json()["code"] == "llm_limit"
 
 
-def test_goal_include_bike_roundtrip(make_client):
+def test_cycle_include_bike_roundtrip(make_client):
     client = make_client(llm=FakeLLMProvider([valid_plan_json(14, 3), adjustment_json()]))
-    assert _create_goal(make_client()).json()["include_bike"] is False
-    goal = _create_goal(client, include_bike="true").json()
-    assert goal["include_bike"] is True
-    client.post(f"/api/goals/{goal['id']}/generate")
-    client.post(f"/api/goals/{goal['id']}/accept")
+    other = make_client()
+    _create_goal(other)
+    assert other.get("/api/status").json()["cycle"]["include_bike"] is False
+    _create_goal(client, include_bike="true")
+    client.post("/api/cycle/generate")
+    client.post("/api/cycle/accept")
     plan = client.get("/api/plan").json()
-    assert plan["goal"]["include_bike"] is True
+    assert plan["cycle"]["include_bike"] is True
     assert all(s["sport"] == "run" for w in plan["weeks"] for s in w["sessions"])
-    r = client.patch(f"/api/goals/{goal['id']}", json={"include_bike": False})
-    assert r.status_code == 200 and r.json()["goal"]["include_bike"] is False
+    r = client.patch("/api/cycle", json={"include_bike": False})
+    assert r.status_code == 200 and r.json()["cycle"]["include_bike"] is False

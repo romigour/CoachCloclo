@@ -15,7 +15,7 @@ from coach.llm.provider import LLMProvider
 from coach.llm.schemas import AdjustmentResponse, validate_adjustment
 from coach.plan.calendar import n_weeks, week_of
 from coach.plan.constraints import constraint_errors, planned_after_adjustment
-from coach.plan.models import Activity, Goal, Proposal, Session
+from coach.plan.models import Activity, Cycle, Goal, Proposal, Session
 from coach.plan.repo import Repo
 from coach.services.context import load_constraints, recent_history, refresh_snapshot
 from coach.services.laps import session_comparison
@@ -26,7 +26,7 @@ def ask_adjustment(
     repo: Repo,
     garmin: GarminPort,
     llm: LLMProvider,
-    goal: Goal,
+    cycle: Cycle,
     zones: Zones,
     sessions: list[Session],
     today: date,
@@ -34,9 +34,18 @@ def ask_adjustment(
     done: list[tuple[Session, Activity]] = (),
     missed: list[Session] = (),
     change_note: str | None = None,
+    goals: list[Goal] | None = None,
 ) -> AdjustmentResponse:
-    """Demande l'ajustement à Claude. `goal` peut être une copie non enregistrée ; n'écrit rien."""
-    current_week = week_of(goal, today)
+    """Demande l'ajustement à Claude ; n'écrit rien.
+
+    `cycle` peut être une copie non enregistrée. Les objectifs sont lus dans le dépôt (`goals_in`,
+    `horizon_goals`), sauf si `goals` est fourni (objectifs du cycle, parmi lesquels une copie
+    modifiée non enregistrée).
+    """
+    if goals is None:
+        goals = repo.goals_in(cycle)
+    horizon = repo.horizon_goals(cycle)
+    current_week = week_of(cycle, today)
     upcoming = [s for s in sessions if s.status in ("todo", "exported") and s.week_index >= current_week]
     counts: dict[int, int] = {}
     for s in (x for x in sessions if not x.pending_removal):
@@ -46,7 +55,7 @@ def ask_adjustment(
     for s in sessions:
         if s.status not in ("todo", "exported") and not s.pending_removal:
             fixed_counts[s.week_index] = fixed_counts.get(s.week_index, 0) + 1
-    constraints = load_constraints(repo, goal, today)
+    constraints = load_constraints(repo, cycle, today)
     editable = {s.id for s in upcoming}
     week_of_session = {s.id: s.week_index for s in sessions}
 
@@ -55,10 +64,11 @@ def ask_adjustment(
         comparison = session_comparison(repo, s, zones)
         if isinstance(comparison, StepComparison):
             comparisons[s.id] = comparison
+    race_texts = [t for g in goals if (t := race_line_for_prompt(repo, g, today))]
     prompt = build_adjustment_prompt(
-        goal, zones, current_week, list(done), list(missed), upcoming, recent_history(garmin),
+        cycle, goals, horizon, zones, current_week, list(done), list(missed), upcoming, recent_history(garmin),
         comparisons,
-        race_text=race_line_for_prompt(repo, goal, today),
+        race_texts=race_texts,
         change_note=change_note,
         constraints=constraints,
     )
@@ -71,14 +81,14 @@ def ask_adjustment(
             a,
             editable_ids=editable,
             current_week=current_week,
-            n_weeks=n_weeks(goal.plan_start, goal.race_date),
-            sessions_per_week=goal.sessions_per_week,
+            n_weeks=n_weeks(cycle.plan_start, cycle.end_date),
+            sessions_per_week=cycle.sessions_per_week,
             counts_by_week=counts,
             pace_available=zones.pace is not None,
             week_of_session=week_of_session,
             exported_ids={s.id for s in upcoming if s.status == "exported"},
         )
-        + constraint_errors(planned_after_adjustment(goal, upcoming, a), constraints, fixed_counts=fixed_counts),
+        + constraint_errors(planned_after_adjustment(cycle, upcoming, a), constraints, fixed_counts=fixed_counts),
     )
 
 
@@ -100,22 +110,22 @@ def request_adjustment(
     repo: Repo,
     garmin: GarminPort,
     llm: LLMProvider,
-    goal_id: int,
     note: str | None = None,
     missed: list[Session] = (),
 ) -> int:
     """Demande un ajustement à Claude, l'enregistre en proposition et renvoie son id.
 
-    Les imprévus enregistrés sont transmis par `ask_adjustment` ; `note` décrit ce qui vient de changer.
+    Porte sur le cycle actif. Les imprévus enregistrés sont transmis par `ask_adjustment` ; `note` décrit
+    ce qui vient de changer.
     """
-    from coach.services.plans import GoalError, _get_goal  # import tardif : plans importe ce module
+    from coach.services.plans import GoalError, _active_cycle  # import tardif : plans importe ce module
 
-    goal = _get_goal(repo, goal_id)
-    if not goal.plan_accepted:
-        raise GoalError("Le plan de l'objectif doit être validé")
+    cycle = _active_cycle(repo)
+    if not cycle.plan_accepted:
+        raise GoalError("Le plan doit être validé")
     _, zones = refresh_snapshot(repo, garmin)
     adj = ask_adjustment(
-        repo, garmin, llm, goal, zones, repo.sessions(goal_id), garmin.today(), missed=list(missed), change_note=note
+        repo, garmin, llm, cycle, zones, repo.sessions(cycle.id), garmin.today(), missed=list(missed), change_note=note
     )
     with repo.transaction() as db:
         proposal_id = save_proposal(db, adj)

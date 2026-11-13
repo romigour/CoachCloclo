@@ -215,13 +215,16 @@ const accepted = mkCycle({ plan_accepted: true });
 
 type Write = (url: string, init: RequestInit) => Response;
 /** API d'un cycle validé : `goals` du statut (à venir) ; les écritures passent par `onwrite`. */
-function server(opts: { goals?: unknown[]; cycle?: () => unknown; onwrite?: Write } = {}) {
+function server(
+  opts: { goals?: unknown[]; past?: unknown[]; lastCycle?: unknown; cycle?: () => unknown; onwrite?: Write } = {},
+) {
   const goals = opts.goals ?? [principal, secondaire];
   const f = vi.fn(async (url: string, init?: RequestInit) => {
     const method = init?.method ?? "GET";
     if (method !== "GET" && opts.onwrite) return opts.onwrite(url, init!);
-    const cycle = opts.cycle?.() ?? accepted;
-    if (url === "/api/status") return json({ cycle, goals, next_goal: goals[0] ?? null });
+    const cycle = opts.cycle ? opts.cycle() : accepted;
+    if (url === "/api/status")
+      return json({ cycle, goals, next_goal: goals[0] ?? null, past_goals: opts.past ?? [], last_cycle: opts.lastCycle ?? null });
     if (url === "/api/plan") return json({ cycle, goals, horizon: [], open_injury: null, weeks: WEEKS });
     return json({ summary: "ok", weeks: 8 });
   });
@@ -351,11 +354,65 @@ test("modifier un objectif ouvre son dialogue avec la priorité", async () => {
 });
 
 test("les objectifs courus sont repliés en bas", async () => {
+  const older = mkGoal({ id: 8, race_date: "2026-06-07", status: "done", type: "trail", distance_km: 30 });
   const past = mkGoal({ id: 9, race_date: "2026-10-04", status: "done", distance_km: 10 });
-  server({ goals: [past, principal] });
+  server({ goals: [principal], past: [past, older] });
   render(Goal);
   expect(await items()).toHaveLength(1);
   const done = screen.getByText("Objectifs courus").closest("details")!;
   expect(done).not.toHaveAttribute("open");
-  expect(done).toHaveTextContent("Course sur route de 10 km");
+  const li = within(done).getAllByRole("listitem");
+  expect(li[0]).toHaveTextContent("Course sur route de 10 km");
+  expect(li[1]).toHaveTextContent("Trail de 30 km");
+});
+
+// --- cycle suivant -------------------------------------------------------------------------
+
+const lastCycle = mkCycle({
+  status: "done", plan_accepted: true, sessions_per_week: 3, long_run_day: "dimanche", include_bike: true,
+  available_days: ["mardi", "jeudi", "samedi", "dimanche"],
+});
+const ranPrincipal = mkGoal({ id: 7, race_date: "2026-11-01", status: "done" });
+
+test("propose de préparer le cycle suivant quand un objectif reste à venir", async () => {
+  let cycle: unknown = null;
+  const f = server({
+    goals: [principal],
+    past: [ranPrincipal],
+    lastCycle,
+    cycle: () => cycle,
+    onwrite: (url) => {
+      cycle = mkCycle({ needs_generation: url.endsWith("/next") });
+      return url.endsWith("/next") ? json(cycle) : json({ summary: "Cycle suivant prêt", weeks: 8 });
+    },
+  });
+  const onchanged = vi.fn();
+  render(Goal, { onchanged });
+  const card = within(await screen.findByRole("region", { name: "Préparer le cycle suivant" }));
+  // réglages repris du dernier cycle, modifiables
+  expect(card.getByLabelText("Jour de la sortie longue")).toHaveValue("dimanche");
+  expect(card.getByRole("checkbox", { name: "Mardi" })).toBeChecked();
+  expect(card.getByRole("checkbox", { name: "Lundi" })).not.toBeChecked();
+  expect(card.getByRole("checkbox", { name: /Inclure du vélo/ })).toBeChecked();
+  // pas de formulaire ni d'ajout tant que le cycle n'est pas préparé
+  expect(screen.queryByLabelText("Distance (km)")).toBeNull();
+  expect(screen.queryByRole("button", { name: "Ajouter un objectif" })).toBeNull();
+  await fireEvent.click(card.getByRole("checkbox", { name: /Inclure du vélo/ }));
+  await fireEvent.click(card.getByRole("button", { name: "Préparer et générer" }));
+  await waitFor(() => expect(writes(f)).toEqual(["POST /api/cycle/next", "POST /api/cycle/generate"]));
+  const next = f.mock.calls.find(([u]) => u === "/api/cycle/next")!;
+  expect(JSON.parse((next[1] as RequestInit).body as string)).toEqual({
+    available_days: ["mardi", "jeudi", "samedi", "dimanche"], long_run_day: "dimanche", include_bike: false,
+  });
+  expect(await screen.findByText("Cycle suivant prêt")).toBeVisible();
+  expect(screen.queryByRole("region", { name: "Préparer le cycle suivant" })).toBeNull();
+  expect(onchanged).toHaveBeenCalled();
+});
+
+test("sans objectif à venir après un cycle, le formulaire du premier objectif s'affiche", async () => {
+  server({ goals: [], past: [ranPrincipal], lastCycle, cycle: () => null });
+  render(Goal);
+  await formReady();
+  expect(screen.queryByRole("region", { name: "Préparer le cycle suivant" })).toBeNull();
+  expect(screen.getByRole("group", { name: "Séances par semaine" })).toBeVisible();
 });

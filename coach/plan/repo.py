@@ -153,6 +153,23 @@ class Repo:
         with self._open() as db:
             return list(db.exec(stmt))
 
+    def past_goals(self) -> list[Goal]:
+        """Objectifs courus (`done`), du plus récent au plus ancien."""
+        stmt = select(Goal).where(Goal.status == "done").order_by(Goal.race_date.desc(), Goal.id.desc())
+        with self._open() as db:
+            return list(db.exec(stmt))
+
+    def last_done_cycle(self, before: date) -> Cycle | None:
+        """Dernier cycle terminé avant `before` (par date de fin) ; ignore les cycles clos d'avance,
+        par exemple ceux créés à la migration pour un objectif retiré encore à venir."""
+        stmt = (
+            select(Cycle)
+            .where(Cycle.status == "done", Cycle.end_date < before)
+            .order_by(Cycle.end_date.desc(), Cycle.id.desc())
+        )
+        with self._open() as db:
+            return db.exec(stmt).first()
+
     def goals_in(self, cycle: Cycle) -> list[Goal]:
         """Objectifs actifs dont la course tombe dans le cycle."""
         return [g for g in self.upcoming_goals() if cycle.plan_start <= g.race_date <= cycle.end_date]

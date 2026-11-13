@@ -1217,3 +1217,52 @@ def test_first_goal_without_sessions_per_week_is_422(make_client):
     form = {k: v for k, v in GOAL_FORM.items() if k != "sessions_per_week"}
     r = make_client().post("/api/goals", data=form)
     assert r.status_code == 422 and r.json()["detail"] == "Indique le nombre de séances par semaine"
+
+
+# --- cycle suivant ------------------------------------------------------------------------------
+
+
+def _finished_cycle(repo):
+    """Cycle terminé au Principal du dimanche 01/11/2026 ; un objectif reste à venir."""
+    from tests.plan.factories import make_goal
+
+    repo.add(make_cycle(plan_start=date(2026, 8, 3), end_date=date(2026, 11, 1), status="done",
+                        sessions_per_week=4, long_run_day="dimanche"))
+    old = repo.add(make_goal(race_date=date(2026, 9, 6), status="done", priority="plaisir", distance_km=10))
+    ran = repo.add(make_goal(race_date=date(2026, 11, 1), status="done"))
+    repo.add(make_goal(race_date=date(2026, 8, 1), status="archived"))
+    upcoming = repo.add(make_goal(race_date=date(2027, 2, 7)))
+    return old, ran, upcoming
+
+
+def test_status_reports_past_goals_and_cycle_to_prepare(make_client, repo):
+    old, ran, upcoming = _finished_cycle(repo)
+    body = make_client().get("/api/status").json()
+    assert body["cycle"] is None
+    assert [g["id"] for g in body["goals"]] == [upcoming.id]
+    assert [g["id"] for g in body["past_goals"]] == [ran.id, old.id]
+    assert body["past_goals"][0]["status"] == "done"
+    assert body["last_cycle"]["sessions_per_week"] == 4 and body["last_cycle"]["long_run_day"] == "dimanche"
+
+
+def test_post_next_cycle(make_client, repo):
+    _, ran, upcoming = _finished_cycle(repo)
+    client = make_client(llm=FakeLLMProvider([valid_plan_json(14, 4, estimated_time_s=None)]))
+    r = client.post("/api/cycle/next", json={"include_bike": True})
+    assert r.status_code == 200
+    cycle = r.json()
+    assert (cycle["plan_start"], cycle["end_date"]) == ("2026-11-02", "2027-02-07")
+    assert cycle["sessions_per_week"] == 4 and cycle["include_bike"] is True and cycle["needs_generation"] is True
+    status = client.get("/api/status").json()
+    assert status["cycle"]["id"] == cycle["id"]
+    # déjà un cycle en cours
+    r = client.post("/api/cycle/next")
+    assert r.status_code == 422 and r.json()["detail"] == "Un cycle est déjà en cours"
+
+
+def test_post_next_cycle_without_body_or_goal(make_client, repo):
+    client = make_client()
+    r = client.post("/api/cycle/next")
+    assert r.status_code == 422 and r.json()["detail"] == "Aucun objectif à venir"
+    _finished_cycle(repo)
+    assert client.post("/api/cycle/next").status_code == 200

@@ -304,3 +304,22 @@ test("le lien Jour J d'un objectif ouvre la page sur cet objectif", async () => 
   expect(screen.getByRole("link", { name: /Jour J/ })).toHaveAttribute("aria-current", "page");
   await waitFor(() => expect(calls.some((c) => c.url === "/api/goals/1/race-plan")).toBe(true));
 });
+
+test("cycle terminé avec un objectif à venir : l'accueil ouvre les Objectifs", async () => {
+  statusBody = { ...statusBody, cycle: null, has_activities: true };
+  render(App);
+  await waitFor(() => expect(location.hash).toBe("#/goal"));
+  syncDone?.();
+});
+
+test("cycle terminé : Aujourd'hui et Plan invitent à préparer le cycle suivant", async () => {
+  statusBody = { ...statusBody, cycle: null };
+  for (const route of ["#/today", "#/plan"]) {
+    location.hash = route;
+    const { unmount } = render(App);
+    const link = await screen.findByRole("link", { name: "Préparer le cycle suivant" });
+    expect(link).toHaveAttribute("href", "#/goal");
+    syncDone?.();
+    unmount();
+  }
+});

@@ -14,6 +14,7 @@ from coach.plan.repo import Repo
 from coach.services.activities import store_summaries
 from coach.services.adjust import ask_adjustment, save_proposal
 from coach.services.context import refresh_snapshot
+from coach.services.cycles import close_passed
 from coach.services.history import refresh_records
 from coach.services.laps import fetch_missing_laps
 
@@ -29,7 +30,7 @@ class SyncResult(BaseModel):
 
 
 def sync(repo: Repo, garmin: GarminPort, llm: LLMProvider, *, now: datetime) -> SyncResult:
-    """Importe, rattache, marque les séances manquées, puis propose un ajustement."""
+    """Importe, rattache, marque les séances manquées, clôt objectifs et cycle passés, puis propose un ajustement."""
     _, zones = refresh_snapshot(repo, garmin)
     today = garmin.today()
     settings = load_settings()
@@ -64,9 +65,12 @@ def sync(repo: Repo, garmin: GarminPort, llm: LLMProvider, *, now: datetime) -> 
                 db.add(s)
         fetch_missing_laps(repo, garmin)
 
+    # après le rattachement (la séance du jour de course reste rattachable) et avant la proposition
+    if close_passed(repo, today):
+        cycle = None  # cycle clos : plus de proposition jusqu'au cycle suivant
+
     settings.last_sync_at = now
-    if pairs or missed_ids:
-        settings.proposal_due = True
+    settings.proposal_due = cycle is not None and (settings.proposal_due or bool(pairs or missed_ids))
     save_settings(settings)
 
     proposal_id = None

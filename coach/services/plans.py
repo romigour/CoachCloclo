@@ -13,6 +13,7 @@ from coach.llm.prompts import SYSTEM_PROMPT, build_generation_prompt, estimate_f
 from coach.llm.provider import LLMProvider
 from coach.llm.schemas import PlanResponse, Weekday, validate_plan
 from coach.plan import calendar
+from coach.plan.goals import goal_label
 from coach.plan.constraints import constraint_errors, planned_from_plan
 from coach.plan.models import Cycle, Goal, Session
 from coach.plan.repo import Repo
@@ -40,6 +41,17 @@ def _gpx_texts(goals: list[Goal]) -> list[str]:
     return [
         summary_to_text(GpxSummary.model_validate_json(g.gpx_summary_json)) for g in goals if g.gpx_summary_json
     ]
+
+
+def _recovery_note(repo: Repo, cycle: Cycle) -> str | None:
+    """Consigne de récupération après la dernière course du cycle précédent, s'il y en a une."""
+    if cycle.recovery_from_goal_id is None:
+        return None
+    with repo.transaction() as db:
+        goal = db.get(Goal, cycle.recovery_from_goal_id)
+    if goal is None:
+        return None
+    return f"Commence par une récupération adaptée à {goal_label(goal)} couru le {goal.race_date:%d/%m/%Y}."
 
 
 def generate_plan(repo: Repo, garmin: GarminPort, llm: LLMProvider) -> PlanResponse:
@@ -77,6 +89,7 @@ def generate_plan(repo: Repo, garmin: GarminPort, llm: LLMProvider) -> PlanRespo
     prompt = build_generation_prompt(
         cycle, goals, horizon, zones, recent_history(garmin), n, _gpx_texts(goals), today=today,
         race_texts=race_texts, constraints=constraints, first_week=first_week, fixed=fixed,
+        recovery_note=_recovery_note(repo, cycle),
     )
     pace_available = zones.pace is not None
     # chaque objectif du cycle en mode `claude` est (ré)estimé, au-dessus de l'allure plancher

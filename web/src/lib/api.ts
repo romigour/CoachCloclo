@@ -247,6 +247,10 @@ export type Status = {
   /** Objectifs à venir, du plus proche au plus lointain. */
   goals: Goal[];
   next_goal: Goal | null;
+  /** Objectifs courus, du plus récent au plus ancien. */
+  past_goals: Goal[];
+  /** Dernier cycle terminé, seulement sans cycle actif : réglages repris par « Préparer le cycle suivant ». */
+  last_cycle: Cycle | null;
   has_activities: boolean;
   history: HistoryState;
 };
@@ -515,6 +519,8 @@ export const api = {
   /** Retire (archive) un objectif ; même effet sur le plan qu'un ajout. */
   removeGoal: (goalId: number) => del<PlanChange>(`/goals/${goalId}`),
   updatePlanSettings: (body: PlanSettingsInput) => patch<{ cycle: Cycle; proposal_id: number }>("/cycle", body),
+  /** Crée le cycle suivant (à générer) ; `body` surcharge les réglages repris du dernier cycle. */
+  nextCycle: (body?: PlanSettingsInput) => post<Cycle>("/cycle/next", body),
   generate: () => post<{ summary: string; weeks: number }>("/cycle/generate"),
   accept: () => post<{ status: string }>("/cycle/accept"),
   plan: () => get<Plan>("/plan"),

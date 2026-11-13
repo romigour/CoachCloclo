@@ -190,13 +190,19 @@ def delete_event(repo: Repo, event_id: int) -> None:
 def resume_injury(
     repo: Repo, garmin: GarminPort, llm: LLMProvider, event_id: int, resume_date: date
 ) -> EventResult:
-    """Clôt un arrêt ouvert et demande une reprise progressive à Claude."""
+    """Clôt un arrêt ouvert du cycle actif et demande une reprise progressive à Claude.
+
+    Un arrêt d'un cycle terminé est refusé : s'il était encore ouvert, il a été recopié dans le cycle
+    suivant, et c'est cette copie qu'on clôt."""
+    cycle = repo.active_cycle()
     with repo.transaction() as db:
         event = db.get(Event, event_id)
         if event is None:
             raise EventError("Imprévu introuvable")
         if event.kind != "injury" or event.end_date is not None:
             raise EventError("Cet imprévu n'est pas un arrêt en cours")
+        if cycle is None or event.cycle_id != cycle.id:
+            raise EventError("Cet arrêt appartient à un cycle terminé")
         if resume_date < event.start_date:
             raise EventError("La reprise doit être après le début de l'arrêt")
         event.end_date = max(resume_date - timedelta(days=1), event.start_date)

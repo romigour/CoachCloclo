@@ -38,10 +38,15 @@
     return m ? Number(m[1]) : null;
   }
 
-  /** Page d'accueil : le plan en cours d'abord, sinon les statistiques, sinon l'objectif à fixer. */
+  // cycle terminé et objectifs encore à venir : le cycle suivant est à préparer (page Objectifs)
+  const toPrepare = $derived(!!status && status.cycle === null && status.goals.length > 0);
+
+  /** Page d'accueil : le plan en cours d'abord, sinon le cycle suivant à préparer, sinon les statistiques,
+   * sinon l'objectif à fixer. */
   function home(): string {
     if (status?.garmin === "auth_required") return "#/setup";
     if (status?.cycle?.plan_accepted) return "#/today";
+    if (toPrepare) return "#/goal";
     return status?.has_activities ? "#/stats" : "#/goal";
   }
 
@@ -178,6 +183,11 @@
         <Setup onchanged={refresh} onconnected={garminConnected} />
       {:else if route === "goal"}
         <Goal onchanged={refresh} />
+      {:else if (route === "today" || route === "plan") && toPrepare}
+        <p class="card">
+          Ton cycle est terminé et une course t'attend encore.
+          <a href="#/goal">Préparer le cycle suivant</a>
+        </p>
       {:else if route === "today"}
         <Today {version} {status} onerror={failed} />
       {:else if route === "plan"}

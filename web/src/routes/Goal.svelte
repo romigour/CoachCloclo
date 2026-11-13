@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { api, type Cycle, type Goal, type GoalInput, type Plan, type PlanChange } from "../lib/api";
-  import { formatDate, todayIso } from "../lib/dates";
+  import { WEEKDAYS, formatDate, todayIso } from "../lib/dates";
   import { goalLabel } from "../lib/goals";
   import { goalTimeLabel } from "../lib/race";
   import ErrorBanner from "../components/ErrorBanner.svelte";
@@ -12,11 +12,18 @@
   import GoalEditDialog from "../components/GoalEditDialog.svelte";
   import PlanSettingsDialog from "../components/PlanSettingsDialog.svelte";
   import PriorityBadge from "../components/PriorityBadge.svelte";
+  import AvailabilityFields, { availabilityValid } from "../components/AvailabilityFields.svelte";
 
   let { onchanged, today = todayIso() }: { onchanged?: () => void; today?: string } = $props();
 
   let goals = $state<Goal[]>([]); // objectifs renvoyés par /status (à venir)
+  let pastGoals = $state<Goal[]>([]); // objectifs courus, du plus récent au plus ancien
   let cycle = $state<Cycle | null>(null);
+  let lastCycle = $state<Cycle | null>(null); // dernier cycle terminé : réglages du cycle suivant
+  // réglages du cycle suivant (pré-remplis à la lecture du dernier cycle)
+  let nextDays = $state<string[]>([...WEEKDAYS]);
+  let nextLongRun = $state("");
+  let nextBike = $state(false);
   let plan = $state<Plan | null>(null);
   let loaded = $state(false);
   let adding = $state(false);
@@ -30,7 +37,9 @@
 
   const byDate = (a: Goal, b: Goal) => a.race_date.localeCompare(b.race_date) || a.id - b.id;
   const upcoming = $derived(goals.filter((g) => g.status !== "done").sort(byDate));
-  const ran = $derived(goals.filter((g) => g.status === "done").sort((a, b) => byDate(b, a)));
+  // cycle terminé et objectifs encore à venir : le cycle suivant est à préparer
+  const toPrepare = $derived(loaded && cycle === null && upcoming.length > 0);
+  const nextPerWeek = $derived(lastCycle?.sessions_per_week ?? 3);
   const needsGeneration = $derived(!!cycle && (cycle.needs_generation || stale));
   const draft = $derived(!!cycle && !cycle.plan_accepted && !needsGeneration && !!plan?.weeks.length);
   // premier objectif : le formulaire s'affiche d'emblée
@@ -48,6 +57,13 @@
     plan = p;
     cycle = s.cycle ?? p.cycle;
     goals = s.goals ?? [];
+    pastGoals = s.past_goals ?? [];
+    if (!cycle && s.last_cycle && s.last_cycle.id !== lastCycle?.id) {
+      lastCycle = s.last_cycle;
+      nextDays = [...s.last_cycle.available_days];
+      nextLongRun = s.last_cycle.long_run_day ?? "";
+      nextBike = s.last_cycle.include_bike;
+    }
     stale = false;
     loaded = true;
   }
@@ -96,6 +112,25 @@
     } catch (err) {
       error = err;
       // l'objectif est enregistré même si la génération échoue : le bandeau « Générer » prendra le relais
+      if (created) await load().catch(() => {});
+    } finally {
+      busy = "";
+    }
+  }
+
+  /** Crée le cycle suivant avec les réglages choisis, puis génère son plan. */
+  async function prepareNext() {
+    error = null;
+    busy = "Préparation du cycle suivant…";
+    let created = false;
+    try {
+      await api.nextCycle({ available_days: nextDays, long_run_day: nextLongRun, include_bike: nextBike });
+      created = true;
+      onchanged?.();
+      await generate();
+    } catch (err) {
+      error = err;
+      // cycle créé mais génération en échec : le bandeau « Générer » prendra le relais
       if (created) await load().catch(() => {});
     } finally {
       busy = "";
@@ -204,6 +239,22 @@
   </div>
 {/if}
 
+{#if toPrepare}
+  <section class="card stack" aria-labelledby="next-title">
+    <h2 id="next-title">Préparer le cycle suivant</h2>
+    <p>
+      Ton cycle est terminé. Claude prépare le suivant jusqu'à ta prochaine course, en commençant par une
+      récupération adaptée{#if pastGoals.length} à {goalLabel(pastGoals[0])}{/if}.
+    </p>
+    <AvailabilityFields bind:days={nextDays} bind:longRunDay={nextLongRun} bind:includeBike={nextBike} perWeek={nextPerWeek} />
+    <div class="row">
+      <button class="primary" onclick={prepareNext} disabled={!!busy || !availabilityValid(nextDays, nextPerWeek)}>
+        Préparer et générer
+      </button>
+    </div>
+  </section>
+{/if}
+
 <div class="cols">
   <div class="col-main stack">
     {#if upcoming.length}
@@ -212,7 +263,9 @@
           <h2 id="goals-title">À venir</h2>
           <div class="row">
             {#if cycle}<button type="button" onclick={() => (editingSettings = true)}>Réglages du plan</button>{/if}
-            {#if !adding}<button type="button" class="primary" onclick={() => (adding = true)}>Ajouter un objectif</button>{/if}
+            {#if !adding && !toPrepare}
+              <button type="button" class="primary" onclick={() => (adding = true)}>Ajouter un objectif</button>
+            {/if}
           </div>
         </div>
         <ul class="plain goals" aria-label="Objectifs à venir">
@@ -252,11 +305,11 @@
       />
     {/if}
 
-    {#if ran.length}
+    {#if pastGoals.length}
       <details class="card">
         <summary>Objectifs courus</summary>
         <ul class="plain stack" style:gap="6px">
-          {#each ran as g (g.id)}
+          {#each pastGoals as g (g.id)}
             <li class="row">
               <PriorityBadge priority={g.priority} />
               <span>{goalLabel(g)} · {details(g)}</span>

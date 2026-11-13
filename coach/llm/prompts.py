@@ -433,12 +433,13 @@ def build_generation_prompt(
 
     `first_week` > 1 ou `fixed` non vide : seule la suite du plan est demandée, les séances `fixed`
     (faites ou exportées) comptant dans leur semaine.
-    `horizon` : objectifs au-delà du cycle, rappelés sans être préparés. `recovery_note` n'est pas encore
-    repris dans le texte.
+    `horizon` : objectifs au-delà du cycle, rappelés sans être préparés. `recovery_note` (récupération
+    après la dernière course du cycle précédent) suit la ligne des objectifs.
     """
     parts = [
         _goals_text(goals, horizon, generation=True, plan_start=cycle.plan_start)
         + (" " + _today_text(cycle, today) if today is not None else ""),
+        *([recovery_note] if recovery_note else []),
         *_cycle_rules(goals, horizon),
         *([_availability_text(constraints)] if constraints is not None else []),
         *([t] if constraints is not None and (t := _events_text(constraints)) else []),

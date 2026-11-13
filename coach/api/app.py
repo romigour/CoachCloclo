@@ -54,6 +54,7 @@ from coach.services.goals import (
     remove_goal,
     update_goal,
 )
+from coach.services.cycles import prepare_next_cycle
 from coach.services.plans import PlanSettingsUpdate, accept_plan, generate_plan, update_plan_settings
 from coach.analysis.race_plan import RaceSettings
 from coach.services import race_strategy
@@ -376,6 +377,9 @@ def create_app(
             "cycle": _cycle_dict(cycle) if cycle else None,
             "goals": [_goal_dict(g) for g in goals],
             "next_goal": _goal_dict(goals[0]) if goals else None,
+            "past_goals": [_goal_dict(g) for g in repo.past_goals()],
+            # réglages à reprendre pour « Préparer le cycle suivant » (sans cycle actif seulement)
+            "last_cycle": _cycle_dict(last) if cycle is None and (last := repo.last_done_cycle(date.today())) else None,
             "has_activities": repo.has_activities(),
             "history": {
                 "status": history_status,
@@ -499,6 +503,10 @@ def create_app(
     def patch_cycle(body: PlanSettingsUpdate, repo: RepoDep, garmin: GarminDep, llm: LLMDep):
         cycle, proposal_id = update_plan_settings(repo, garmin, llm, body)
         return {"cycle": _cycle_dict(cycle), "proposal_id": proposal_id}
+
+    @api.post("/cycle/next")
+    def post_next_cycle(repo: RepoDep, garmin: GarminDep, body: PlanSettingsUpdate | None = None):
+        return _cycle_dict(prepare_next_cycle(repo, garmin, body))
 
     @api.post("/cycle/generate")
     def post_generate(repo: RepoDep, garmin: GarminDep, llm: LLMDep):

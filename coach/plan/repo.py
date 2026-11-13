@@ -18,6 +18,7 @@ from coach.plan.models import (
     Activity,
     ActivityLaps,
     AthleteSnapshot,
+    Cycle,
     Event,
     Goal,
     PersonalRecord,
@@ -77,6 +78,24 @@ def _migrate(engine: Engine) -> None:
         # sport des séances et option vélo de l'objectif
         _add_columns(conn, "session", {"sport": "VARCHAR NOT NULL DEFAULT 'run'"})
         _add_columns(conn, "goal", {"include_bike": "BOOLEAN NOT NULL DEFAULT 0"})
+        # priorité des objectifs
+        _add_columns(conn, "goal", {"priority": "VARCHAR NOT NULL DEFAULT 'principal'"})
+        # séances et imprévus rattachés à un cycle (l'id du cycle reprend celui de l'objectif)
+        for table in ("session", "event"):
+            cols = {row[1] for row in conn.execute(text(f"PRAGMA table_info({table})"))}
+            if "goal_id" in cols and "cycle_id" not in cols:
+                conn.execute(text(f"ALTER TABLE {table} RENAME COLUMN goal_id TO cycle_id"))
+        # un cycle par objectif existant, de même id
+        conn.execute(
+            text("""
+                INSERT INTO cycle (id, created_at, status, plan_start, end_date, sessions_per_week,
+                    available_days_json, long_run_day, include_bike, plan_accepted, needs_generation)
+                SELECT id, created_at, CASE WHEN status = 'active' THEN 'active' ELSE 'done' END,
+                    plan_start, race_date, sessions_per_week, available_days_json, long_run_day,
+                    include_bike, plan_accepted, 0
+                FROM goal WHERE id NOT IN (SELECT id FROM cycle)
+            """)
+        )
 
 
 class Repo:
@@ -111,38 +130,52 @@ class Repo:
             db.refresh(merged)
         return merged
 
-    def active_goal(self) -> Goal | None:
+    def active_cycle(self) -> Cycle | None:
         with self._open() as db:
-            stmt = select(Goal).where(Goal.status == "active").order_by(Goal.id.desc())
+            stmt = select(Cycle).where(Cycle.status == "active").order_by(Cycle.id.desc())
             return db.exec(stmt).first()
+
+    def upcoming_goals(self) -> list[Goal]:
+        """Objectifs actifs, du plus proche au plus lointain."""
+        stmt = select(Goal).where(Goal.status == "active").order_by(Goal.race_date, Goal.id)
+        with self._open() as db:
+            return list(db.exec(stmt))
+
+    def goals_in(self, cycle: Cycle) -> list[Goal]:
+        """Objectifs actifs dont la course tombe dans le cycle."""
+        return [g for g in self.upcoming_goals() if cycle.plan_start <= g.race_date <= cycle.end_date]
+
+    def horizon_goals(self, cycle: Cycle) -> list[Goal]:
+        """Objectifs actifs au-delà de la fin du cycle."""
+        return [g for g in self.upcoming_goals() if g.race_date > cycle.end_date]
 
     def race_strategy(self, goal_id: int) -> RaceStrategy | None:
         with self._open() as db:
             return db.exec(select(RaceStrategy).where(RaceStrategy.goal_id == goal_id)).first()
 
-    def sessions(self, goal_id: int, week_index: int | None = None) -> list[Session]:
-        stmt = select(Session).where(Session.goal_id == goal_id)
+    def sessions(self, cycle_id: int, week_index: int | None = None) -> list[Session]:
+        stmt = select(Session).where(Session.cycle_id == cycle_id)
         if week_index is not None:
             stmt = stmt.where(Session.week_index == week_index)
         stmt = stmt.order_by(Session.week_index, Session.order)
         with self._open() as db:
             return list(db.exec(stmt))
 
-    def events(self, goal_id: int) -> list[Event]:
-        """Imprévus de l'objectif, le plus récent d'abord."""
+    def events(self, cycle_id: int) -> list[Event]:
+        """Imprévus du cycle, le plus récent d'abord."""
         stmt = (
             select(Event)
-            .where(Event.goal_id == goal_id)
+            .where(Event.cycle_id == cycle_id)
             .order_by(Event.start_date.desc(), Event.id.desc())
         )
         with self._open() as db:
             return list(db.exec(stmt))
 
-    def open_injury(self, goal_id: int) -> Event | None:
+    def open_injury(self, cycle_id: int) -> Event | None:
         """Arrêt en cours (blessure sans date de fin), s'il y en a un."""
         stmt = (
             select(Event)
-            .where(Event.goal_id == goal_id, Event.kind == "injury", Event.end_date == None)  # noqa: E711
+            .where(Event.cycle_id == cycle_id, Event.kind == "injury", Event.end_date == None)  # noqa: E711
             .order_by(Event.id.desc())
         )
         with self._open() as db:

@@ -12,6 +12,10 @@ from coach.llm.schemas import RepeatSpec, SessionSpec, StepSpec
 ALL_DAYS = ("lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche")
 ALL_DAYS_JSON = json.dumps(list(ALL_DAYS))
 
+# Priorité d'un objectif : détermine la place qu'il prend dans le plan
+PRIORITIES = ("principal", "secondaire", "plaisir")
+PRIORITY_LABELS = {"principal": "Principal", "secondaire": "Secondaire", "plaisir": "Plaisir"}
+
 
 def _now() -> dt.datetime:
     """Horodatage UTC (colonnes datetime SQLModel : fuseau obligatoire)."""
@@ -50,6 +54,29 @@ class Goal(SQLModel, table=True):
     available_days_json: str = ALL_DAYS_JSON
     long_run_day: str | None = None
     include_bike: bool = False
+    priority: str = "principal"  # "principal" | "secondaire" | "plaisir"
+    # Les champs de plan ci-dessus (plan_start, sessions_per_week, plan_accepted, available_days_json,
+    # long_run_day, include_bike) sont écrits à la création (copie du cycle) mais plus lus : la source est `Cycle`.
+
+    def available_days(self) -> list[str]:
+        return json.loads(self.available_days_json)
+
+
+class Cycle(SQLModel, table=True):
+    """Plan d'entraînement : un cycle couvre un ou plusieurs objectifs, de `plan_start` à `end_date`."""
+
+    id: int | None = Field(default=None, primary_key=True)
+    created_at: dt.datetime = Field(default_factory=_now)
+    status: str = "active"  # "active" | "done"
+    plan_start: dt.date
+    end_date: dt.date
+    sessions_per_week: int
+    available_days_json: str = ALL_DAYS_JSON
+    long_run_day: str | None = None
+    include_bike: bool = False
+    plan_accepted: bool = False
+    needs_generation: bool = False
+    recovery_from_goal_id: int | None = None
 
     def available_days(self) -> list[str]:
         return json.loads(self.available_days_json)
@@ -57,7 +84,7 @@ class Goal(SQLModel, table=True):
 
 class Session(SQLModel, table=True):
     id: int | None = Field(default=None, primary_key=True)
-    goal_id: int = Field(index=True)
+    cycle_id: int = Field(index=True)
     week_index: int
     order: int
     suggested_day: str
@@ -95,9 +122,9 @@ class Session(SQLModel, table=True):
         )
 
     @classmethod
-    def from_spec(cls, spec: SessionSpec, goal_id: int) -> "Session":
+    def from_spec(cls, spec: SessionSpec, cycle_id: int) -> "Session":
         return cls(
-            goal_id=goal_id,
+            cycle_id=cycle_id,
             week_index=spec.week_index,
             order=spec.order,
             suggested_day=spec.suggested_day,
@@ -147,7 +174,7 @@ class Event(SQLModel, table=True):
     """Imprévu déclaré par l'athlète (spec 3.2) : indisponibilité, blessure, semaine allégée, fatigue."""
 
     id: int | None = Field(default=None, primary_key=True)
-    goal_id: int = Field(index=True)
+    cycle_id: int = Field(index=True)
     created_at: dt.datetime = Field(default_factory=_now)
     kind: str  # "unavailable" | "injury" | "light_week" | "fatigue"
     start_date: dt.date

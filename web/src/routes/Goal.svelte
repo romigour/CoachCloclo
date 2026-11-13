@@ -42,6 +42,8 @@
   const toPrepare = $derived(loaded && cycle === null && upcoming.length > 0);
   const needsGeneration = $derived(!!cycle && (cycle.needs_generation || stale));
   const draft = $derived(!!cycle && !cycle.plan_accepted && !needsGeneration && !!plan?.weeks.length);
+  // plan à recalculer : le plan précédent reste affiché (lecture seule) jusqu'à « Générer »
+  const previous = $derived(needsGeneration && !!plan?.weeks.some((w) => w.sessions.length > 0));
   // premier objectif : le formulaire s'affiche d'emblée
   const showForm = $derived(loaded && (adding || upcoming.length === 0));
   const selection = $derived.by(() => {
@@ -216,7 +218,10 @@
 
 {#if needsGeneration}
   <section class="card row spread" aria-label="Plan à recalculer">
-    <p>Le plan doit être recalculé pour tenir compte de tes objectifs.</p>
+    <p>
+      Le plan doit être recalculé pour tenir compte de tes objectifs.{#if previous} En attendant, voici le plan
+        précédent.{/if}
+    </p>
     <button class="primary" onclick={regenerate} disabled={!!busy}>Générer</button>
   </section>
 {:else if draft && plan}
@@ -229,9 +234,12 @@
       <button onclick={regenerate} disabled={!!busy}>Régénérer</button>
     </div>
   </section>
+{/if}
+{#if (draft || previous) && plan}
   <div class="cols">
     <div class="col-main" style:flex-grow="3">
-      <Calendar weeks={plan.weeks} {today} {selected} races={plan.goals} readonly onselect={(id) => (selected = id)} />
+      <!-- brouillon : sans statut ; plan précédent : statuts gardés (faites, exportées) -->
+      <Calendar weeks={plan.weeks} {today} {selected} races={plan.goals} readonly={draft} onselect={(id) => (selected = id)} />
     </div>
     {#if selection}
       <aside class="col-side card" aria-label="Séance sélectionnée">

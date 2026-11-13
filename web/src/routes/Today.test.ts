@@ -51,3 +51,16 @@ test("Signaler un imprévu opens the event dialog", async () => {
   await fireEvent.click(await screen.findByRole("button", { name: "Signaler un imprévu" }));
   expect(screen.getByRole("dialog", { name: "Signaler un imprévu" })).toBeVisible();
 });
+
+test("plan à recalculer : la semaine reste affichée en lecture seule, avec un lien vers le programme", async () => {
+  const stale: Plan = { ...plan, cycle: { ...plan.cycle!, plan_accepted: false, needs_generation: true } };
+  vi.stubGlobal("fetch", vi.fn(async (url: string) =>
+    new Response(JSON.stringify(url.startsWith("/api/plan") ? stale : []), { status: 200 })));
+  render(Today, { today: "2026-10-30" });
+  expect(await screen.findByRole("heading", { name: "Seuil 3 × 10 min" })).toBeVisible();
+  expect(screen.queryByRole("button", { name: "Envoyer sur la montre" })).toBeNull();
+  const banner = screen.getByRole("region", { name: "Plan à recalculer" });
+  expect(banner).toHaveTextContent("Le plan doit être recalculé");
+  expect(screen.getByRole("link", { name: "Recalculer le plan" })).toHaveAttribute("href", "#/plan");
+  expect(screen.queryByRole("link", { name: "Relire le brouillon" })).toBeNull();
+});

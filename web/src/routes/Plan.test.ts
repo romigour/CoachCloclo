@@ -126,3 +126,50 @@ test("sans horizon, pas de liste Ensuite", async () => {
   await screen.findByRole("heading", { name: "Programme" });
   expect(screen.queryByRole("region", { name: "Ensuite" })).toBeNull();
 });
+
+// --- plan à recalculer ---------------------------------------------------------------------
+
+const todo = {
+  id: 11, order: 1, type: "seuil", title: "Seuil 3 × 10 min", description: "", target_kind: "pace", status: "todo",
+  suggested_day: "jeudi", sport: "run", scheduled_date: null, chaining_note: null, sync_error: null,
+  steps: [{ kind: "active", duration_s: 1800, zone: "seuil" }],
+} as const;
+
+test("plan à recalculer : le plan précédent reste affiché, en lecture seule, avec Générer", async () => {
+  let generated = false;
+  const stale = planWith(null, {
+    cycle: { ...cycle, plan_accepted: false, needs_generation: true },
+    weeks: [{ week_index: 2, week_monday: "2026-11-02", sessions: [todo] }],
+  });
+  const f = vi.fn(async (url: string) => {
+    const json = (b: unknown) => new Response(JSON.stringify(b), { status: 200 });
+    if (url === "/api/cycle/generate") {
+      generated = true;
+      return json({ summary: "ok", weeks: 6 });
+    }
+    if (url === "/api/plan") return json(generated ? { ...stale, cycle: { ...cycle, plan_accepted: false } } : stale);
+    return json([]);
+  });
+  vi.stubGlobal("fetch", f);
+  render(Plan, { today: "2026-11-03" });
+  const banner = await screen.findByRole("region", { name: "Plan à recalculer" });
+  expect(banner).toHaveTextContent("Le plan doit être recalculé");
+  expect(screen.queryByRole("link", { name: "Relire le brouillon" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Signaler un imprévu" })).toBeNull();
+  const calendar = screen.getByRole("table", { name: "Calendrier du programme" });
+  await fireEvent.click(within(calendar).getByRole("button", { name: /Seuil 3 × 10 min/ }));
+  const side = screen.getByRole("complementary", { name: "Séance sélectionnée" });
+  expect(within(side).getByRole("heading", { name: "Seuil 3 × 10 min" })).toBeVisible();
+  expect(within(side).queryByRole("button", { name: "Envoyer sur la montre" })).toBeNull();
+  await fireEvent.click(within(banner).getByRole("button", { name: "Générer" }));
+  await waitFor(() => expect(f.mock.calls.some(([u, i]) => u === "/api/cycle/generate" && i?.method === "POST")).toBe(true));
+  expect(await screen.findByRole("link", { name: "Relire le brouillon" })).toBeVisible();
+});
+
+test("plan à recalculer sans séance : renvoie aux objectifs", async () => {
+  vi.stubGlobal("fetch", vi.fn(async () =>
+    new Response(JSON.stringify(planWith(null, { cycle: { ...cycle, plan_accepted: false, needs_generation: true } })), { status: 200 })));
+  render(Plan, { today: "2026-11-03" });
+  expect(await screen.findByRole("link", { name: "Relire le brouillon" })).toBeVisible();
+  expect(screen.queryByRole("region", { name: "Plan à recalculer" })).toBeNull();
+});

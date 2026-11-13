@@ -25,6 +25,11 @@
   let reloads = $state(0); // incrémenté à chaque rechargement du plan, pour rafraîchir la liste des imprévus
 
   const now = $derived(plan ? currentWeek(plan.weeks, today) : null);
+  // plan à recalculer après un changement d'objectif : le plan précédent reste affiché, en lecture seule
+  const stale = $derived(
+    !!plan?.cycle && !plan.cycle.plan_accepted && plan.cycle.needs_generation && plan.weeks.some((w) => w.sessions.length > 0),
+  );
+  let generating = $state(false);
   // le titre décrit la cible du cycle : la course qui le termine
   const goal = $derived(plan ? cycleGoal(plan) : null);
   const selection = $derived.by(() => {
@@ -71,6 +76,19 @@
     error = e;
     report?.(e);
   }
+
+  async function generate() {
+    error = null;
+    generating = true;
+    try {
+      await api.generate();
+      await load();
+    } catch (e) {
+      fail(e);
+    } finally {
+      generating = false;
+    }
+  }
 </script>
 
 <header class="page-head">
@@ -107,9 +125,16 @@
 {#if plan}
   {#if !plan.cycle}
     <p class="card">Aucun objectif. <a href="#/goal">Créer un objectif</a></p>
-  {:else if !plan.cycle.plan_accepted}
+  {:else if !plan.cycle.plan_accepted && !stale}
     <p class="card">Le plan n'est pas encore validé. <a href="#/goal">Relire le brouillon</a></p>
   {:else}
+    {#if stale}
+      <section class="card row spread" aria-label="Plan à recalculer">
+        <p>Le plan doit être recalculé pour tenir compte de tes objectifs. En attendant, voici le plan précédent.</p>
+        <button class="primary" onclick={generate} disabled={generating}>Générer</button>
+      </section>
+      {#if generating}<p class="card busy" role="status">Claude construit ton plan… (cela peut prendre une minute)</p>{/if}
+    {/if}
     <InjuryBanner injury={plan.open_injury ?? null} {today} onproposal={goProposal} onresumed={load} />
     <EventList {today} reload={reloads} onproposal={goProposal} onchanged={load} />
     <section aria-label="Avancement du plan">
@@ -140,6 +165,7 @@
             session={selection.session}
             weekMonday={selection.week.week_monday}
             {activities}
+            readonly={stale}
             onchanged={load}
             onerror={fail}
           />

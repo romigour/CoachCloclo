@@ -423,3 +423,21 @@ test("sans objectif à venir après un cycle, le formulaire du premier objectif 
   expect(screen.queryByRole("region", { name: "Préparer le cycle suivant" })).toBeNull();
   expect(screen.getByRole("group", { name: "Séances par semaine" })).toBeVisible();
 });
+
+test("plan à recalculer : le plan précédent reste affiché sous le bandeau Générer", async () => {
+  const session = {
+    id: 11, order: 1, type: "seuil", title: "Seuil 3 × 10 min", description: "", target_kind: "pace", status: "exported",
+    suggested_day: "jeudi", sport: "run", scheduled_date: "2027-01-07", chaining_note: null, sync_error: null,
+    steps: [{ kind: "active", duration_s: 1800, zone: "seuil" }],
+  };
+  const cycle = mkCycle({ needs_generation: true });
+  vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+    if (url === "/api/status") return json({ cycle, goals: [principal], next_goal: principal, past_goals: [], last_cycle: null });
+    return json({ ...mkPlan(principal, cycle), weeks: [{ week_index: 1, week_monday: "2027-01-04", sessions: [session] }] });
+  }));
+  render(Goal, { today: "2027-01-05" });
+  expect(await screen.findByRole("region", { name: "Plan à recalculer" })).toBeVisible();
+  const calendar = screen.getByRole("table", { name: "Calendrier du programme" });
+  expect(within(calendar).getByText("Seuil 3 × 10 min")).toBeVisible();
+  expect(screen.queryByRole("button", { name: "Valider le plan" })).toBeNull();
+});

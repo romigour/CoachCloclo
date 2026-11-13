@@ -344,7 +344,15 @@ def _insert(db: DbSession, goal: Goal, gpx: bytes | None, written: list[Path]) -
 
 
 def _create_first(repo: Repo, garmin: GarminPort, data: GoalInput, summary: GpxSummary | None) -> Goal:
-    """Sans cycle actif : crée le cycle avec les réglages du plan et son premier objectif."""
+    """Sans cycle actif : crée le cycle avec les réglages du plan et son premier objectif.
+
+    Après un cycle terminé, le nouveau cycle part comme un cycle suivant (`prepare_next_cycle`) :
+    lundi suivant sa fin, récupération après sa dernière course si elle date de moins de 4 semaines,
+    arrêt encore ouvert recopié. Les objectifs déjà à venir comptent pour la règle d'écart et la fin.
+    """
+    # import tardif : cycles importe ce module
+    from coach.services.cycles import carry_open_injury, next_bounds, recovery_goal_id
+
     today = garmin.today()
     if data.sessions_per_week is None:
         raise GoalError("Indique le nombre de séances par semaine")
@@ -361,11 +369,21 @@ def _create_first(repo: Repo, garmin: GarminPort, data: GoalInput, summary: GpxS
         include_bike=data.include_bike,
         needs_generation=True,
     )
+    new = _new_goal(data, summary, cycle)
+    others = repo.upcoming_goals()
+    if conflict := gap_conflict(new, others):
+        raise GoalError(conflict)
+    prev = repo.last_done_cycle(today)
+    cycle.plan_start, cycle.end_date = next_bounds(prev, today, [*others, new])
+    new.plan_start = cycle.plan_start  # champ hérité, gardé cohérent
+    cycle.recovery_from_goal_id = recovery_goal_id(repo, prev, today)
     written: list[Path] = []
     try:
         with repo.transaction() as db:
             db.add(cycle)
-            goal = _insert(db, _new_goal(data, summary, cycle), data.gpx, written)
+            db.flush()
+            carry_open_injury(repo, db, prev, cycle.id)
+            goal = _insert(db, new, data.gpx, written)
     except BaseException:
         for path in written:
             path.unlink(missing_ok=True)

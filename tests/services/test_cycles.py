@@ -210,3 +210,70 @@ def test_resume_injury_of_finished_cycle_is_error(repo):
     copied = repo.open_injury(cycle.id)
     result = resume_injury(repo, garmin, FakeLLMProvider([]), copied.id, date(2027, 5, 24))
     assert result.event_id == copied.id and repo.open_injury(cycle.id) is None
+
+
+# --- premier objectif après un cycle terminé ------------------------------------------------------
+
+
+def _first_input(**overrides):
+    from tests.services.test_goals import goal_input
+
+    return goal_input(**{"race_date": date(2027, 7, 4), "sessions_per_week": 3, **overrides})
+
+
+def _after_finished(repo) -> Cycle:
+    """Cycle terminé le 23/05/2027, sans objectif à venir, arrêt encore ouvert."""
+    prev = _finished(repo)
+    with repo.transaction() as db:
+        g = db.exec(select(Goal).where(Goal.race_date == NEXT)).one()
+        g.status = "archived"
+        db.add(g)
+    repo.add(Event(cycle_id=prev.id, kind="injury", start_date=date(2027, 5, 20), note="mollet"))
+    return prev
+
+
+def test_first_goal_after_finished_cycle_keeps_recovery_and_injury(repo):
+    from coach.services.goals import add_goal
+
+    _after_finished(repo)
+    goal, _ = add_goal(repo, _garmin(date(2027, 5, 26)), FakeLLMProvider([]), _first_input())
+    cycle = repo.active_cycle()
+    assert (cycle.plan_start, cycle.end_date) == (date(2027, 5, 24), date(2027, 7, 4))
+    principal = next(g for g in repo.past_goals() if g.race_date == RACE)
+    assert cycle.recovery_from_goal_id == principal.id
+    copied = repo.open_injury(cycle.id)
+    assert copied is not None and (copied.start_date, copied.note) == (date(2027, 5, 20), "mollet")
+    assert [g.id for g in repo.goals_in(cycle)] == [goal.id]
+
+
+def test_first_goal_long_after_finished_cycle_has_no_recovery(repo):
+    """Cycle fini il y a 28 jours ou plus : plus de récupération, mais l'arrêt ouvert continue."""
+    from coach.services.goals import add_goal
+
+    _after_finished(repo)
+    add_goal(repo, _garmin(date(2027, 6, 20)), FakeLLMProvider([]), _first_input(race_date=date(2027, 8, 1)))
+    cycle = repo.active_cycle()
+    assert cycle.plan_start == date(2027, 6, 14) and cycle.recovery_from_goal_id is None
+    assert repo.open_injury(cycle.id) is not None
+
+
+def test_first_goal_without_active_cycle_checks_gap(repo):
+    """Objectif encore à venir le 29/08 (Principal) : un Principal 7 jours plus tard est refusé."""
+    from coach.services.goals import add_goal
+
+    _finished(repo)
+    with pytest.raises(GoalError, match="est à 7 jours"):
+        add_goal(repo, _garmin(date(2027, 5, 24)), FakeLLMProvider([]), _first_input(race_date=date(2027, 9, 5)))
+    assert repo.active_cycle() is None
+    assert [g.race_date for g in repo.upcoming_goals()] == [NEXT]
+
+
+def test_first_goal_without_active_cycle_ends_at_next_principal(repo):
+    """Un objectif plus lointain que le Principal à venir rejoint l'horizon : le cycle finit au Principal."""
+    from coach.services.goals import add_goal
+
+    _finished(repo)
+    add_goal(repo, _garmin(date(2027, 5, 24)), FakeLLMProvider([]),
+             _first_input(race_date=date(2027, 10, 31), priority="secondaire"))
+    cycle = repo.active_cycle()
+    assert (cycle.plan_start, cycle.end_date) == (date(2027, 5, 24), NEXT)

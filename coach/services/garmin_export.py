@@ -78,6 +78,11 @@ def _check_not_past(garmin: GarminPort, d: date) -> None:
         raise ExportError("Impossible de planifier une séance à une date passée")
 
 
+def _lower_first(text: str) -> str:
+    """« Course sur route… » → « course sur route… » (en milieu de phrase)."""
+    return text[:1].lower() + text[1:]
+
+
 def _warnings(repo: Repo, session: Session, d: date) -> list[str]:
     warnings = hard_session_warnings(session, d, repo.sessions(session.cycle_id))
     cycle = _cycle(repo, session)
@@ -85,7 +90,7 @@ def _warnings(repo: Repo, session: Session, d: date) -> list[str]:
     goals = repo.goals_in(cycle)
     constraints = load_constraints(repo, cycle, d, goals)
     # non bloquant : l'athlète peut vouloir garder une séance (ex. échauffement) le jour d'une course
-    warnings += [f"Ce jour-là, tu cours {goal_label(g)}" for g in goals if g.race_date == d]
+    warnings += [f"Ce jour-là, tu cours {_lower_first(goal_label(g))}" for g in goals if g.race_date == d]
     if ALL_DAYS[d.weekday()] not in allowed_days(constraints, d):
         warnings.append(_UNAVAILABLE_DAY)
     for start, end, label in blocked_periods(constraints):

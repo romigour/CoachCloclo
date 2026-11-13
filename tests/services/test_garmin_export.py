@@ -553,7 +553,7 @@ def test_export_and_move_warn_on_race_day(repo, fake_garmin, session_w3):
     repo.add(make_goal(race_date=date(2026, 11, 13), status="archived"))  # objectif retiré : ignoré
     assert check_export(repo, session_w3.id, D) == []
     assert export_session(repo, fake_garmin, session_w3.id, D) == []
-    warning = "Ce jour-là, tu cours Course sur route de 10 km"
+    warning = "Ce jour-là, tu cours course sur route de 10 km"
     assert check_export(repo, session_w3.id, date(2026, 11, 12)) == [warning]
     assert move_session(repo, fake_garmin, session_w3.id, date(2026, 11, 12)) == [warning]
     assert repo.session(session_w3.id).scheduled_date == date(2026, 11, 12)

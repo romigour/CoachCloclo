@@ -173,12 +173,17 @@ def _history_text(history: list[Activity]) -> str:
     return f"Historique récent ({HISTORY_WEEKS} dernières semaines, plus récent d'abord) :\n" + "\n".join(lines)
 
 
-def _goal_text(goal: Goal, *, generation: bool = False) -> str:
-    """`generation` : un temps issu d'une estimation de Claude est présenté comme estimation précédente."""
+def _goal_text(goal: Goal, *, generation: bool = False, plan_start: dt.date | None = None) -> str:
+    """`generation` : un temps issu d'une estimation de Claude est présenté comme estimation précédente.
+
+    `plan_start` ajoute le début du plan juste après la date de course.
+    """
     text = (
         f"Objectif : course de type {goal.type}, {goal.distance_km:g} km, "
         f"{goal.d_plus_m} m de D+, le {goal.race_date.isoformat()}."
     )
+    if plan_start is not None:
+        text += f" Le plan débute le {plan_start.isoformat()}."
     if goal.target_time_s is not None:
         if generation and goal.target_source == "claude":
             text += f" Estimation précédente : {fmt_duration(goal.target_time_s)}."
@@ -195,9 +200,8 @@ def _main_goal(goals: list[Goal]) -> Goal:
 
 
 def _cycle_text(cycle: Cycle, goals: list[Goal], *, generation: bool = False) -> str:
-    """Objectif du cycle suivi du début du plan (texte d'un cycle à objectif unique)."""
-    start = f" Le plan débute le {cycle.plan_start.isoformat()}."
-    return _goal_text(_main_goal(goals), generation=generation) + start
+    """Objectif du cycle avec le début du plan (texte d'un cycle à objectif unique)."""
+    return _goal_text(_main_goal(goals), generation=generation, plan_start=cycle.plan_start)
 
 
 _BIKE_RULE = (

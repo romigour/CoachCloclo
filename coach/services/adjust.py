@@ -44,7 +44,9 @@ def ask_adjustment(
     """
     if goals is None:
         goals = repo.goals_in(cycle)
-    horizon = repo.horizon_goals(cycle)
+    # un objectif transmis dans `goals` (copie modifiée) n'est pas aussi à l'horizon à son ancienne date
+    in_cycle = {g.id for g in goals}
+    horizon = [g for g in repo.horizon_goals(cycle) if g.id not in in_cycle]
     current_week = week_of(cycle, today)
     upcoming = [s for s in sessions if s.status in ("todo", "exported") and s.week_index >= current_week]
     counts: dict[int, int] = {}

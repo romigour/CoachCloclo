@@ -413,3 +413,26 @@ def test_prompts_read_plan_settings_from_cycle():
     for p in (gen, adj):
         assert "Le plan débute le 2026-11-09." in p and "5 séances" in p and "3 séances" not in p
     assert "Profil du parcours (GPX) :\nA" in gen and "Profil du parcours (GPX) :\nB" in gen and "R1" in gen
+
+
+def _first_part(prompt: str) -> str:
+    return prompt.split("\n\n")[0]
+
+
+def test_goal_line_exact_order_with_user_time():
+    """Ordre exact : date de course, début du plan, puis temps visé (texte d'avant les cycles)."""
+    goal = make_goal(target_time_s=6600, target_source="user")
+    line = "Objectif : course de type trail, 42 km, 2000 m de D+, le 2027-01-31. Le plan débute le 2026-10-26."
+    gen = build_generation_prompt(make_cycle(), [goal], [], ZONES, [], n_weeks=14, gpx_texts=[], today=date(2026, 11, 4))
+    assert _first_part(gen) == line + " Temps visé : 1 h 50. Aujourd'hui : mercredi 4 novembre 2026 (semaine 2)."
+    adj = build_adjustment_prompt(make_cycle(), [goal], [], ZONES, 2, [], [], [], [])
+    assert _first_part(adj) == line + " Temps visé : 1 h 50."
+
+
+def test_goal_line_exact_order_in_claude_estimate_mode():
+    goal = make_goal(target_time_s=6720, target_source="claude")
+    line = "Objectif : course de type trail, 42 km, 2000 m de D+, le 2027-01-31. Le plan débute le 2026-10-26."
+    gen = build_generation_prompt(make_cycle(), [goal], [], ZONES, [], n_weeks=14, gpx_texts=[])
+    assert _first_part(gen) == line + " Estimation précédente : 1 h 52."
+    adj = build_adjustment_prompt(make_cycle(), [goal], [], ZONES, 2, [], [], [], [])
+    assert _first_part(adj) == line + " Temps visé : 1 h 52."

@@ -82,3 +82,29 @@ def test_ask_adjustment_reads_goals_unless_given(repo, coach_home, fake_garmin, 
     edited = repo.goals_in(accepted_plan)[0].model_copy(update={"target_time_s": 14400})
     ask_adjustment(repo, fake_garmin, llm, accepted_plan, _zones(), sessions, TODAY, goals=[edited])
     assert "Temps visé : 4 h 00" in llm.calls[1]
+
+
+def test_ask_adjustment_horizon_excludes_given_goals(repo, coach_home, fake_garmin, accepted_plan, monkeypatch):
+    """Course avancée : l'objectif transmis (copie) n'apparaît pas aussi à l'horizon à son ancienne date."""
+    import coach.services.adjust as adjust_module
+    from tests.plan.factories import make_goal
+
+    later = repo.add(make_goal(race_date=date(2027, 5, 30)))
+    goal = repo.goals_in(accepted_plan)[0]
+    edited_cycle = accepted_plan.model_copy(update={"end_date": date(2027, 1, 24)})
+    edited = goal.model_copy(update={"race_date": date(2027, 1, 24)})
+    seen = {}
+    real = adjust_module.build_adjustment_prompt
+
+    def spy(cycle, goals, horizon, *args, **kwargs):
+        seen["goals"], seen["horizon"] = [g.id for g in goals], [g.id for g in horizon]
+        return real(cycle, goals, horizon, *args, **kwargs)
+
+    monkeypatch.setattr(adjust_module, "build_adjustment_prompt", spy)
+    sessions = repo.sessions(accepted_plan.id)
+    assert [g.id for g in repo.horizon_goals(edited_cycle)] == [goal.id, later.id]  # sans exclusion
+    ask_adjustment(
+        repo, fake_garmin, FakeLLMProvider([adjustment_json()]), edited_cycle, _zones(), sessions, TODAY,
+        goals=[edited],
+    )
+    assert seen == {"goals": [goal.id], "horizon": [later.id]}

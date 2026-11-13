@@ -12,7 +12,7 @@ from coach.plan.constraints import (
 )
 from coach.plan.models import ALL_DAYS, Event
 from tests.llm.factories import make_plan, make_session
-from tests.plan.factories import make_db_session, make_cycle
+from tests.plan.factories import make_cycle, make_db_session, make_goal
 
 TODAY = date(2026, 11, 2)
 
@@ -375,3 +375,69 @@ def test_light_week_message_singular_and_plural():
     assert constraint_errors(p, _ec(_light(1)), fixed_counts={2: 2}) == [
         "semaine 2 : 3 séances pour 1 au plus (semaine allégée)"
     ]
+
+
+# --- jours de course ------------------------------------------------------------------------
+
+PLAN_START = date(2026, 11, 2)  # lundi de la semaine 1
+
+
+def _race_constraints(*race_dates, sessions_per_week=None):
+    return PlanConstraints(
+        available_days=ALL_DAYS, long_run_day=None, today=TODAY, plan_start=PLAN_START,
+        race_dates=tuple(race_dates), sessions_per_week=sessions_per_week,
+    )
+
+
+def test_race_day_session_rejected():
+    c = _race_constraints(date(2026, 11, 15))
+    p = [
+        Planned("semaine 2, séance 1", make_session(week_index=2, suggested_day="dimanche"), date(2026, 11, 15), False),
+        Planned("semaine 2, séance 2", make_session(week_index=2, suggested_day="samedi"), date(2026, 11, 14), False),
+    ]
+    assert constraint_errors(p, c) == ["semaine 2, séance 1 : tombe le jour de la course du 15/11"]
+
+
+def test_exported_session_on_race_day_must_be_removed():
+    c = _race_constraints(date(2026, 11, 15))
+    p = [Planned("séance 7", make_session(week_index=2, suggested_day="mardi"), date(2026, 11, 15), True)]
+    assert constraint_errors(p, c) == [
+        "séance 7 : séance exportée le jour de la course du 15/11, à retirer (op remove)"
+    ]
+
+
+def _week2(n: int) -> list[Planned]:
+    return [
+        Planned(f"séance {i}", make_session(week_index=2, order=i), date(2026, 11, 10), False)
+        for i in range(1, n + 1)
+    ]
+
+
+def test_week_cap_counts_races():
+    """4 séances par semaine, 2 courses la semaine 2 : 2 séances au plus, fixes comprises."""
+    c = _race_constraints(date(2026, 11, 14), date(2026, 11, 15), sessions_per_week=4)
+    assert constraint_errors(_week2(3), c) == ["semaine 2 : 3 séances pour 2 possibles (2 course(s) cette semaine)"]
+    assert constraint_errors(_week2(2), c) == []
+    assert constraint_errors(_week2(1), c, fixed_counts={2: 2}) == [
+        "semaine 2 : 3 séances pour 2 possibles (2 course(s) cette semaine)"
+    ]
+
+
+def test_week_cap_ignores_weeks_without_race_or_planned_session():
+    c = _race_constraints(date(2026, 11, 22), sessions_per_week=3)  # course en semaine 3
+    assert constraint_errors(_week2(3), c) == []  # semaine 2 : pas de course, déjà contrôlée ailleurs
+    assert constraint_errors([], c, fixed_counts={3: 5}) == []  # rien à corriger : aucune séance prévue
+    assert constraint_errors(_week2(3), _race_constraints(date(2026, 11, 15))) == []  # sans limite connue
+
+
+def test_week_cap_never_negative():
+    c = _race_constraints(date(2026, 11, 14), date(2026, 11, 15), sessions_per_week=1)
+    assert constraint_errors(_week2(1), c) == ["semaine 2 : 1 séances pour 0 possibles (2 course(s) cette semaine)"]
+
+
+def test_constraints_of_reads_race_dates_and_sessions_per_week():
+    goals = [make_goal(race_date=date(2026, 12, 20)), make_goal(race_date=date(2027, 1, 31))]
+    c = PlanConstraints.of(make_cycle(sessions_per_week=4), TODAY, goals=goals)
+    assert c.race_dates == (date(2026, 12, 20), date(2027, 1, 31))
+    assert c.sessions_per_week == 4
+    assert PlanConstraints.of(make_cycle(), TODAY).race_dates == ()

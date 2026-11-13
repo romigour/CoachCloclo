@@ -454,3 +454,19 @@ def test_migration_archived_goal_sessions_keep_done_cycle(tmp_path):
         from coach.plan.models import Cycle
 
         assert db.get(Cycle, 3).status == "done"
+
+
+def test_migration_adds_proposal_estimates(tmp_path):
+    """Les propositions d'avant les estimations reçoivent une liste vide ; migration rejouable."""
+    path = tmp_path / "proposals.db"
+    con = sqlite3.connect(path)
+    con.executescript("""
+        CREATE TABLE proposal (id INTEGER PRIMARY KEY, created_at DATETIME, analysis VARCHAR,
+            changes_json VARCHAR, status VARCHAR);
+        INSERT INTO proposal VALUES (1, '2026-11-01', 'a', '[]', 'pending');
+    """)
+    con.commit()
+    con.close()
+    Repo(make_engine(path))
+    repo = Repo(make_engine(path))
+    assert repo.pending_proposal().estimates_json == "[]"

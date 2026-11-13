@@ -218,11 +218,12 @@ def _accepted_goal(client) -> dict:
 def test_patch_goal(make_client):
     client = make_client(llm=FakeLLMProvider([valid_plan_json(14, 3), adjustment_json()]))
     goal = _accepted_goal(client)
-    r = client.patch(f"/api/goals/{goal['id']}", json={"race_date": "2027-01-31", "target_time": "5:15"})
+    # course avancée au samedi, même semaine : la semaine de la course garde ses 2 séances
+    r = client.patch(f"/api/goals/{goal['id']}", json={"race_date": "2027-02-06", "target_time": "5:15"})
     assert r.status_code == 200
     body = r.json()
     assert body["goal"]["target_time_s"] == 18900 and body["goal"]["target_source"] == "user"
-    assert body["goal"]["race_date"] == "2027-01-31"
+    assert body["goal"]["race_date"] == "2027-02-06"
     assert isinstance(body["proposal_id"], int) and body["needs_generation"] is False
     assert client.get("/api/proposals/pending").json()["id"] == body["proposal_id"]
 
@@ -1175,7 +1176,8 @@ def test_post_adjust_llm_limit_maps_to_429(make_client):
 
 
 def test_cycle_include_bike_roundtrip(make_client):
-    client = make_client(llm=FakeLLMProvider([valid_plan_json(14, 3), adjustment_json()]))
+    # le premier objectif est retiré : l'estimation porte sur le second (id 2)
+    client = make_client(llm=FakeLLMProvider([valid_plan_json(14, 3, goal_id=2), adjustment_json()]))
     other = make_client()
     first = _create_goal(other).json()["goal"]
     assert other.get("/api/status").json()["cycle"]["include_bike"] is False

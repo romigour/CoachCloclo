@@ -1,6 +1,6 @@
 """Fabriques de réponses Claude pour les tests (réutilisées par les tâches suivantes)."""
 
-from coach.llm.schemas import PlanResponse, SessionSpec, StepSpec, WeekSpec
+from coach.llm.schemas import GoalEstimate, PlanResponse, SessionSpec, StepSpec, WeekSpec
 
 
 def make_session(**overrides) -> SessionSpec:
@@ -22,10 +22,19 @@ def make_session(**overrides) -> SessionSpec:
     return SessionSpec(**data)
 
 
+def estimates(estimated_time_s: int | None, goal_id: int = 1) -> list[GoalEstimate]:
+    """Estimation unique de l'objectif `goal_id` (aucune si `estimated_time_s` est None)."""
+    return [] if estimated_time_s is None else [GoalEstimate(goal_id=goal_id, seconds=estimated_time_s)]
+
+
 def make_plan(
-    n_weeks: int, per_week: list[int], target_kind: str = "hr", estimated_time_s: int | None = None
+    n_weeks: int, per_week: list[int], target_kind: str = "hr", estimated_time_s: int | None = None,
+    goal_id: int = 1,
 ) -> PlanResponse:
-    """Plan de `n_weeks` semaines avec `per_week[i]` séances (orders 1..k) en semaine i+1."""
+    """Plan de `n_weeks` semaines avec `per_week[i]` séances (orders 1..k) en semaine i+1.
+
+    `estimated_time_s` devient l'estimation de l'objectif `goal_id`.
+    """
     weeks = [
         WeekSpec(
             week_index=w,
@@ -37,9 +46,11 @@ def make_plan(
         )
         for w in range(1, n_weeks + 1)
     ]
-    return PlanResponse(summary="Plan de test", weeks=weeks, estimated_time_s=estimated_time_s)
+    return PlanResponse(summary="Plan de test", weeks=weeks, estimated_times=estimates(estimated_time_s, goal_id))
 
 
-def valid_plan_json(n_weeks: int, per_week: int, estimated_time_s: int | None = 19800) -> str:
-    """JSON d'un plan valide de `n_weeks` semaines à `per_week` séances."""
-    return make_plan(n_weeks, [per_week] * n_weeks, estimated_time_s=estimated_time_s).model_dump_json()
+def valid_plan_json(n_weeks: int, per_week: int, estimated_time_s: int | None = 19800, goal_id: int = 1) -> str:
+    """JSON d'un plan valide de `n_weeks` semaines à `per_week` séances, une de moins la dernière semaine
+    (la course y compte comme une séance)."""
+    counts = [per_week] * (n_weeks - 1) + [max(0, per_week - 1)]
+    return make_plan(n_weeks, counts, estimated_time_s=estimated_time_s, goal_id=goal_id).model_dump_json()

@@ -80,6 +80,8 @@ def _migrate(engine: Engine) -> None:
         _add_columns(conn, "goal", {"include_bike": "BOOLEAN NOT NULL DEFAULT 0"})
         # priorité des objectifs
         _add_columns(conn, "goal", {"priority": "VARCHAR NOT NULL DEFAULT 'principal'"})
+        # temps estimés portés par une proposition d'ajustement
+        _add_columns(conn, "proposal", {"estimates_json": "VARCHAR NOT NULL DEFAULT '[]'"})
         # séances et imprévus rattachés à un cycle (l'id du cycle reprend celui de l'objectif)
         legacy = False
         for table in ("session", "event"):

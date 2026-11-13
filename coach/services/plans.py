@@ -9,7 +9,7 @@ from sqlmodel import select
 from coach.analysis.gpx import GpxSummary, summary_to_text
 from coach.garmin.port import GarminPort
 from coach.llm.client import ask_structured
-from coach.llm.prompts import SYSTEM_PROMPT, _main_goal, build_generation_prompt
+from coach.llm.prompts import SYSTEM_PROMPT, build_generation_prompt, estimate_floors, generation_estimates
 from coach.llm.provider import LLMProvider
 from coach.llm.schemas import PlanResponse, Weekday, validate_plan
 from coach.plan import calendar
@@ -54,7 +54,6 @@ def generate_plan(repo: Repo, garmin: GarminPort, llm: LLMProvider) -> PlanRespo
     if not goals:
         raise GoalError(_NOT_FOUND)
     horizon = repo.horizon_goals(cycle)
-    main = _main_goal(goals)
     _, zones = refresh_snapshot(repo, garmin)
     n = calendar.n_weeks(cycle.plan_start, cycle.end_date)
     from coach.services.race_strategy import race_line_for_prompt  # import tardif : race_strategy importe ce module
@@ -73,14 +72,15 @@ def generate_plan(repo: Repo, garmin: GarminPort, llm: LLMProvider) -> PlanRespo
     fixed_counts: dict[int, int] = {}
     for s in fixed:
         fixed_counts[s.week_index] = fixed_counts.get(s.week_index, 0) + 1
-    constraints = load_constraints(repo, cycle, today)
+    constraints = load_constraints(repo, cycle, today, goals)
     race_texts = [t for g in goals if (t := race_line_for_prompt(repo, g, today))]
     prompt = build_generation_prompt(
         cycle, goals, horizon, zones, recent_history(garmin), n, _gpx_texts(goals), today=today,
         race_texts=race_texts, constraints=constraints, first_week=first_week, fixed=fixed,
     )
     pace_available = zones.pace is not None
-    estimate_min_s = round(MIN_PACE_S_KM * main.distance_km) if main.target_source == "claude" else None
+    # chaque objectif du cycle en mode `claude` est (ré)estimé, au-dessus de l'allure plancher
+    estimate_min_s = estimate_floors(generation_estimates(goals), MIN_PACE_S_KM)
     plan = ask_structured(
         llm,
         SYSTEM_PROMPT,
@@ -109,10 +109,11 @@ def generate_plan(repo: Repo, garmin: GarminPort, llm: LLMProvider) -> PlanRespo
         c.needs_generation = False
         db.add(c)
         stale_pending(db)  # les propositions portaient sur le plan remplacé
-        g = db.get(Goal, main.id)
-        if g is not None and g.target_source == "claude":
-            g.target_time_s = plan.estimated_time_s
-            db.add(g)
+        for estimate in plan.estimated_times:
+            g = db.get(Goal, estimate.goal_id)
+            if estimate.goal_id in estimate_min_s and g is not None and g.target_source == "claude":
+                g.target_time_s = estimate.seconds
+                db.add(g)
     return plan
 
 

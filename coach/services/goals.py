@@ -14,7 +14,7 @@ from sqlmodel import select
 from coach.analysis.gpx import GpxSummary, analyze_gpx
 from coach.config import data_dir
 from coach.garmin.port import GarminPort
-from coach.llm.prompts import fmt_duration
+from coach.llm.prompts import NEW_GOAL_ID, fmt_duration
 from coach.llm.provider import LLMProvider
 from coach.llm.schemas import Weekday
 from coach.plan import calendar
@@ -269,6 +269,10 @@ def _reshape(
             saved["goal"] = write(db)
             c.end_date = new_end
             db.add(c)
+            if before is None:  # ajout : l'estimation du nouvel objectif porte l'id provisoire
+                for estimate in adj.estimated_times:
+                    if estimate.goal_id == NEW_GOAL_ID:
+                        estimate.goal_id = saved["goal"].id
 
         proposal_id = _save_change(repo, garmin, zones, adj, removed_ids, apply)
         return saved["goal"], ChangeResult(proposal_id=proposal_id, needs_generation=False)

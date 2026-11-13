@@ -5,6 +5,7 @@ from coach.llm.schemas import (
     HARD_TYPES,
     AdjustmentResponse,
     Change,
+    GoalEstimate,
     PlanResponse,
     RepeatSpec,
     StepSpec,
@@ -230,27 +231,61 @@ def test_validate_adjustment_exported_session_cannot_change_week():
 
 def test_validate_plan_requires_estimate():
     plan = make_plan(n_weeks=2, per_week=[1, 1])
-    errs = validate_plan(plan, n_weeks=2, sessions_per_week=3, pace_available=True, estimate_min_s=1000)
-    assert any("estimated_time_s" in e for e in errs)
+    errs = validate_plan(plan, n_weeks=2, sessions_per_week=3, pace_available=True, estimate_min_s={1: 1000})
+    assert errs == ["estimated_times : estimation manquante pour l'objectif 1"]
 
 
 def test_validate_plan_rejects_implausible_estimate():
-    plan = make_plan(n_weeks=2, per_week=[1, 1])
-    plan.estimated_time_s = 600
-    errs = validate_plan(plan, n_weeks=2, sessions_per_week=3, pace_available=True, estimate_min_s=1000)
-    assert any("estimated_time_s" in e for e in errs)
+    plan = make_plan(n_weeks=2, per_week=[1, 1], estimated_time_s=600)
+    errs = validate_plan(plan, n_weeks=2, sessions_per_week=3, pace_available=True, estimate_min_s={1: 1000})
+    assert errs == ["estimated_times : 600 s invraisemblable pour l'objectif 1 (au moins 1000 s)"]
 
 
 def test_validate_plan_accepts_plausible_estimate():
-    plan = make_plan(n_weeks=2, per_week=[1, 1])
-    plan.estimated_time_s = 1000
-    assert validate_plan(plan, n_weeks=2, sessions_per_week=3, pace_available=True, estimate_min_s=1000) == []
+    plan = make_plan(n_weeks=2, per_week=[1, 1], estimated_time_s=1000)
+    assert validate_plan(plan, n_weeks=2, sessions_per_week=3, pace_available=True, estimate_min_s={1: 1000}) == []
 
 
 def test_validate_plan_ignores_estimate_when_not_required():
     plan = make_plan(n_weeks=2, per_week=[1, 1])
-    assert plan.estimated_time_s is None
+    assert plan.estimated_times == []
     assert validate_plan(plan, n_weeks=2, sessions_per_week=3, pace_available=True, estimate_min_s=None) == []
+    assert validate_plan(plan, n_weeks=2, sessions_per_week=3, pace_available=True, estimate_min_s={}) == []
+
+
+def test_validate_plan_estimates_per_goal():
+    """Chaque objectif attendu a son estimation, au-dessus de son propre plancher."""
+    plan = make_plan(n_weeks=2, per_week=[1, 1])
+    plan.estimated_times = [GoalEstimate(goal_id=3, seconds=5000), GoalEstimate(goal_id=9, seconds=100)]
+    errs = validate_plan(
+        plan, n_weeks=2, sessions_per_week=3, pace_available=True, estimate_min_s={3: 1500, 5: 3000, 9: 1500}
+    )
+    assert errs == [
+        "estimated_times : estimation manquante pour l'objectif 5",
+        "estimated_times : 100 s invraisemblable pour l'objectif 9 (au moins 1500 s)",
+    ]
+
+
+def test_validate_adjustment_estimates_per_goal():
+    adj = _adj()
+    kw = dict(editable_ids=set(), **_ADJ_KW)
+    assert validate_adjustment(adj, **kw) == []
+    assert validate_adjustment(adj, **kw, estimate_min_s={4: 1500}) == [
+        "estimated_times : estimation manquante pour l'objectif 4"
+    ]
+    adj.estimated_times = [GoalEstimate(goal_id=4, seconds=1499)]
+    assert validate_adjustment(adj, **kw, estimate_min_s={4: 1500}) == [
+        "estimated_times : 1499 s invraisemblable pour l'objectif 4 (au moins 1500 s)"
+    ]
+    adj.estimated_times = [GoalEstimate(goal_id=4, seconds=1500)]
+    assert validate_adjustment(adj, **kw, estimate_min_s={4: 1500}) == []
+
+
+def test_responses_carry_estimated_times():
+    assert "estimated_time_s" not in PlanResponse.model_fields
+    assert AdjustmentResponse(analysis="a", changes=[]).estimated_times == []
+    with pytest.raises(ValidationError):
+        GoalEstimate(goal_id=1, seconds=10, extra=1)
 
 
 def test_adjustment_rejects_week_beyond_plan():

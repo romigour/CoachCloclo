@@ -167,6 +167,7 @@ class Proposal(SQLModel, table=True):
     created_at: dt.datetime = Field(default_factory=_now)
     analysis: str
     changes_json: str = "[]"
+    estimates_json: str = "[]"  # [{goal_id, seconds}] : temps estimés, appliqués à l'acceptation
     status: str = "pending"  # pending | accepted | rejected | stale
 
 

@@ -22,10 +22,10 @@ from coach.garmin.port import (
     GarminRateLimited,
     GarminUnavailable,
 )
-from coach.llm.schemas import Change
+from coach.llm.schemas import Change, GoalEstimate
 from coach.plan import calendar
 from coach.plan.constraints import allowed_days, blocked_periods
-from coach.plan.models import ALL_DAYS, Cycle, Proposal, Session
+from coach.plan.models import ALL_DAYS, Cycle, Goal, Proposal, Session
 from coach.plan.repo import Repo
 from coach.services import CoachError
 from coach.services.context import load_constraints
@@ -33,6 +33,7 @@ from coach.services.context import load_constraints
 _GARMIN_ERRORS = (GarminUnavailable, GarminAuthRequired, GarminRateLimited)
 _EARLY_ERRORS = (GarminAuthRequired, GarminRateLimited)
 _CHANGES = TypeAdapter(list[Change])
+_ESTIMATES = TypeAdapter(list[GoalEstimate])
 _PENDING_MSG = "Synchronisation Garmin en cours"
 _UNAVAILABLE_DAY = "Jour hors de tes disponibilités"
 
@@ -298,6 +299,15 @@ def mark_for_cleanup(s: Session, *, removal: bool) -> None:
     s.sync_error = _PENDING_MSG
 
 
+def _apply_estimates(db, proposal: Proposal) -> None:
+    """Temps estimés de la proposition, pour les objectifs à venir dont le temps revient encore à Claude."""
+    for estimate in _ESTIMATES.validate_json(proposal.estimates_json):
+        g = db.get(Goal, estimate.goal_id)
+        if g is not None and g.status == "active" and g.target_source == "claude":
+            g.target_time_s = estimate.seconds
+            db.add(g)
+
+
 def apply_proposal(repo: Repo, garmin: GarminPort, proposal_id: int) -> list[int]:
     """Applique la proposition en base (une transaction), puis synchronise Garmin.
 
@@ -361,6 +371,7 @@ def apply_proposal(repo: Repo, garmin: GarminPort, proposal_id: int) -> list[int
                 mark_for_cleanup(s, removal=True)
                 to_sync.append(s.id)
                 db.add(s)
+        _apply_estimates(db, proposal)
         proposal.status = "accepted"
         db.add(proposal)
 

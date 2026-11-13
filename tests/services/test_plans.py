@@ -4,7 +4,7 @@ import pytest
 
 from coach.garmin.port import FakeGarminClient, Metrics
 from coach.llm.provider import FakeLLMProvider, LLMInvalidResponse
-from coach.llm.schemas import PlanResponse, WeekSpec
+from coach.llm.schemas import GoalEstimate, PlanResponse, WeekSpec
 from coach.plan.models import ALL_DAYS, Cycle, Goal, Proposal, Session
 from coach.services import CoachError
 from coach.services.context import refresh_snapshot
@@ -42,7 +42,7 @@ def test_generate_plan_persists_sessions(repo, fake_garmin):
     plan = generate_plan(repo, fake_garmin, llm)
     sessions = repo.sessions(_cid(repo))
     assert len(plan.weeks) == 14
-    assert len(sessions) == 42 and all(s.status == "todo" for s in sessions)
+    assert len(sessions) == 41 and all(s.status == "todo" for s in sessions)
     assert repo.latest_snapshot().hr_max == 190
 
 
@@ -59,7 +59,7 @@ def test_regenerate_replaces_todo_and_resets_accepted(repo, fake_garmin):
     accept_plan(repo)
     assert repo.active_cycle().plan_accepted is True
     generate_plan(repo, fake_garmin, FakeLLMProvider([valid_plan_json(14, 2)]))
-    assert len(repo.sessions(_cid(repo))) == 28
+    assert len(repo.sessions(_cid(repo))) == 27
     assert repo.active_cycle().plan_accepted is False
 
 
@@ -118,14 +118,19 @@ def test_generate_claude_mode_requires_estimate(repo, fake_garmin):
         generate_plan(repo, fake_garmin, llm)
 
 
-def _plan_from(first_week: int, per_week: dict[int, int]) -> str:
-    """Plan des semaines `first_week`.. avec `per_week[w]` séances (orders 1..k)."""
+def _plan_from(first_week: int, per_week: dict[int, int], estimates: dict[int, int] | None = None) -> str:
+    """Plan des semaines `first_week`.. avec `per_week[w]` séances (orders 1..k) ; `estimates`
+    (goal_id -> secondes) vaut par défaut 5 h 30 pour l'objectif 1."""
     weeks = [
         WeekSpec(week_index=w, focus=f"Semaine {w}",
                  sessions=[make_session(week_index=w, order=o) for o in range(1, k + 1)])
         for w, k in sorted(per_week.items()) if w >= first_week
     ]
-    return PlanResponse(summary="Suite", weeks=weeks, estimated_time_s=19800).model_dump_json()
+    estimates = {1: 19800} if estimates is None else estimates
+    return PlanResponse(
+        summary="Suite", weeks=weeks,
+        estimated_times=[GoalEstimate(goal_id=i, seconds=t) for i, t in estimates.items()],
+    ).model_dump_json()
 
 
 def test_regenerate_keeps_fixed_sessions(repo, fake_garmin):
@@ -145,8 +150,8 @@ def test_regenerate_keeps_fixed_sessions(repo, fake_garmin):
     old_ids = {s.id for s in sessions}
     week3_garmin = FakeGarminClient(metrics=METRICS, today=date(2026, 11, 18))  # mercredi, semaine 3
     # semaine 3 : la séance exportée compte, deux séances au plus ; une 3e est refusée puis corrigée
-    too_many = _plan_from(3, {w: 3 for w in range(3, 15)})
-    llm = FakeLLMProvider([too_many, _plan_from(3, {3: 2, **{w: 3 for w in range(4, 15)}})])
+    too_many = _plan_from(3, {**{w: 3 for w in range(3, 14)}, 14: 2})
+    llm = FakeLLMProvider([too_many, _plan_from(3, {3: 2, **{w: 3 for w in range(4, 14)}, 14: 2})])
     plan = generate_plan(repo, week3_garmin, llm)
     assert [w.week_index for w in plan.weeks] == list(range(3, 15))
     assert "Semaines 3 à 14 seulement : les séances suivantes sont fixées et comptent dans leur semaine :" in llm.calls[0]
@@ -155,7 +160,7 @@ def test_regenerate_keeps_fixed_sessions(repo, fake_garmin):
     after = repo.sessions(cid)
     kept = {s.id for s in after if s.week_index < 3} | {exported.id}
     assert {s.id for s in after} & old_ids == kept  # semaines 1-2 intactes, todo des semaines ≥ 3 remplacées
-    assert len(after) == 42
+    assert len(after) == 41
     assert [s.status for s in after if s.week_index == 3].count("todo") == 2
     cycle = repo.active_cycle()
     assert (cycle.plan_accepted, cycle.needs_generation) == (False, False)
@@ -252,6 +257,69 @@ def test_generate_ignores_fixed_sessions_after_end(repo, fake_garmin):
         g = db.get(Goal, _active_goal(repo).id)
         g.race_date = c.end_date
         db.add_all([done, late, c, g])
-    llm = FakeLLMProvider([_plan_from(1, {1: 2, **{w: 3 for w in range(2, 12)}})])
+    llm = FakeLLMProvider([_plan_from(1, {1: 2, **{w: 3 for w in range(2, 11)}, 11: 2})])
     generate_plan(repo, fake_garmin, llm)
     assert f"id={late.id} |" not in llm.calls[0] and f"id={done.id} | semaine 1" in llm.calls[0]
+
+
+# --- plusieurs objectifs -----------------------------------------------------------------------
+
+
+def _two_goals(repo, garmin) -> tuple[Goal, Goal]:
+    """Principal au 07/02/2027 (semaine 14) et Secondaire au 20/12/2026 (dimanche, semaine 7), sans temps."""
+    from coach.services.goals import add_goal
+    from tests.services.test_goals import other_input
+
+    principal = _goal(repo, garmin)
+    secondary, result = add_goal(repo, garmin, FakeLLMProvider([]), other_input())  # brouillon : pas d'appel
+    assert result.needs_generation
+    return principal, secondary
+
+
+def _plan_json(per_week: dict[int, int], estimates: dict[int, int]) -> str:
+    from tests.llm.factories import make_plan
+
+    plan = make_plan(14, [per_week.get(w, 3) for w in range(1, 15)])
+    plan.estimated_times = [GoalEstimate(goal_id=i, seconds=s) for i, s in estimates.items()]
+    return plan.model_dump_json()
+
+
+def test_generate_saves_estimates_per_goal(repo, fake_garmin):
+    principal, secondary = _two_goals(repo, fake_garmin)
+    ok = _plan_json({7: 2, 14: 2}, {principal.id: 19800, secondary.id: 2700})
+    llm = FakeLLMProvider([_plan_json({7: 2, 14: 2}, {principal.id: 19800}), ok])
+    generate_plan(repo, fake_garmin, llm)
+    assert "Objectifs du cycle :" in llm.calls[0] and "priorité Secondaire" in llm.calls[0]
+    assert f"ids {secondary.id} (2026-12-20), {principal.id} (2027-02-07)" in llm.calls[0]
+    assert f"estimated_times : estimation manquante pour l'objectif {secondary.id}" in llm.calls[1]
+    times = {g.id: (g.target_time_s, g.target_source) for g in repo.upcoming_goals()}
+    assert times == {principal.id: (19800, "claude"), secondary.id: (2700, "claude")}
+
+
+def test_generate_rejects_implausible_estimate_per_goal(repo, fake_garmin):
+    principal, secondary = _two_goals(repo, fake_garmin)
+    bad = _plan_json({7: 2, 14: 2}, {principal.id: 19800, secondary.id: 600})  # 10 km en 10 min
+    llm = FakeLLMProvider([bad, bad])
+    with pytest.raises(LLMInvalidResponse):
+        generate_plan(repo, fake_garmin, llm)
+    assert (
+        f"estimated_times : 600 s invraisemblable pour l'objectif {secondary.id} (au moins 1500 s)"
+    ) in llm.calls[1]
+
+
+def test_generate_counts_races_in_their_week(repo, fake_garmin):
+    principal, secondary = _two_goals(repo, fake_garmin)
+    estimates = {principal.id: 19800, secondary.id: 2700}
+    llm = FakeLLMProvider([_plan_json({14: 2}, estimates), _plan_json({7: 2, 14: 2}, estimates)])
+    generate_plan(repo, fake_garmin, llm)
+    assert "semaine 7 : 3 séances pour 2 possibles (1 course(s) cette semaine)" in llm.calls[1]
+    assert len(repo.sessions(_cid(repo))) == 40
+
+
+def test_generate_rejects_session_on_race_day(repo, fake_garmin):
+    principal, secondary = _two_goals(repo, fake_garmin)
+    plan = PlanResponse.model_validate_json(_plan_json({7: 2, 14: 2}, {principal.id: 19800, secondary.id: 2700}))
+    plan.weeks[6].sessions[1].suggested_day = "dimanche"
+    llm = FakeLLMProvider([plan.model_dump_json(), _plan_json({7: 2, 14: 2}, {principal.id: 19800, secondary.id: 2700})])
+    generate_plan(repo, fake_garmin, llm)
+    assert "semaine 7, séance 2 : tombe le jour de la course du 20/12" in llm.calls[1]

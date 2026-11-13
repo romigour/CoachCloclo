@@ -4,7 +4,7 @@ from coach.analysis.laps import compare_session
 from coach.analysis.race_plan import RacePlan, Segment
 from coach.analysis.zones import compute_zones
 from coach.garmin.port import LapSummary
-from coach.llm.prompts import SYSTEM_PROMPT, _session_line, build_adjustment_prompt, build_generation_prompt, race_text
+from coach.llm.prompts import PRIORITY_RULES, SYSTEM_PROMPT, _session_line, build_adjustment_prompt, build_generation_prompt, race_text
 from coach.llm.schemas import RepeatSpec, StepSpec
 from coach.plan.constraints import PlanConstraints
 from coach.plan.models import Event
@@ -247,21 +247,23 @@ def test_adjustment_prompt_mentions_step_detail_rule():
 
 
 def test_goal_text_includes_target():
-    from coach.llm.prompts import _goal_text
+    from coach.llm.prompts import _goals_text
 
-    assert "Temps visé : 1 h 50" in _goal_text(make_goal(target_time_s=6600, target_source="user"))
-    assert "Temps visé" not in _goal_text(make_goal())
+    assert "Temps visé : 1 h 50" in _goals_text([make_goal(target_time_s=6600, target_source="user")], [])
+    assert "Temps visé" not in _goals_text([make_goal()], [])
 
 
 def test_generation_prompt_asks_estimate_in_claude_mode():
-    p = build_generation_prompt(make_cycle(), [make_goal(target_source="claude")], [], ZONES, [], n_weeks=14, gpx_texts=[])
-    assert "estimated_time_s" in p and "Estime" in p
+    p = build_generation_prompt(
+        make_cycle(), [make_goal(id=1, target_source="claude")], [], ZONES, [], n_weeks=14, gpx_texts=[]
+    )
+    assert "indique-le dans estimated_times (goal_id 1, en secondes)" in p and "Estime" in p
 
 
 def test_generation_prompt_regeneration_in_claude_mode_asks_estimate_again():
-    goal = make_goal(target_source="claude", target_time_s=6720)
+    goal = make_goal(id=1, target_source="claude", target_time_s=6720)
     p = build_generation_prompt(make_cycle(), [goal], [], ZONES, [], n_weeks=14, gpx_texts=[])
-    assert "estimated_time_s" in p
+    assert "estimated_times (goal_id 1" in p
     assert "Construis le plan pour atteindre ce temps visé" not in p
     assert "Temps visé" not in p and "Estimation précédente : 1 h 52" in p
 
@@ -451,3 +453,136 @@ def test_generation_prompt_lists_fixed_sessions():
     assert "Numérote les semaines de 3 à 14" in p
     plain = build_generation_prompt(make_cycle(), [make_goal()], [], ZONES, [], n_weeks=14, gpx_texts=[])
     assert "seulement" not in plain and "Numérote les semaines de 1 à 14" in plain
+
+
+# --- plusieurs objectifs, priorités et horizon ---
+
+_AVAIL = PlanConstraints(available_days=("mardi", "jeudi", "dimanche"), long_run_day="dimanche", today=date(2026, 11, 4))
+_AVAIL_TEXT = (
+    "Disponibilités : Jours possibles : mardi, jeudi, dimanche. Sortie longue : le dimanche. "
+    'Ne place aucune séance un autre jour. Toutes les séances sont en course à pied (sport "run").'
+)
+_GEN_TEXT = (
+    "Construis un plan de 14 semaines, avec au plus 3 séances par semaine (3 séances). Aujourd'hui correspond "
+    "à la semaine 1 ; la dernière semaine se termine à la course. Numérote les semaines de 1 à 14 et les séances "
+    "de chaque semaine à partir de 1 (champ order)."
+)
+_ADJ_TEXT = (
+    "Nous sommes en semaine 2 du plan, à raison de 3 séances maximum par semaine. Analyse les séances réalisées "
+    "et manquées, puis propose des ajustements pour les séances à venir (liste vide si aucun changement n'est utile)."
+)
+_LINE = "Objectif : course de type trail, 42 km, 2000 m de D+, le 2027-01-31. Le plan débute le 2026-10-26."
+
+
+def _head(prompt: str) -> str:
+    """Texte du prompt avant les zones."""
+    return prompt.split("\n\nZones disponibles")[0]
+
+
+def _gen(goals, horizon=(), **kw):
+    return build_generation_prompt(
+        make_cycle(), list(goals), list(horizon), ZONES, [], n_weeks=14, gpx_texts=[], today=date(2026, 11, 4),
+        constraints=_AVAIL, **kw,
+    )
+
+
+def _adj_prompt(goals, horizon=()):
+    return build_adjustment_prompt(make_cycle(), list(goals), list(horizon), ZONES, 2, [], [], [], [], constraints=_AVAIL)
+
+
+def test_single_principal_prompt_unchanged():
+    """Un seul Principal sans horizon : texte d'avant les cycles, au nom du champ d'estimation près."""
+    today = " Aujourd'hui : mercredi 4 novembre 2026 (semaine 2)."
+    user = make_goal(id=1, target_time_s=6600, target_source="user")
+    assert _head(_gen([user])) == "\n\n".join([
+        _LINE + " Temps visé : 1 h 50." + today, _AVAIL_TEXT, _GEN_TEXT,
+        "Construis le plan pour atteindre ce temps visé (allures cibles, volume).",
+    ])
+    assert _head(_adj_prompt([user])) == "\n\n".join([_LINE + " Temps visé : 1 h 50.", _AVAIL_TEXT, _ADJ_TEXT])
+    claude = make_goal(id=1, target_source="claude")
+    assert _head(_gen([claude])) == "\n\n".join([
+        _LINE + today, _AVAIL_TEXT, _GEN_TEXT,
+        "Estime d'abord un temps réaliste pour cette course d'après l'historique et les zones, "
+        "indique-le dans estimated_times (goal_id 1, en secondes), puis construis le plan pour ce temps.",
+    ])
+    estimated = make_goal(id=1, target_source="claude", target_time_s=6720)
+    assert _head(_adj_prompt([estimated])) == "\n\n".join([_LINE + " Temps visé : 1 h 52.", _AVAIL_TEXT, _ADJ_TEXT])
+    for p in (_gen([user]), _adj_prompt([user])):
+        assert PRIORITY_RULES not in p and "Objectifs suivants" not in p
+
+
+def _secondary(**kw):
+    data = dict(id=2, type="route", distance_km=10, d_plus_m=0, race_date=date(2026, 12, 20),
+                priority="secondaire", target_source="claude")
+    data.update(kw)
+    return make_goal(**data)
+
+
+def test_prompt_lists_goals_with_priority_and_rules():
+    principal = make_goal(id=1, target_time_s=6600, target_source="user")
+    for p in (_gen([_secondary(), principal]), _adj_prompt([_secondary(), principal])):
+        assert (
+            "Objectifs du cycle :\n"
+            "- 2026-12-20 : route, 10 km, 0 m de D+, priorité Secondaire\n"
+            "- 2027-01-31 : trail, 42 km, 2000 m de D+, priorité Principal, temps visé 1 h 50\n"
+            "Le plan débute le 2026-10-26."
+        ) in p
+        assert "Objectif : course" not in p
+        assert "\n\n" + PRIORITY_RULES + "\n\n" in p
+        assert (
+            "Pour chaque objectif sans temps visé (ids 2 (2026-12-20)), estime un temps réaliste dans "
+            "estimated_times (en secondes)."
+        ) in p
+    gen = _gen([_secondary(), principal])
+    assert gen.startswith("Objectifs du cycle :\n") and "Le plan débute le 2026-10-26. Aujourd'hui : mercredi" in gen
+    assert "Construis le plan pour atteindre les temps visés indiqués (allures cibles, volume)." in gen
+    for needle in ("Principal", "Secondaire", "Plaisir", "10 jours", "mini-affûtage", "remplace une séance",
+                   "aucune séance le jour d'une course", "compte comme une séance de sa semaine"):
+        assert needle in PRIORITY_RULES
+
+
+def test_prompt_rules_for_lone_non_principal_goal():
+    p = _gen([_secondary(target_source="user", target_time_s=3000)])
+    assert "- 2026-12-20 : route, 10 km, 0 m de D+, priorité Secondaire, temps visé 0 h 50" in p
+    assert PRIORITY_RULES in p and "Pour chaque objectif sans temps visé" not in p
+
+
+def test_prompt_generation_shows_previous_claude_estimate():
+    goals = [_secondary(target_time_s=3000), make_goal(id=1, target_source="claude", target_time_s=6720)]
+    p = _gen(goals)
+    assert "priorité Secondaire, estimation précédente 0 h 50\n" in p
+    assert "priorité Principal, estimation précédente 1 h 52\n" in p
+    assert "(ids 2 (2026-12-20), 1 (2027-01-31))" in p  # toutes les estimations sont refaites
+    adj = _adj_prompt(goals)
+    assert "priorité Secondaire, temps visé 0 h 50\n" in adj and "Pour chaque objectif sans temps visé" not in adj
+
+
+def test_prompt_consecutive_goals_as_block():
+    saturday = _secondary(id=2, race_date=date(2027, 1, 30), type="trail", distance_km=20, d_plus_m=500)
+    sunday = _secondary(id=3, race_date=date(2027, 1, 31), distance_km=30, priority="plaisir")
+    other = _secondary(id=4, race_date=date(2026, 12, 6), priority="plaisir")
+    p = _gen([other, saturday, sunday])
+    block = " (enchaînés, à traiter comme un bloc)"
+    assert "- 2026-12-06 : route, 10 km, 0 m de D+, priorité Plaisir\n" in p
+    assert "- 2027-01-30 : trail, 20 km, 500 m de D+, priorité Secondaire" + block + "\n" in p
+    assert "- 2027-01-31 : route, 30 km, 0 m de D+, priorité Plaisir" + block + "\n" in p
+
+
+def test_prompt_horizon_principal_line():
+    principal = make_goal(id=1, target_time_s=6600, target_source="user")
+    ultra = make_goal(id=5, race_date=date(2027, 5, 15), distance_km=80, d_plus_m=4000, target_source="claude")
+    later = _secondary(id=6, race_date=date(2027, 6, 13), priority="plaisir")
+    for p in (_gen([principal], [ultra, later]), _adj_prompt([principal], [ultra, later])):
+        assert (
+            "Objectifs suivants (préparés dans un cycle ultérieur, ne pas les anticiper) :\n"
+            "- 2027-05-15 : trail, 80 km, 4000 m de D+, priorité Principal\n"
+            "- 2027-06-13 : route, 10 km, 0 m de D+, priorité Plaisir\n"
+            "Termine ce cycle par l'affûtage de Trail de 42 km sans anticiper le suivant."
+        ) in p
+        # un seul Principal dans le cycle : liste, sans règles de priorité ; l'horizon n'est pas estimé
+        assert "- 2027-01-31 : trail, 42 km, 2000 m de D+, priorité Principal, temps visé 1 h 50" in p
+        assert PRIORITY_RULES not in p and "ids 5" not in p
+    p = _gen([principal], [later])
+    assert "Objectifs suivants" in p and "Termine ce cycle" not in p
+    # sans Principal dans le cycle, aucun affûtage n'est demandé pour la dernière course
+    assert "Termine ce cycle" not in _gen([_secondary()], [ultra])

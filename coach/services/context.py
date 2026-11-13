@@ -5,7 +5,7 @@ from datetime import date, timedelta
 from coach.analysis.zones import Zones, compute_zones
 from coach.garmin.port import GarminPort, Metrics
 from coach.plan.constraints import PlanConstraints
-from coach.plan.models import Activity, AthleteSnapshot, Cycle
+from coach.plan.models import Activity, AthleteSnapshot, Cycle, Goal
 from coach.plan.repo import Repo
 from coach.services import CoachError
 
@@ -44,10 +44,16 @@ def refresh_snapshot(repo: Repo, garmin: GarminPort) -> tuple[AthleteSnapshot, Z
     return snapshot, zones
 
 
-def load_constraints(repo: Repo, cycle: Cycle, today: date) -> PlanConstraints:
-    """Contraintes de disponibilité du cycle, imprévus enregistrés compris."""
+def load_constraints(repo: Repo, cycle: Cycle, today: date, goals: list[Goal] | None = None) -> PlanConstraints:
+    """Contraintes de disponibilité du cycle, imprévus enregistrés et jours de course compris.
+
+    Les jours de course sont ceux des objectifs du cycle (`goals_in`), sauf si `goals` est fourni
+    (objectifs du cycle après un changement pas encore enregistré).
+    """
     events = repo.events(cycle.id) if cycle.id is not None else []
-    return PlanConstraints.of(cycle, today, events)
+    if goals is None:
+        goals = repo.goals_in(cycle)
+    return PlanConstraints.of(cycle, today, events, goals)
 
 
 def recent_history(garmin: GarminPort) -> list[Activity]:

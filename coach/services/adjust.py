@@ -10,7 +10,7 @@ from coach.analysis.zones import Zones
 from coach.config import load_settings, save_settings
 from coach.garmin.port import GarminPort
 from coach.llm.client import ask_structured
-from coach.llm.prompts import SYSTEM_PROMPT, build_adjustment_prompt
+from coach.llm.prompts import SYSTEM_PROMPT, adjustment_estimates, build_adjustment_prompt, estimate_floors
 from coach.llm.provider import LLMProvider
 from coach.llm.schemas import AdjustmentResponse, validate_adjustment
 from coach.plan.calendar import n_weeks, week_of
@@ -41,8 +41,12 @@ def ask_adjustment(
 
     `cycle` peut être une copie non enregistrée. Les objectifs sont lus dans le dépôt (`goals_in`,
     `horizon_goals`), sauf si `goals` est fourni (objectifs du cycle, parmi lesquels une copie
-    modifiée non enregistrée) ; de même `horizon` remplace les objectifs au-delà du cycle.
+    modifiée ou un nouvel objectif non enregistrés) ; de même `horizon` remplace les objectifs au-delà
+    du cycle. Les objectifs `claude` encore sans temps doivent être estimés (`estimated_times`, un
+    objectif non enregistré sous l'id `NEW_GOAL_ID`) ; seules ces estimations sont gardées.
     """
+    from coach.services.goals import MIN_PACE_S_KM  # import tardif : goals importe ce module
+
     if goals is None:
         goals = repo.goals_in(cycle)
     if not goals:
@@ -63,7 +67,8 @@ def ask_adjustment(
     for s in sessions:
         if s.status not in ("todo", "exported") and not s.pending_removal:
             fixed_counts[s.week_index] = fixed_counts.get(s.week_index, 0) + 1
-    constraints = load_constraints(repo, cycle, today)
+    constraints = load_constraints(repo, cycle, today, goals)
+    estimate_min_s = estimate_floors(adjustment_estimates(goals), MIN_PACE_S_KM)
     editable = {s.id for s in upcoming}
     week_of_session = {s.id: s.week_index for s in sessions}
 
@@ -80,7 +85,7 @@ def ask_adjustment(
         change_note=change_note,
         constraints=constraints,
     )
-    return ask_structured(
+    adj = ask_structured(
         llm,
         SYSTEM_PROMPT,
         prompt,
@@ -95,19 +100,26 @@ def ask_adjustment(
             pace_available=zones.pace is not None,
             week_of_session=week_of_session,
             exported_ids={s.id for s in upcoming if s.status == "exported"},
+            estimate_min_s=estimate_min_s,
         )
         + constraint_errors(planned_after_adjustment(cycle, upcoming, a), constraints, fixed_counts=fixed_counts),
     )
+    adj.estimated_times = [e for e in adj.estimated_times if e.goal_id in estimate_min_s]
+    return adj
 
 
 def save_proposal(db: DbSession, adj: AdjustmentResponse) -> int:
-    """Passe les propositions en attente à `stale`, ajoute la nouvelle et renvoie son id."""
+    """Passe les propositions en attente à `stale`, ajoute la nouvelle et renvoie son id.
+
+    Les estimations de temps sont gardées avec la proposition, appliquées à son acceptation.
+    """
     for old in db.exec(select(Proposal).where(Proposal.status == "pending")).all():
         old.status = "stale"
         db.add(old)
     proposal = Proposal(
         analysis=adj.analysis,
         changes_json=json.dumps([c.model_dump() for c in adj.changes]),
+        estimates_json=json.dumps([e.model_dump() for e in adj.estimated_times]),
     )
     db.add(proposal)
     db.flush()

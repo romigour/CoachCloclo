@@ -271,3 +271,15 @@ def test_session_sport_defaults_to_run_and_old_change_loads():
     assert change.session.sport == "run"
     with pytest.raises(ValidationError):
         make_session(sport="swim")
+
+
+def test_validate_plan_first_week_and_fixed_counts():
+    # semaines 3 et 4 seulement ; deux séances fixes en semaine 3 sur 3 par semaine
+    plan = make_plan(4, [0, 0, 1, 3])
+    plan.weeks = plan.weeks[2:]
+    kwargs = dict(n_weeks=4, sessions_per_week=3, pace_available=True, first_week=3)
+    assert validate_plan(plan, **kwargs, fixed_counts={3: 2}) == []
+    errs = validate_plan(plan, **kwargs, fixed_counts={3: 2, 4: 1})
+    assert errs == ["semaine 4 : 3 séances pour 2 demandées (1 fixée)"]
+    errs = validate_plan(make_plan(4, [1, 1, 1, 1]), **kwargs)
+    assert any("numérotées de 3 à 4" in e for e in errs)

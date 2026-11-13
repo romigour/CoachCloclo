@@ -1,6 +1,7 @@
 """Schémas JSON stricts des réponses de Claude et validation métier."""
 
 from collections import Counter
+from collections.abc import Mapping
 from typing import Literal, get_args
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -111,11 +112,16 @@ def validate_plan(
     sessions_per_week: int,
     pace_available: bool,
     estimate_min_s: int | None = None,
+    first_week: int = 1,
+    fixed_counts: Mapping[int, int] | None = None,
 ) -> list[str]:
-    """Contrôle métier d'un plan complet ; retourne la liste des erreurs (vide si valide).
+    """Contrôle métier d'un plan ; retourne la liste des erreurs (vide si valide).
 
     `estimate_min_s` non None : le plan doit porter une estimation `estimated_time_s` ≥ cette valeur.
+    `first_week` : première semaine attendue (régénération de la suite d'un plan).
+    `fixed_counts` : séances conservées par semaine, qui comptent dans le maximum de leur semaine.
     """
+    fixed_counts = fixed_counts or {}
     errors: list[str] = []
     if estimate_min_s is not None:
         if plan.estimated_time_s is None:
@@ -126,12 +132,17 @@ def validate_plan(
                 f"au moins {estimate_min_s} s attendues"
             )
     indexes = [w.week_index for w in plan.weeks]
-    if indexes != list(range(1, n_weeks + 1)):
-        errors.append(f"les semaines doivent être numérotées de 1 à {n_weeks} sans trou (reçu : {indexes})")
+    if indexes != list(range(first_week, n_weeks + 1)):
+        errors.append(
+            f"les semaines doivent être numérotées de {first_week} à {n_weeks} sans trou (reçu : {indexes})"
+        )
     for week in plan.weeks:
         n = len(week.sessions)
-        if n > sessions_per_week:
-            errors.append(f"semaine {week.week_index} : {n} séances pour {sessions_per_week} demandées")
+        fixed = fixed_counts.get(week.week_index, 0)
+        cap = max(0, sessions_per_week - fixed)
+        if n > cap:
+            detail = f" ({fixed} fixée{'s' if fixed > 1 else ''})" if fixed else ""
+            errors.append(f"semaine {week.week_index} : {n} séances pour {cap} demandées{detail}")
         orders = [s.order for s in week.sessions]
         if len(set(orders)) != len(orders):
             errors.append(f"semaine {week.week_index} : numéros d'ordre en double")

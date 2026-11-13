@@ -316,9 +316,11 @@ def build_generation_prompt(
     fixed: list[Session] = (),
     recovery_note: str | None = None,
 ) -> str:
-    """Prompt de génération du plan complet du cycle ; `today` situe le jour courant dans la semaine 1.
+    """Prompt de génération du plan du cycle ; `today` situe le jour courant dans la semaine `first_week`.
 
-    `horizon`, `first_week`, `fixed` et `recovery_note` ne sont pas encore repris dans le texte.
+    `first_week` > 1 ou `fixed` non vide : seule la suite du plan est demandée, les séances `fixed`
+    (faites ou exportées) comptant dans leur semaine.
+    `horizon` et `recovery_note` ne sont pas encore repris dans le texte.
     """
     goal = _main_goal(goals)
     parts = [
@@ -326,10 +328,17 @@ def build_generation_prompt(
         *([_availability_text(constraints)] if constraints is not None else []),
         *([t] if constraints is not None and (t := _events_text(constraints)) else []),
         f"Construis un plan de {n_weeks} semaines, avec au plus {cycle.sessions_per_week} séances "
-        f"par semaine ({cycle.sessions_per_week} séances). Aujourd'hui correspond à la semaine 1 ; "
-        f"la dernière semaine se termine à la course. Numérote les semaines de 1 à {n_weeks} "
+        f"par semaine ({cycle.sessions_per_week} séances). Aujourd'hui correspond à la semaine {first_week} ; "
+        f"la dernière semaine se termine à la course. Numérote les semaines de {first_week} à {n_weeks} "
         "et les séances de chaque semaine à partir de 1 (champ order).",
     ]
+    if fixed:
+        parts.append(
+            f"Semaines {first_week} à {n_weeks} seulement : les séances suivantes sont fixées et comptent "
+            "dans leur semaine :\n" + "\n".join(_session_line(s) for s in fixed)
+        )
+    elif first_week > 1:
+        parts.append(f"Semaines {first_week} à {n_weeks} seulement : les semaines précédentes sont passées.")
     if goal.target_source == "claude":
         parts.append(
             "Estime d'abord un temps réaliste pour cette course d'après l'historique et les zones, "

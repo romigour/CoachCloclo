@@ -14,7 +14,8 @@ from coach.plan.models import Cycle, Event, Session
 from coach.plan.repo import Repo
 from coach.services import CoachError
 from coach.services.adjust import request_adjustment
-from coach.services.plans import _active_cycle, normalize_days
+from coach.services.goals import normalize_days
+from coach.services.plans import _active_cycle
 
 
 class EventError(CoachError):

@@ -6,9 +6,11 @@ import pytest
 from coach.analysis.race_plan import AidStation, RaceSettings
 from coach.garmin.port import FakeGarminClient, GarminUnavailable, Metrics
 from coach.services import CoachError
-from coach.services.plans import GoalError, GoalInput, create_goal
+from coach.llm.provider import FakeLLMProvider
+from coach.services.goals import GoalError, GoalInput, add_goal, remove_goal
 from coach.services.race_strategy import (
     export_race,
+    withdraw_race,
     get_race_view,
     race_line_for_prompt,
     race_plan_for,
@@ -45,7 +47,7 @@ def make_goal(repo, garmin, *, kind="trail", distance_km=10, gpx="trail_wpt.gpx"
         sessions_per_week=3,
         gpx=(FIXTURES / gpx).read_bytes() if gpx else None,
     )
-    return create_goal(repo, garmin, data)
+    return add_goal(repo, garmin, FakeLLMProvider([]), data)[0]
 
 
 def set_target(repo, goal, seconds, source="user"):
@@ -121,7 +123,7 @@ def test_missing_gpx_file_warns(repo, coach_home, garmin):
 
 def test_archived_goal_rejected(repo, coach_home, garmin):
     first = make_goal(repo, garmin)
-    make_goal(repo, garmin)
+    remove_goal(repo, garmin, FakeLLMProvider([]), first.id)
     with pytest.raises(GoalError):
         get_race_view(repo, garmin, first.id)
 
@@ -209,7 +211,7 @@ def test_long_waypoint_name_truncated(repo, coach_home, garmin):
     gpx = (FIXTURES / "trail_wpt.gpx").read_bytes().replace(b"Ravito Col", LONG_NAME.encode())
     data = GoalInput(type="trail", distance_km=10, d_plus_m=300, race_date=date(2027, 2, 7),
                      sessions_per_week=3, gpx=gpx)
-    goal = create_goal(repo, garmin, data)
+    goal = add_goal(repo, garmin, FakeLLMProvider([]), data)[0]
     assert get_race_view(repo, garmin, goal.id).settings.aid_stations[0].name == LONG_NAME[:60]
     assert reimport_stations(repo, garmin, goal.id).settings.aid_stations[0].name == LONG_NAME[:60]
 
@@ -275,3 +277,25 @@ def test_export_stale_after_goal_target_change(repo, coach_home, garmin):
     assert export_race(repo, garmin, goal.id).export_stale is False
     set_target(repo, goal, 3600)
     assert get_race_view(repo, garmin, goal.id).export_stale is True
+
+
+def test_withdraw_race_removes_exported_workout(repo, coach_home, garmin):
+    goal = make_goal(repo, garmin)
+    view = export_race(repo, garmin, goal.id)
+    withdraw_race(repo, garmin, goal.id)
+    strategy = repo.race_strategy(goal.id)
+    assert (strategy.garmin_workout_id, strategy.garmin_schedule_id) == (None, None)
+    assert view.workout_id not in garmin.workouts and garmin.schedules == {}
+    withdraw_race(repo, garmin, goal.id)  # plus rien à retirer : aucun appel Garmin
+    assert garmin.calls.count("unschedule") == 1
+
+
+def test_withdraw_race_garmin_error_raises(repo, coach_home, garmin):
+    goal = make_goal(repo, garmin)
+    view = export_race(repo, garmin, goal.id)
+    garmin.fail_on = {"delete_workout"}
+    with pytest.raises(GarminUnavailable):
+        withdraw_race(repo, garmin, goal.id)
+    strategy = repo.race_strategy(goal.id)
+    # la planification est retirée, le workout reste à supprimer
+    assert (strategy.garmin_workout_id, strategy.garmin_schedule_id) == (view.workout_id, None)

@@ -436,3 +436,18 @@ def test_goal_line_exact_order_in_claude_estimate_mode():
     assert _first_part(gen) == line + " Estimation précédente : 1 h 52."
     adj = build_adjustment_prompt(make_cycle(), [goal], [], ZONES, 2, [], [], [], [])
     assert _first_part(adj) == line + " Temps visé : 1 h 52."
+
+
+def test_generation_prompt_lists_fixed_sessions():
+    fixed =make_db_session(1, week_index=3, order=1)
+    fixed.id, fixed.status = 12, "exported"
+    p = build_generation_prompt(
+        make_cycle(), [make_goal()], [], ZONES, [], n_weeks=14, gpx_texts=[], first_week=3, fixed=[fixed]
+    )
+    assert (
+        "Semaines 3 à 14 seulement : les séances suivantes sont fixées et comptent dans leur semaine :\n"
+        + _session_line(fixed)
+    ) in p
+    assert "Numérote les semaines de 3 à 14" in p
+    plain = build_generation_prompt(make_cycle(), [make_goal()], [], ZONES, [], n_weeks=14, gpx_texts=[])
+    assert "seulement" not in plain and "Numérote les semaines de 1 à 14" in plain

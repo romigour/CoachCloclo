@@ -45,17 +45,16 @@ from coach.plan.models import Activity, Cycle, Event, Goal, Proposal, Session
 from coach.plan.repo import Repo, make_engine
 from coach.services import CoachError
 from coach.services import garmin_export as export
-from coach.services.plans import (
+from coach.services.goals import (
+    ChangeResult,
     GoalInput,
     GoalUpdate,
-    PlanSettingsUpdate,
-    accept_plan,
-    create_goal,
-    generate_plan,
+    add_goal,
     parse_target_time,
+    remove_goal,
     update_goal,
-    update_plan_settings,
 )
+from coach.services.plans import PlanSettingsUpdate, accept_plan, generate_plan, update_plan_settings
 from coach.analysis.race_plan import RaceSettings
 from coach.services import race_strategy
 from coach.services.adjust import request_adjustment
@@ -148,6 +147,24 @@ def _invalid(errors: list[dict], prefix: tuple = ()) -> JSONResponse:
     return _error(422, "invalid", [
         {"loc": [*prefix, *e["loc"]], "msg": e["msg"].removeprefix("Value error, ")} for e in errors
     ])
+
+
+class _LazyLLM:
+    """Fournisseur LLM créé au premier appel : un objectif sans effet sur le plan n'en a pas besoin."""
+
+    def __init__(self, factory: Callable[[], LLMProvider]):
+        self._factory = factory
+        self._llm: LLMProvider | None = None
+
+    def complete(self, system: str, prompt: str) -> str:
+        if self._llm is None:
+            self._llm = self._factory()
+        return self._llm.complete(system, prompt)
+
+
+def _change_dict(result: ChangeResult, goal: Goal | None = None) -> dict:
+    body = {"proposal_id": result.proposal_id, "needs_generation": result.needs_generation}
+    return body if goal is None else {"goal": _goal_dict(goal), **body}
 
 
 def _goal_dict(goal: Goal) -> dict:
@@ -433,7 +450,8 @@ def create_app(
         type: Annotated[Literal["route", "trail"], Form()],
         distance_km: Annotated[float, Form()],
         race_date: Annotated[date, Form()],
-        sessions_per_week: Annotated[int, Form()],
+        request: Request,
+        sessions_per_week: Annotated[int | None, Form()] = None,
         d_plus_m: Annotated[int, Form()] = 0,
         target_time: Annotated[str | None, Form()] = None,
         available_days: Annotated[str | None, Form()] = None,
@@ -465,12 +483,17 @@ def create_app(
             )
         except ValidationError as e:
             return _invalid(e.errors(), ("body",))
-        return _goal_dict(create_goal(repo, garmin, data))
+        goal, result = add_goal(repo, garmin, _LazyLLM(request.app.state.llm_factory), data)
+        return _change_dict(result, goal)
 
     @api.patch("/goals/{goal_id}")
-    def patch_goal(goal_id: int, body: GoalUpdate, repo: RepoDep, garmin: GarminDep, llm: LLMDep):
-        goal, proposal_id = update_goal(repo, garmin, llm, goal_id, body)
-        return {"goal": _goal_dict(goal), "proposal_id": proposal_id}
+    def patch_goal(goal_id: int, body: GoalUpdate, request: Request, repo: RepoDep, garmin: GarminDep):
+        goal, result = update_goal(repo, garmin, _LazyLLM(request.app.state.llm_factory), goal_id, body)
+        return _change_dict(result, goal)
+
+    @api.delete("/goals/{goal_id}")
+    def delete_goal(goal_id: int, request: Request, repo: RepoDep, garmin: GarminDep):
+        return _change_dict(remove_goal(repo, garmin, _LazyLLM(request.app.state.llm_factory), goal_id))
 
     @api.patch("/cycle")
     def patch_cycle(body: PlanSettingsUpdate, repo: RepoDep, garmin: GarminDep, llm: LLMDep):

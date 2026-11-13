@@ -35,18 +35,24 @@ def ask_adjustment(
     missed: list[Session] = (),
     change_note: str | None = None,
     goals: list[Goal] | None = None,
+    horizon: list[Goal] | None = None,
 ) -> AdjustmentResponse:
     """Demande l'ajustement à Claude ; n'écrit rien.
 
     `cycle` peut être une copie non enregistrée. Les objectifs sont lus dans le dépôt (`goals_in`,
     `horizon_goals`), sauf si `goals` est fourni (objectifs du cycle, parmi lesquels une copie
-    modifiée non enregistrée).
+    modifiée non enregistrée) ; de même `horizon` remplace les objectifs au-delà du cycle.
     """
     if goals is None:
         goals = repo.goals_in(cycle)
-    # un objectif transmis dans `goals` (copie modifiée) n'est pas aussi à l'horizon à son ancienne date
-    in_cycle = {g.id for g in goals}
-    horizon = [g for g in repo.horizon_goals(cycle) if g.id not in in_cycle]
+    if not goals:
+        from coach.services.goals import GoalError  # import tardif : goals importe ce module
+
+        raise GoalError("Le cycle n'a aucun objectif à venir")
+    if horizon is None:
+        # un objectif transmis dans `goals` (copie modifiée) n'est pas aussi à l'horizon à son ancienne date
+        in_cycle = {g.id for g in goals}
+        horizon = [g for g in repo.horizon_goals(cycle) if g.id not in in_cycle]
     current_week = week_of(cycle, today)
     upcoming = [s for s in sessions if s.status in ("todo", "exported") and s.week_index >= current_week]
     counts: dict[int, int] = {}
@@ -120,7 +126,8 @@ def request_adjustment(
     Porte sur le cycle actif. Les imprévus enregistrés sont transmis par `ask_adjustment` ; `note` décrit
     ce qui vient de changer.
     """
-    from coach.services.plans import GoalError, _active_cycle  # import tardif : plans importe ce module
+    from coach.services.goals import GoalError  # import tardif : goals importe ce module
+    from coach.services.plans import _active_cycle
 
     cycle = _active_cycle(repo)
     if not cycle.plan_accepted:

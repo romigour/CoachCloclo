@@ -16,7 +16,7 @@ from coach.plan.models import Goal, RaceStrategy
 from coach.plan.repo import Repo
 from coach.services import CoachError
 from coach.services.context import zones_from_metrics
-from coach.services.plans import _get_goal
+from coach.services.goals import _get_goal
 
 MAX_PROFILE_POINTS = 500
 _GARMIN_ERRORS = (GarminUnavailable, GarminAuthRequired, GarminRateLimited)
@@ -275,3 +275,27 @@ def export_race(repo: Repo, garmin: GarminPort, goal_id: int) -> RaceView:
     except _GARMIN_ERRORS:
         pass  # ids conservés dans pending_old_* : retentés au prochain export
     return _view(strategy, goal, garmin.today())
+
+
+def withdraw_race(repo: Repo, garmin: GarminPort, goal_id: int) -> None:
+    """Retire de la montre le Jour J exporté de l'objectif (déprogrammation puis suppression).
+
+    Chaque id est remis à None dès qu'il est traité ; une erreur Garmin remonte. Les anciens ids
+    en attente sont nettoyés au mieux.
+    """
+    strategy = repo.race_strategy(goal_id)
+    if strategy is None:
+        return
+    if strategy.garmin_schedule_id is not None:
+        garmin.unschedule(strategy.garmin_schedule_id)
+        strategy.garmin_schedule_id = None
+        strategy = repo.update(strategy)
+    if strategy.garmin_workout_id is not None:
+        garmin.delete_workout(strategy.garmin_workout_id)
+        strategy.garmin_workout_id = None
+        strategy.exported_hash = None
+        strategy = repo.update(strategy)
+    try:
+        _cleanup_old(repo, garmin, strategy)
+    except _GARMIN_ERRORS:
+        pass  # ids conservés dans pending_old_* : sans conséquence pour un objectif retiré

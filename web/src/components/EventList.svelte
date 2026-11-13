@@ -4,13 +4,11 @@
   import ErrorBanner from "./ErrorBanner.svelte";
 
   let {
-    goalId,
     today = todayIso(),
     onproposal,
     onchanged,
     reload = 0,
   }: {
-    goalId: number;
     today?: string;
     onproposal?: (proposalId: number) => void;
     /** Un imprévu a été supprimé : la page recharge son plan (un arrêt ouvert peut disparaître). */
@@ -40,15 +38,14 @@
 
   async function load() {
     try {
-      events = await api.events(goalId);
+      events = await api.events();
     } catch (e) {
       error = e;
     }
   }
 
   $effect(() => {
-    goalId; // recharge si l'objectif change
-    reload; // ou si la page a rechargé son plan (ex. reprise après un arrêt)
+    reload; // recharge quand la page a rechargé son plan (ex. reprise après un arrêt)
     load();
   });
 
@@ -71,7 +68,7 @@
     busy = true;
     error = null;
     try {
-      const r = await api.requestAdjustment(goalId);
+      const r = await api.requestAdjustment();
       recompute = false;
       onproposal?.(r.proposal_id);
     } catch (err) {

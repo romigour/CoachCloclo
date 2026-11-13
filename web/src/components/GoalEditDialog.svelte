@@ -1,10 +1,9 @@
 <script lang="ts">
   import { untrack } from "svelte";
-  import { api, type Goal } from "../lib/api";
+  import { api, type Goal, type GoalChange, type GoalUpdate, type Priority } from "../lib/api";
+  import { PRIORITY_LABELS } from "../lib/labels";
   import { addDays, todayIso } from "../lib/dates";
   import { fmtTargetTime, parseTargetTime } from "../lib/race";
-  import { WEEKDAYS } from "../lib/dates";
-  import AvailabilityFields, { availabilityValid } from "./AvailabilityFields.svelte";
   import ErrorBanner from "./ErrorBanner.svelte";
 
   let {
@@ -12,18 +11,13 @@
     today = todayIso(),
     onclose,
     onsaved,
-  }: { goal: Goal; today?: string; onclose?: () => void; onsaved?: (proposalId: number) => void } = $props();
+  }: { goal: Goal; today?: string; onclose?: () => void; onsaved?: (change: GoalChange) => void } = $props();
 
   // instantané des valeurs de départ : le formulaire ne suit pas les changements de `goal`
   const initialTime = untrack(() => (goal.target_time_s != null ? fmtTargetTime(goal.target_time_s) : ""));
   let date = $state(untrack(() => goal.race_date));
   let time = $state(initialTime);
-  const initialDays = untrack(() => goal.available_days ?? [...WEEKDAYS]);
-  const initialLongRun = untrack(() => goal.long_run_day ?? "");
-  let days = $state([...initialDays]);
-  let longRunDay = $state(initialLongRun);
-  const initialBike = untrack(() => goal.include_bike ?? false);
-  let includeBike = $state(initialBike);
+  let priority = $state<Priority>(untrack(() => goal.priority));
   let busy = $state(false);
   let error = $state<unknown>(null);
 
@@ -32,26 +26,19 @@
   const timeChanged = $derived(time.trim() !== initialTime);
   const timeInvalid = $derived(timeChanged && !Number.isFinite(parseTargetTime(time)));
   const dateChanged = $derived(date !== goal.race_date);
-  const daysChanged = $derived(days.length !== initialDays.length || days.some((d) => !initialDays.includes(d)));
-  const longRunChanged = $derived(longRunDay !== initialLongRun);
-  const bikeChanged = $derived(includeBike !== initialBike);
-  const daysOk = $derived(availabilityValid(days, goal.sessions_per_week));
-  const canSave = $derived(
-    !busy && !!date && (dateChanged || timeChanged || daysChanged || longRunChanged || bikeChanged) && !timeInvalid && daysOk,
-  );
+  const priorityChanged = $derived(priority !== goal.priority);
+  const canSave = $derived(!busy && !!date && (dateChanged || timeChanged || priorityChanged) && !timeInvalid);
 
   async function submit() {
     busy = true;
     error = null;
     try {
-      const body: { race_date?: string; target_time?: string; available_days?: string[]; long_run_day?: string; include_bike?: boolean } = {};
+      const body: GoalUpdate = {};
       if (dateChanged) body.race_date = date;
       if (timeChanged) body.target_time = time.trim();
-      if (daysChanged) body.available_days = days;
-      if (longRunChanged) body.long_run_day = longRunDay; // "" = retirer le jour
-      if (bikeChanged) body.include_bike = includeBike;
-      const r = await api.updateGoal(goal.id, body);
-      onsaved?.(r.proposal_id);
+      if (priorityChanged) body.priority = priority;
+      const change = await api.updateGoal(goal.id, body);
+      onsaved?.(change);
     } catch (e) {
       error = e;
     } finally {
@@ -73,8 +60,18 @@
         <input type="text" inputmode="numeric" placeholder="1:50" bind:value={time} aria-invalid={timeInvalid} />
       </label>
     </div>
+    <fieldset>
+      <legend>Priorité</legend>
+      <div class="segmented">
+        {#each Object.entries(PRIORITY_LABELS) as [value, label] (value)}
+          <label>
+            <input type="radio" name="edit-priority" {value} bind:group={priority} />
+            <span>{label}</span>
+          </label>
+        {/each}
+      </div>
+    </fieldset>
     {#if timeInvalid}<span class="hint" role="alert">Temps visé invalide : format attendu h:mm, ex. 1:50</span>{/if}
-    <AvailabilityFields bind:days bind:longRunDay bind:includeBike perWeek={goal.sessions_per_week} />
     <p class="meta">Pour changer la distance ou le type de course, crée un nouvel objectif.</p>
     {#if busy}<p class="meta" role="status">Claude ajuste ton plan… (cela peut prendre une minute)</p>{/if}
     <ErrorBanner {error} />

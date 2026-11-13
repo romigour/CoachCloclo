@@ -60,22 +60,41 @@ export type Session = {
   sync_error: string | null;
 };
 
+export type Priority = "principal" | "secondaire" | "plaisir";
+
+/** Objectif de course (une course, sans les réglages du plan qui sont portés par le cycle). */
 export type Goal = {
   id: number;
   type: "route" | "trail";
   distance_km: number;
   d_plus_m: number;
   race_date: string;
-  sessions_per_week: number;
-  plan_start: string;
-  plan_accepted: boolean;
-  gpx_summary: Record<string, unknown> | null;
+  priority: Priority;
+  status: "active" | "done" | "archived";
   target_time_s: number | null;
   target_source: "user" | "claude" | null;
+  gpx_summary: Record<string, unknown> | null;
+};
+
+/** Cycle d'entraînement : un plan et ses réglages, jusqu'à la course qui le termine. */
+export type Cycle = {
+  id: number;
+  status: "active" | "done";
+  plan_start: string;
+  end_date: string;
+  sessions_per_week: number;
   available_days: string[];
   long_run_day: string | null;
   include_bike: boolean;
+  plan_accepted: boolean;
+  needs_generation: boolean;
 };
+
+/** Corps de PATCH /api/cycle : seuls les champs modifiés ; `long_run_day: ""` retire le jour imposé. */
+export type PlanSettingsInput = { available_days?: string[]; long_run_day?: string; include_bike?: boolean };
+
+/** Corps de POST /api/cycle/next : réglages du plan et nombre de séances par semaine (2 à 7). */
+export type NextCycleInput = PlanSettingsInput & { sessions_per_week?: number };
 
 export type Activity = {
   id: number;
@@ -181,7 +200,7 @@ export type HistoryState = {
 export type Week = { week_index: number; week_monday: string; sessions: Session[] };
 export type EventKind = "unavailable" | "injury" | "light_week" | "fatigue";
 
-/** Imprévu déclaré (GET /api/goals/{id}/events). */
+/** Imprévu déclaré (GET /api/cycle/events). */
 export type CoachEvent = {
   id: number;
   kind: EventKind;
@@ -193,7 +212,7 @@ export type CoachEvent = {
   note: string | null;
 };
 
-/** Corps de POST /api/goals/{id}/events. */
+/** Corps de POST /api/cycle/events. */
 export type EventInput = {
   kind: EventKind;
   start_date?: string;
@@ -207,13 +226,45 @@ export type EventInput = {
 /** L'imprévu est enregistré même si Claude échoue : `proposal_id` est alors nul et `error` renseigné. */
 export type EventResult = { event_id: number; proposal_id: number | null; error: string | null };
 
-export type Plan = { goal: Goal | null; weeks: Week[]; open_injury?: CoachEvent | null };
+/** Plan du cycle actif : `goals` tombent dans le cycle, `horizon` au-delà (du plus proche au plus lointain). */
+export type Plan = {
+  cycle: Cycle | null;
+  goals: Goal[];
+  horizon: Goal[];
+  weeks: Week[];
+  open_injury?: CoachEvent | null;
+};
+
+/** Cible du cycle : son premier Principal (comme `cycle_end` côté serveur), sinon la course du dernier
+ * jour, sinon le dernier objectif du cycle. Un Plaisir le lendemain du Principal prolonge la fin du cycle
+ * sans en devenir la cible. */
+export function cycleGoal(plan: Pick<Plan, "cycle" | "goals">): Goal | null {
+  const cycle = plan.cycle;
+  if (!cycle) return null;
+  const inCycle = [...plan.goals]
+    .filter((g) => g.race_date <= cycle.end_date)
+    .sort((a, b) => a.race_date.localeCompare(b.race_date) || a.id - b.id);
+  return (
+    inCycle.find((g) => g.priority === "principal") ??
+    plan.goals.find((g) => g.race_date === cycle.end_date) ??
+    plan.goals.at(-1) ??
+    null
+  );
+}
 
 export type Status = {
   garmin: "ok" | "auth_required" | "unavailable";
   llm_mode: "cli" | "api";
   pending_proposal_id: number | null;
-  goal: Goal | null;
+  /** Cycle actif (réglages et plan), nul sans plan en cours. */
+  cycle: Cycle | null;
+  /** Objectifs à venir, du plus proche au plus lointain. */
+  goals: Goal[];
+  next_goal: Goal | null;
+  /** Objectifs courus, du plus récent au plus ancien. */
+  past_goals: Goal[];
+  /** Dernier cycle terminé, seulement sans cycle actif : réglages repris par « Préparer le cycle suivant ». */
+  last_cycle: Cycle | null;
   has_activities: boolean;
   history: HistoryState;
 };
@@ -367,13 +418,21 @@ export type GoalInput = {
   distance_km: number;
   d_plus_m: number;
   race_date: string;
-  sessions_per_week: number;
+  /** Réglages du plan : seulement pour le premier objectif (aucun cycle actif). */
+  sessions_per_week?: number;
   target_time?: string;
   gpx?: File | null;
   available_days?: string[];
   long_run_day?: string;
   include_bike?: boolean;
+  priority?: Priority;
 };
+
+/** Effet d'un changement d'objectif sur le plan : proposition d'ajustement à relire, ou plan à régénérer. */
+export type PlanChange = { proposal_id: number | null; needs_generation: boolean };
+export type GoalChange = PlanChange & { goal: Goal };
+/** Corps de PATCH /api/goals/{id} : seuls les champs modifiés. */
+export type GoalUpdate = { race_date?: string; target_time?: string; priority?: Priority };
 
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
   const headers: Record<string, string> = {};
@@ -461,21 +520,23 @@ export const api = {
     f.set("distance_km", String(g.distance_km));
     f.set("d_plus_m", String(g.d_plus_m));
     f.set("race_date", g.race_date);
-    f.set("sessions_per_week", String(g.sessions_per_week));
+    if (g.sessions_per_week != null) f.set("sessions_per_week", String(g.sessions_per_week));
     if (g.target_time) f.set("target_time", g.target_time);
     if (g.gpx) f.set("gpx", g.gpx);
     if (g.available_days) f.set("available_days", g.available_days.join(","));
     if (g.long_run_day) f.set("long_run_day", g.long_run_day);
     if (g.include_bike) f.set("include_bike", "true");
-    return post<Goal>("/goals", f);
+    if (g.priority) f.set("priority", g.priority);
+    return post<GoalChange>("/goals", f);
   },
-  updateGoal: (
-    goalId: number,
-    body: { race_date?: string; target_time?: string; available_days?: string[]; long_run_day?: string; include_bike?: boolean },
-  ) =>
-    patch<{ goal: Goal; proposal_id: number }>(`/goals/${goalId}`, body),
-  generate: (goalId: number) => post<{ summary: string; weeks: number }>(`/goals/${goalId}/generate`),
-  accept: (goalId: number) => post<{ status: string }>(`/goals/${goalId}/accept`),
+  updateGoal: (goalId: number, body: GoalUpdate) => patch<GoalChange>(`/goals/${goalId}`, body),
+  /** Retire (archive) un objectif ; même effet sur le plan qu'un ajout. */
+  removeGoal: (goalId: number) => del<PlanChange>(`/goals/${goalId}`),
+  updatePlanSettings: (body: PlanSettingsInput) => patch<{ cycle: Cycle; proposal_id: number }>("/cycle", body),
+  /** Crée le cycle suivant (à générer) ; `body` surcharge les réglages repris du dernier cycle. */
+  nextCycle: (body?: NextCycleInput) => post<Cycle>("/cycle/next", body),
+  generate: () => post<{ summary: string; weeks: number }>("/cycle/generate"),
+  accept: () => post<{ status: string }>("/cycle/accept"),
   plan: () => get<Plan>("/plan"),
   racePlan: (goalId: number) => get<RaceView>(`/goals/${goalId}/race-plan`),
   saveRacePlan: (goalId: number, settings: RaceSettings) => put<RaceView>(`/goals/${goalId}/race-plan`, settings),
@@ -503,9 +564,10 @@ export const api = {
   statsRecords: () => get<{ records: PersonalRecord[] }>("/stats/records"),
   saveRace: (activityId: number, race: Partial<RaceInfo>) => request<StatActivity>("PUT", `/races/${activityId}`, race),
   removeRace: (activityId: number) => del<{ status: string }>(`/races/${activityId}`),
-  createEvent: (goalId: number, body: EventInput) => post<EventResult>(`/goals/${goalId}/events`, body),
-  requestAdjustment: (goalId: number) => post<{ proposal_id: number }>(`/goals/${goalId}/adjust`),
-  events: (goalId: number) => get<CoachEvent[]>(`/goals/${goalId}/events`),
+  createEvent: (body: EventInput) => post<EventResult>("/cycle/events", body),
+  requestAdjustment: () => post<{ proposal_id: number }>("/cycle/adjust"),
+  /** Imprévus du cycle actif ; liste vide sans plan en cours. */
+  events: () => get<CoachEvent[]>("/cycle/events"),
   deleteEvent: (id: number) => del<{ status: string }>(`/events/${id}`),
   resumeInjury: (id: number, date: string) => post<EventResult>(`/events/${id}/resume`, { date }),
   importHistory: () => post<{ status: string }>("/history/import"),

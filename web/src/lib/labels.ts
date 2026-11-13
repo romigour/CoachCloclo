@@ -1,4 +1,4 @@
-import type { Family, SessionStatus } from "./api";
+import type { Family, Priority, SessionStatus } from "./api";
 import type { SportFilter } from "./stats/filter";
 import type { DistanceCategory } from "./stats/races";
 
@@ -43,4 +43,11 @@ export const CATEGORY_LABEL: Record<DistanceCategory, string> = {
   "10k": "10 km",
   half: "Semi",
   marathon: "Marathon",
+};
+
+/** Libellés des priorités d'objectif. */
+export const PRIORITY_LABELS: Record<Priority, string> = {
+  principal: "Principal",
+  secondaire: "Secondaire",
+  plaisir: "Plaisir",
 };

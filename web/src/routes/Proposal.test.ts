@@ -20,7 +20,7 @@ function mock(changes: Change[]) {
       const json = (b: unknown) => new Response(JSON.stringify(b), { status: 200 });
       if (url === "/api/proposals/pending")
         return json({ id: 1, created_at: "2026-11-03T08:00:00", analysis: "Analyse", changes });
-      if (url === "/api/plan") return json({ goal: {}, weeks: [], open_injury: null });
+      if (url === "/api/plan") return json({ cycle: null, goals: [], horizon: [], weeks: [], open_injury: null });
       return json({});
     }),
   );

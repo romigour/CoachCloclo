@@ -22,10 +22,11 @@ from coach.garmin.port import (
     GarminRateLimited,
     GarminUnavailable,
 )
-from coach.llm.schemas import Change
+from coach.llm.schemas import Change, GoalEstimate
 from coach.plan import calendar
 from coach.plan.constraints import allowed_days, blocked_periods
-from coach.plan.models import ALL_DAYS, Goal, Proposal, Session
+from coach.plan.goals import goal_label
+from coach.plan.models import ALL_DAYS, Cycle, Goal, Proposal, Session
 from coach.plan.repo import Repo
 from coach.services import CoachError
 from coach.services.context import load_constraints
@@ -33,6 +34,7 @@ from coach.services.context import load_constraints
 _GARMIN_ERRORS = (GarminUnavailable, GarminAuthRequired, GarminRateLimited)
 _EARLY_ERRORS = (GarminAuthRequired, GarminRateLimited)
 _CHANGES = TypeAdapter(list[Change])
+_ESTIMATES = TypeAdapter(list[GoalEstimate])
 _PENDING_MSG = "Synchronisation Garmin en cours"
 _UNAVAILABLE_DAY = "Jour hors de tes disponibilités"
 
@@ -51,12 +53,12 @@ def _zones(repo: Repo) -> Zones:
     return Zones.model_validate_json(snap.zones_json)
 
 
-def _goal(repo: Repo, session: Session) -> Goal:
+def _cycle(repo: Repo, session: Session) -> Cycle:
     with repo.transaction() as db:
-        goal = db.get(Goal, session.goal_id)
-    if goal is None:
-        raise ExportError("Objectif introuvable")
-    return goal
+        cycle = db.get(Cycle, session.cycle_id)
+    if cycle is None:
+        raise ExportError("Plan introuvable")
+    return cycle
 
 
 def _get(repo: Repo, session_id: int) -> Session:
@@ -67,7 +69,7 @@ def _get(repo: Repo, session_id: int) -> Session:
 
 
 def _check_day(repo: Repo, session: Session, d: date) -> None:
-    if calendar.week_of(_goal(repo, session), d) != session.week_index:
+    if calendar.week_of(_cycle(repo, session), d) != session.week_index:
         raise ExportError("Le jour choisi doit appartenir à la semaine de la séance")
 
 
@@ -76,11 +78,19 @@ def _check_not_past(garmin: GarminPort, d: date) -> None:
         raise ExportError("Impossible de planifier une séance à une date passée")
 
 
+def _lower_first(text: str) -> str:
+    """« Course sur route… » → « course sur route… » (en milieu de phrase)."""
+    return text[:1].lower() + text[1:]
+
+
 def _warnings(repo: Repo, session: Session, d: date) -> list[str]:
-    warnings = hard_session_warnings(session, d, repo.sessions(session.goal_id))
-    goal = _goal(repo, session)
+    warnings = hard_session_warnings(session, d, repo.sessions(session.cycle_id))
+    cycle = _cycle(repo, session)
     # `today = d` : un arrêt ouvert bloque jusqu'au dimanche de la semaine de `d`
-    constraints = load_constraints(repo, goal, d)
+    goals = repo.goals_in(cycle)
+    constraints = load_constraints(repo, cycle, d, goals)
+    # non bloquant : l'athlète peut vouloir garder une séance (ex. échauffement) le jour d'une course
+    warnings += [f"Ce jour-là, tu cours {_lower_first(goal_label(g))}" for g in goals if g.race_date == d]
     if ALL_DAYS[d.weekday()] not in allowed_days(constraints, d):
         warnings.append(_UNAVAILABLE_DAY)
     for start, end, label in blocked_periods(constraints):
@@ -210,16 +220,18 @@ def _sync(repo: Repo, garmin: GarminPort, session_id: int, zones: Zones | None, 
                 garmin, session, zones, session.scheduled_date, state
             )
             session = repo.update(session)
-        if session.pending_old_schedule_id is not None:
-            garmin.unschedule(session.pending_old_schedule_id)
-            state["wrote"] = True
-            session.pending_old_schedule_id = None
-            session = repo.update(session)
-        if session.pending_old_workout_id is not None:
-            garmin.delete_workout(session.pending_old_workout_id)
-            state["wrote"] = True
-            session.pending_old_workout_id = None
-            session = repo.update(session)
+        # retrait : les ids actuels éventuels (séance en `sync_error` à la clôture d'un cycle) partent aussi
+        for schedule_attr, workout_attr in _ID_PAIRS if session.pending_removal else _ID_PAIRS[1:]:
+            if getattr(session, schedule_attr) is not None:
+                garmin.unschedule(getattr(session, schedule_attr))
+                state["wrote"] = True
+                setattr(session, schedule_attr, None)
+                session = repo.update(session)
+            if getattr(session, workout_attr) is not None:
+                garmin.delete_workout(getattr(session, workout_attr))
+                state["wrote"] = True
+                setattr(session, workout_attr, None)
+                session = repo.update(session)
     except (*_GARMIN_ERRORS, ValueError) as e:
         if early and isinstance(e, _EARLY_ERRORS) and not state["wrote"]:
             raise
@@ -245,6 +257,25 @@ def sync_marked(repo: Repo, garmin: GarminPort, session_ids: list[int], zones: Z
     renvoie les ids des séances restées en `sync_error`.
     """
     return [sid for sid in session_ids if not _sync(repo, garmin, sid, zones, early=False)]
+
+
+def retry_pending_cleanup(repo: Repo, garmin: GarminPort, today: date) -> list[int]:
+    """Relance, quel que soit leur cycle, les séances en `sync_error` qui ont encore quelque chose à
+    retirer de la montre (retrait, ou anciens ids d'un remplacement) ; un remplacement dont la nouvelle
+    version reste à téléverser à une date passée est laissé à l'athlète. Renvoie les ids encore en erreur."""
+    with repo.transaction() as db:
+        stmt = select(Session).where(Session.status == "sync_error").order_by(Session.id)
+        candidates = list(db.exec(stmt))
+    ids = [
+        s.id
+        for s in candidates
+        if s.pending_removal
+        or (
+            (s.pending_old_schedule_id is not None or s.pending_old_workout_id is not None)
+            and (s.garmin_schedule_id is not None or (s.scheduled_date is not None and s.scheduled_date >= today))
+        )
+    ]
+    return sync_marked(repo, garmin, ids, None)
 
 
 def retry_sync_error(repo: Repo, garmin: GarminPort, session_id: int) -> None:
@@ -298,6 +329,15 @@ def mark_for_cleanup(s: Session, *, removal: bool) -> None:
     s.sync_error = _PENDING_MSG
 
 
+def _apply_estimates(db, proposal: Proposal) -> None:
+    """Temps estimés de la proposition, pour les objectifs à venir dont le temps revient encore à Claude."""
+    for estimate in _ESTIMATES.validate_json(proposal.estimates_json):
+        g = db.get(Goal, estimate.goal_id)
+        if g is not None and g.status == "active" and g.target_source == "claude":
+            g.target_time_s = estimate.seconds
+            db.add(g)
+
+
 def apply_proposal(repo: Repo, garmin: GarminPort, proposal_id: int) -> list[int]:
     """Applique la proposition en base (une transaction), puis synchronise Garmin.
 
@@ -323,16 +363,16 @@ def apply_proposal(repo: Repo, garmin: GarminPort, proposal_id: int) -> list[int
         proposal = db.get(Proposal, proposal_id)
         if proposal is None or proposal.status != "pending":
             raise ExportError("Cette proposition n'est plus en attente")
-        goal: Goal | None = None
+        cycle: Cycle | None = None
         for c in changes:
             if c.op == "add":
-                if goal is None:
-                    goal = db.exec(
-                        select(Goal).where(Goal.status == "active").order_by(Goal.id.desc())
+                if cycle is None:
+                    cycle = db.exec(
+                        select(Cycle).where(Cycle.status == "active").order_by(Cycle.id.desc())
                     ).first()
-                    if goal is None:
-                        raise ExportError("Aucun objectif actif")
-                db.add(Session.from_spec(c.session, goal_id=goal.id))
+                    if cycle is None:
+                        raise ExportError("Aucun plan en cours")
+                db.add(Session.from_spec(c.session, cycle_id=cycle.id))
                 continue
             s = db.get(Session, c.session_id)
             if s is None:
@@ -344,7 +384,7 @@ def apply_proposal(repo: Repo, garmin: GarminPort, proposal_id: int) -> list[int
                     else "Séance déjà réalisée ou manquée : l'historique ne peut pas changer"
                 )
             if c.op == "modify":
-                fresh = Session.from_spec(c.session, goal_id=s.goal_id)
+                fresh = Session.from_spec(c.session, cycle_id=s.cycle_id)
                 for f in (
                     "week_index", "order", "suggested_day", "chaining_note", "type",
                     "sport", "target_kind", "title", "description", "steps_json",
@@ -361,6 +401,7 @@ def apply_proposal(repo: Repo, garmin: GarminPort, proposal_id: int) -> list[int
                 mark_for_cleanup(s, removal=True)
                 to_sync.append(s.id)
                 db.add(s)
+        _apply_estimates(db, proposal)
         proposal.status = "accepted"
         db.add(proposal)
 

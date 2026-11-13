@@ -1,6 +1,7 @@
 """Schémas JSON stricts des réponses de Claude et validation métier."""
 
 from collections import Counter
+from collections.abc import Mapping
 from typing import Literal, get_args
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -74,9 +75,16 @@ class WeekSpec(_Strict):
     sessions: list[SessionSpec]
 
 
+class GoalEstimate(_Strict):
+    """Temps estimé par Claude pour un objectif (secondes)."""
+
+    goal_id: int
+    seconds: int
+
+
 class PlanResponse(_Strict):
     summary: str
-    estimated_time_s: int | None = None
+    estimated_times: list[GoalEstimate] = []
     weeks: list[WeekSpec]
 
 
@@ -98,10 +106,26 @@ class Change(_Strict):
 class AdjustmentResponse(_Strict):
     analysis: str
     changes: list[Change]
+    estimated_times: list[GoalEstimate] = []
 
 
 def _uses_pace(session: SessionSpec) -> bool:
     return session.target_kind == "pace"
+
+
+def estimate_errors(estimates: list[GoalEstimate], estimate_min_s: Mapping[int, int] | None) -> list[str]:
+    """Une estimation par objectif attendu (`goal_id` -> plancher en secondes), au moins égale au plancher."""
+    given = {e.goal_id: e.seconds for e in estimates}
+    errors: list[str] = []
+    for goal_id, floor in (estimate_min_s or {}).items():
+        seconds = given.get(goal_id)
+        if seconds is None:
+            errors.append(f"estimated_times : estimation manquante pour l'objectif {goal_id}")
+        elif seconds < floor:
+            errors.append(
+                f"estimated_times : {seconds} s invraisemblable pour l'objectif {goal_id} (au moins {floor} s)"
+            )
+    return errors
 
 
 def validate_plan(
@@ -110,28 +134,31 @@ def validate_plan(
     n_weeks: int,
     sessions_per_week: int,
     pace_available: bool,
-    estimate_min_s: int | None = None,
+    estimate_min_s: Mapping[int, int] | None = None,
+    first_week: int = 1,
+    fixed_counts: Mapping[int, int] | None = None,
 ) -> list[str]:
-    """Contrôle métier d'un plan complet ; retourne la liste des erreurs (vide si valide).
+    """Contrôle métier d'un plan ; retourne la liste des erreurs (vide si valide).
 
-    `estimate_min_s` non None : le plan doit porter une estimation `estimated_time_s` ≥ cette valeur.
+    `estimate_min_s` (goal_id -> plancher en secondes) : objectifs dont le plan doit porter une estimation
+    dans `estimated_times`, au moins égale au plancher.
+    `first_week` : première semaine attendue (régénération de la suite d'un plan).
+    `fixed_counts` : séances conservées par semaine, qui comptent dans le maximum de leur semaine.
     """
-    errors: list[str] = []
-    if estimate_min_s is not None:
-        if plan.estimated_time_s is None:
-            errors.append("estimated_time_s est obligatoire : estime un temps réaliste en secondes")
-        elif plan.estimated_time_s < estimate_min_s:
-            errors.append(
-                f"estimated_time_s ({plan.estimated_time_s} s) invraisemblable : "
-                f"au moins {estimate_min_s} s attendues"
-            )
+    fixed_counts = fixed_counts or {}
+    errors = estimate_errors(plan.estimated_times, estimate_min_s)
     indexes = [w.week_index for w in plan.weeks]
-    if indexes != list(range(1, n_weeks + 1)):
-        errors.append(f"les semaines doivent être numérotées de 1 à {n_weeks} sans trou (reçu : {indexes})")
+    if indexes != list(range(first_week, n_weeks + 1)):
+        errors.append(
+            f"les semaines doivent être numérotées de {first_week} à {n_weeks} sans trou (reçu : {indexes})"
+        )
     for week in plan.weeks:
         n = len(week.sessions)
-        if n > sessions_per_week:
-            errors.append(f"semaine {week.week_index} : {n} séances pour {sessions_per_week} demandées")
+        fixed = fixed_counts.get(week.week_index, 0)
+        cap = max(0, sessions_per_week - fixed)
+        if n > cap:
+            detail = f" ({fixed} fixée{'s' if fixed > 1 else ''})" if fixed else ""
+            errors.append(f"semaine {week.week_index} : {n} séances pour {cap} demandées{detail}")
         orders = [s.order for s in week.sessions]
         if len(set(orders)) != len(orders):
             errors.append(f"semaine {week.week_index} : numéros d'ordre en double")
@@ -153,6 +180,7 @@ def validate_adjustment(
     pace_available: bool,
     week_of_session: dict[int, int] | None = None,
     exported_ids: set[int] | None = None,
+    estimate_min_s: Mapping[int, int] | None = None,
 ) -> list[str]:
     """Contrôle métier d'un ajustement ; retourne la liste des erreurs (vide si valide).
 
@@ -161,8 +189,9 @@ def validate_adjustment(
     qui change de semaine ; s'il est absent (None) ou ne connaît pas la séance, le retrait
     n'est pas décompté.
     `exported_ids` : séances exportées, qui ne peuvent pas changer de semaine (date Garmin fixée).
+    `estimate_min_s` : comme pour `validate_plan`, objectifs à estimer et leur plancher.
     """
-    errors: list[str] = []
+    errors = estimate_errors(adj.estimated_times, estimate_min_s)
     counts: Counter[int] = Counter(counts_by_week)
     known = week_of_session or {}
     ids = [ch.session_id for ch in adj.changes if ch.session_id is not None]

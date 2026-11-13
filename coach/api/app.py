@@ -41,19 +41,21 @@ from coach.llm.provider import (
     LLMUsageLimit,
 )
 from coach.plan import calendar
-from coach.plan.models import Activity, Event, Goal, Proposal, Session
+from coach.plan.models import Activity, Cycle, Event, Goal, Proposal, Session
 from coach.plan.repo import Repo, make_engine
 from coach.services import CoachError
 from coach.services import garmin_export as export
-from coach.services.plans import (
+from coach.services.goals import (
+    ChangeResult,
     GoalInput,
     GoalUpdate,
-    accept_plan,
-    create_goal,
-    generate_plan,
+    add_goal,
     parse_target_time,
+    remove_goal,
     update_goal,
 )
+from coach.services.cycles import NextCycleInput, prepare_next_cycle
+from coach.services.plans import PlanSettingsUpdate, accept_plan, generate_plan, update_plan_settings
 from coach.analysis.race_plan import RaceSettings
 from coach.services import race_strategy
 from coach.services.adjust import request_adjustment
@@ -148,6 +150,24 @@ def _invalid(errors: list[dict], prefix: tuple = ()) -> JSONResponse:
     ])
 
 
+class _LazyLLM:
+    """Fournisseur LLM créé au premier appel : un objectif sans effet sur le plan n'en a pas besoin."""
+
+    def __init__(self, factory: Callable[[], LLMProvider]):
+        self._factory = factory
+        self._llm: LLMProvider | None = None
+
+    def complete(self, system: str, prompt: str) -> str:
+        if self._llm is None:
+            self._llm = self._factory()
+        return self._llm.complete(system, prompt)
+
+
+def _change_dict(result: ChangeResult, goal: Goal | None = None) -> dict:
+    body = {"proposal_id": result.proposal_id, "needs_generation": result.needs_generation}
+    return body if goal is None else {"goal": _goal_dict(goal), **body}
+
+
 def _goal_dict(goal: Goal) -> dict:
     return {
         "id": goal.id,
@@ -155,15 +175,26 @@ def _goal_dict(goal: Goal) -> dict:
         "distance_km": goal.distance_km,
         "d_plus_m": goal.d_plus_m,
         "race_date": goal.race_date.isoformat(),
-        "sessions_per_week": goal.sessions_per_week,
-        "plan_start": goal.plan_start.isoformat(),
-        "plan_accepted": goal.plan_accepted,
+        "priority": goal.priority,
+        "status": goal.status,
         "target_time_s": goal.target_time_s,
         "target_source": goal.target_source,
-        "available_days": goal.available_days(),
-        "long_run_day": goal.long_run_day,
-        "include_bike": goal.include_bike,
         "gpx_summary": json.loads(goal.gpx_summary_json) if goal.gpx_summary_json else None,
+    }
+
+
+def _cycle_dict(cycle: Cycle) -> dict:
+    return {
+        "id": cycle.id,
+        "status": cycle.status,
+        "plan_start": cycle.plan_start.isoformat(),
+        "end_date": cycle.end_date.isoformat(),
+        "sessions_per_week": cycle.sessions_per_week,
+        "available_days": cycle.available_days(),
+        "long_run_day": cycle.long_run_day,
+        "include_bike": cycle.include_bike,
+        "plan_accepted": cycle.plan_accepted,
+        "needs_generation": cycle.needs_generation,
     }
 
 
@@ -333,7 +364,8 @@ def create_app(
     @api.get("/status")
     def status(repo: RepoDep):
         garmin = garmin_state(app.state.garmin_factory)
-        goal = repo.active_goal()
+        cycle = repo.active_cycle()
+        goals = repo.upcoming_goals()
         proposal = repo.pending_proposal()
         history = load_state()
         # le thread peut ne pas avoir encore écrit son état : le runner fait foi
@@ -342,7 +374,12 @@ def create_app(
             "garmin": garmin,
             "llm_mode": load_settings().llm_mode,
             "pending_proposal_id": proposal.id if proposal else None,
-            "goal": _goal_dict(goal) if goal else None,
+            "cycle": _cycle_dict(cycle) if cycle else None,
+            "goals": [_goal_dict(g) for g in goals],
+            "next_goal": _goal_dict(goals[0]) if goals else None,
+            "past_goals": [_goal_dict(g) for g in repo.past_goals()],
+            # réglages à reprendre pour « Préparer le cycle suivant » (sans cycle actif seulement)
+            "last_cycle": _cycle_dict(last) if cycle is None and (last := repo.last_done_cycle(date.today())) else None,
             "has_activities": repo.has_activities(),
             "history": {
                 "status": history_status,
@@ -417,12 +454,14 @@ def create_app(
         type: Annotated[Literal["route", "trail"], Form()],
         distance_km: Annotated[float, Form()],
         race_date: Annotated[date, Form()],
-        sessions_per_week: Annotated[int, Form()],
+        request: Request,
+        sessions_per_week: Annotated[int | None, Form()] = None,
         d_plus_m: Annotated[int, Form()] = 0,
         target_time: Annotated[str | None, Form()] = None,
         available_days: Annotated[str | None, Form()] = None,
         long_run_day: Annotated[str | None, Form()] = None,
         include_bike: Annotated[bool, Form()] = False,
+        priority: Annotated[Literal["principal", "secondaire", "plaisir"], Form()] = "principal",
         gpx: Annotated[UploadFile | None, File()] = None,
     ):
         target_time_s = parse_target_time(target_time) if target_time else None
@@ -437,6 +476,7 @@ def create_app(
                 **days,
                 long_run_day=long_run_day or None,
                 include_bike=include_bike,
+                priority=priority,
                 type=type,
                 distance_km=distance_km,
                 d_plus_m=d_plus_m,
@@ -447,21 +487,35 @@ def create_app(
             )
         except ValidationError as e:
             return _invalid(e.errors(), ("body",))
-        return _goal_dict(create_goal(repo, garmin, data))
+        goal, result = add_goal(repo, garmin, _LazyLLM(request.app.state.llm_factory), data)
+        return _change_dict(result, goal)
 
     @api.patch("/goals/{goal_id}")
-    def patch_goal(goal_id: int, body: GoalUpdate, repo: RepoDep, garmin: GarminDep, llm: LLMDep):
-        goal, proposal_id = update_goal(repo, garmin, llm, goal_id, body)
-        return {"goal": _goal_dict(goal), "proposal_id": proposal_id}
+    def patch_goal(goal_id: int, body: GoalUpdate, request: Request, repo: RepoDep, garmin: GarminDep):
+        goal, result = update_goal(repo, garmin, _LazyLLM(request.app.state.llm_factory), goal_id, body)
+        return _change_dict(result, goal)
 
-    @api.post("/goals/{goal_id}/generate")
-    def post_generate(goal_id: int, repo: RepoDep, garmin: GarminDep, llm: LLMDep):
-        plan = generate_plan(repo, garmin, llm, goal_id)
+    @api.delete("/goals/{goal_id}")
+    def delete_goal(goal_id: int, request: Request, repo: RepoDep, garmin: GarminDep):
+        return _change_dict(remove_goal(repo, garmin, _LazyLLM(request.app.state.llm_factory), goal_id))
+
+    @api.patch("/cycle")
+    def patch_cycle(body: PlanSettingsUpdate, repo: RepoDep, garmin: GarminDep, llm: LLMDep):
+        cycle, proposal_id = update_plan_settings(repo, garmin, llm, body)
+        return {"cycle": _cycle_dict(cycle), "proposal_id": proposal_id}
+
+    @api.post("/cycle/next")
+    def post_next_cycle(repo: RepoDep, garmin: GarminDep, body: NextCycleInput | None = None):
+        return _cycle_dict(prepare_next_cycle(repo, garmin, body))
+
+    @api.post("/cycle/generate")
+    def post_generate(repo: RepoDep, garmin: GarminDep, llm: LLMDep):
+        plan = generate_plan(repo, garmin, llm)
         return {"summary": plan.summary, "weeks": len(plan.weeks)}
 
-    @api.post("/goals/{goal_id}/accept")
-    def post_accept(goal_id: int, repo: RepoDep):
-        accept_plan(repo, goal_id)
+    @api.post("/cycle/accept")
+    def post_accept(repo: RepoDep):
+        accept_plan(repo)
         return {"status": "ok"}
 
     @api.get("/goals/{goal_id}/race-plan")
@@ -486,20 +540,22 @@ def create_app(
 
     @api.get("/plan")
     def get_plan(repo: RepoDep):
-        goal = repo.active_goal()
-        if goal is None:
-            return {"goal": None, "weeks": []}
+        cycle = repo.active_cycle()
+        if cycle is None:
+            return {"cycle": None, "goals": [], "horizon": [], "open_injury": None, "weeks": []}
         weeks: dict[int, list[dict]] = {}
-        for s in repo.sessions(goal.id):
+        for s in repo.sessions(cycle.id):
             weeks.setdefault(s.week_index, []).append(_session_dict(s))
-        injury = repo.open_injury(goal.id)
+        injury = repo.open_injury(cycle.id)
         return {
-            "goal": _goal_dict(goal),
+            "cycle": _cycle_dict(cycle),
+            "goals": [_goal_dict(g) for g in repo.goals_in(cycle)],
+            "horizon": [_goal_dict(g) for g in repo.horizon_goals(cycle)],
             "open_injury": _event_dict(injury) if injury else None,
             "weeks": [
                 {
                     "week_index": idx,
-                    "week_monday": calendar.week_monday(goal, idx).isoformat(),
+                    "week_monday": calendar.week_monday(cycle, idx).isoformat(),
                     "sessions": sessions,
                 }
                 for idx, sessions in sorted(weeks.items())
@@ -512,15 +568,15 @@ def create_app(
         with repo.transaction() as db:
             return db.get(model, id) is not None
 
-    @api.post("/goals/{goal_id}/events")
-    def post_event(goal_id: int, body: EventInput, repo: RepoDep, garmin: GarminDep, llm: LLMDep) -> EventResult:
-        return create_event(repo, garmin, llm, goal_id, body)
+    @api.post("/cycle/events")
+    def post_event(body: EventInput, repo: RepoDep, garmin: GarminDep, llm: LLMDep) -> EventResult:
+        return create_event(repo, garmin, llm, body)
 
-    @api.get("/goals/{goal_id}/events")
-    def get_events(goal_id: int, repo: RepoDep):
-        if not _exists(repo, Goal, goal_id):
-            return _error(404, "not_found", "Objectif introuvable")
-        return [_event_dict(e) for e in repo.events(goal_id)]
+    @api.get("/cycle/events")
+    def get_events(repo: RepoDep):
+        """Imprévus du cycle actif ; liste vide sans plan en cours."""
+        cycle = repo.active_cycle()
+        return [_event_dict(e) for e in repo.events(cycle.id)] if cycle else []
 
     @api.delete("/events/{event_id}")
     def delete_event_route(event_id: int, repo: RepoDep):
@@ -535,9 +591,9 @@ def create_app(
             return _error(404, "not_found", "Imprévu introuvable")
         return resume_injury(repo, garmin, llm, event_id, body.date)
 
-    @api.post("/goals/{goal_id}/adjust")
-    def post_adjust(goal_id: int, repo: RepoDep, garmin: GarminDep, llm: LLMDep):
-        return {"proposal_id": request_adjustment(repo, garmin, llm, goal_id)}
+    @api.post("/cycle/adjust")
+    def post_adjust(repo: RepoDep, garmin: GarminDep, llm: LLMDep):
+        return {"proposal_id": request_adjustment(repo, garmin, llm)}
 
     # --- export Garmin ----------------------------------------------------------------------
 
@@ -585,11 +641,11 @@ def create_app(
 
     @api.get("/activities")
     def get_activities(week: int, repo: RepoDep):
-        """Activités de l'objectif actif dans la semaine `week` du plan (lundi..dimanche)."""
-        goal = repo.active_goal()
-        if goal is None:
+        """Activités de la semaine `week` du plan du cycle actif (lundi..dimanche)."""
+        cycle = repo.active_cycle()
+        if cycle is None:
             return []
-        monday = calendar.week_monday(goal, week)
+        monday = calendar.week_monday(cycle, week)
         sunday = monday + timedelta(days=6)
         return [_activity_row(a) for a in repo.activities_since(monday) if a.date <= sunday]
 

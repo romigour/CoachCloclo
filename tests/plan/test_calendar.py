@@ -1,7 +1,7 @@
 from datetime import date
 
 from coach.plan.calendar import n_weeks, plan_start, suggested_date, week_monday, week_of
-from tests.plan.factories import make_goal
+from tests.plan.factories import make_cycle
 
 
 def test_plan_start_is_monday():
@@ -19,19 +19,19 @@ def test_n_weeks_race_on_monday_adds_a_week():
 
 
 def test_week_monday_and_week_of():
-    g = make_goal()
+    g = make_cycle()
     assert week_monday(g, 1) == date(2026, 10, 26)
     assert week_monday(g, 3) == date(2026, 11, 9)
     assert week_of(g, date(2026, 11, 12)) == 3
 
 
 def test_week_of_outside_plan_is_not_clamped():
-    g = make_goal()
+    g = make_cycle()
     assert week_of(g, date(2026, 10, 25)) == 0
     assert week_of(g, date(2027, 2, 1)) == 15
 
 
 def test_suggested_date_maps_french_weekday():
-    goal = make_goal(plan_start=date(2026, 11, 2))
-    assert suggested_date(goal, 1, "lundi") == date(2026, 11, 2)
-    assert suggested_date(goal, 2, "dimanche") == date(2026, 11, 15)
+    cycle = make_cycle(plan_start=date(2026, 11, 2))
+    assert suggested_date(cycle, 1, "lundi") == date(2026, 11, 2)
+    assert suggested_date(cycle, 2, "dimanche") == date(2026, 11, 15)

@@ -8,11 +8,11 @@ from coach.config import load_settings
 from coach.garmin.port import ActivitySummary, FakeGarminClient, LapSummary, Metrics
 from coach.llm.provider import FakeLLMProvider, LLMUsageLimit
 from coach.llm.schemas import AdjustmentResponse, Change
-from coach.plan.models import Activity, Event, Proposal
+from coach.plan.models import Activity, Cycle, Event, Proposal
 from coach.services.events import delete_event
 from tests.llm.factories import make_session
 from coach.services.sync import SyncResult, sync
-from tests.plan.factories import make_db_session, make_goal
+from tests.plan.factories import make_cycle, make_db_session, make_goal
 
 NOW = datetime(2026, 11, 4, 8, 0)
 METRICS = Metrics(hr_max=190, hr_rest=50, threshold_pace_s_km=300)
@@ -50,27 +50,29 @@ def fake_garmin():
     return FakeGarminClient(metrics=METRICS, activities=[run_summary()], today=date(2026, 11, 4))
 
 
-def _goal_with_sessions(repo, accepted: bool):
-    goal = repo.add(make_goal(plan_start=date(2026, 11, 2), plan_accepted=accepted))
+def _cycle_with_sessions(repo, accepted: bool):
+    """Cycle actif (objectif au 31/01/2027) avec deux semaines de séances."""
+    cycle = repo.add(make_cycle(plan_start=date(2026, 11, 2), plan_accepted=accepted))
+    repo.add(make_goal(plan_start=date(2026, 11, 2), race_date=cycle.end_date))
     for w in (1, 2):
         for o in (1, 2, 3):
-            s = make_db_session(goal.id, week_index=w, order=o)
+            s = make_db_session(cycle.id, week_index=w, order=o)
             if w == 1 and o in (1, 2):  # envoyées sur la montre mardi et mercredi : rattachables
                 s.status = "exported"
                 s.scheduled_date = date(2026, 11, 2 + o)
                 s.est_duration_min = 45.0
             repo.add(s)
-    return goal
+    return cycle
 
 
 @pytest.fixture
 def accepted_plan(repo):
-    return _goal_with_sessions(repo, True)
+    return _cycle_with_sessions(repo, True)
 
 
 @pytest.fixture
 def draft_plan(repo):
-    return _goal_with_sessions(repo, False)
+    return _cycle_with_sessions(repo, False)
 
 
 def test_sync_matches_and_creates_proposal(repo, coach_home, fake_garmin, accepted_plan):
@@ -271,7 +273,7 @@ def test_proposal_prompt_contains_step_detail(repo, coach_home, accepted_plan):
 
 
 def test_sync_skips_proposal_during_open_injury(repo, coach_home, fake_garmin, accepted_plan):
-    repo.add(Event(goal_id=accepted_plan.id, kind="injury", start_date=date(2026, 11, 3)))
+    repo.add(Event(cycle_id=accepted_plan.id, kind="injury", start_date=date(2026, 11, 3)))
     llm = FakeLLMProvider([adjustment_json()])
     r = sync(repo, fake_garmin, llm, now=NOW)
     assert r.matched == 1 and r.proposal_id is None and llm.calls == []
@@ -279,8 +281,82 @@ def test_sync_skips_proposal_during_open_injury(repo, coach_home, fake_garmin, a
 
 
 def test_deleting_open_injury_resumes_sync_proposals(repo, coach_home, fake_garmin, accepted_plan):
-    injury = repo.add(Event(goal_id=accepted_plan.id, kind="injury", start_date=date(2026, 11, 3)))
+    injury = repo.add(Event(cycle_id=accepted_plan.id, kind="injury", start_date=date(2026, 11, 3)))
     assert sync(repo, fake_garmin, FakeLLMProvider([adjustment_json()]), now=NOW).proposal_id is None
     delete_event(repo, injury.id)
     r = sync(repo, fake_garmin, FakeLLMProvider([adjustment_json()]), now=NOW)
     assert r.proposal_id is not None and load_settings().proposal_due is False
+
+
+# --- clôture des objectifs et du cycle ---------------------------------------------------------
+
+
+def _short_cycle(repo):
+    """Cycle validé qui finit au Principal du mardi 03/11/2026, séance du jour de course exportée."""
+    cycle = repo.add(make_cycle(plan_start=date(2026, 10, 19), end_date=date(2026, 11, 3), plan_accepted=True))
+    repo.add(make_goal(race_date=date(2026, 11, 3)))
+    repo.add(make_goal(race_date=date(2027, 3, 7)))  # objectif suivant, hors du cycle
+    s = make_db_session(cycle.id, week_index=3, order=1)
+    s.status = "exported"
+    s.scheduled_date = date(2026, 11, 3)
+    s.est_duration_min = 45.0
+    repo.add(s)
+    return cycle
+
+
+def test_sync_marks_passed_secondary_done_keeps_cycle(repo, coach_home, fake_garmin, accepted_plan):
+    secondary = repo.add(make_goal(race_date=date(2026, 11, 3), priority="secondaire", distance_km=10))
+    llm = FakeLLMProvider([adjustment_json()])
+    r = sync(repo, fake_garmin, llm, now=NOW)
+    assert secondary.id not in [g.id for g in repo.upcoming_goals()]
+    assert [g.id for g in repo.past_goals()] == [secondary.id]
+    assert repo.active_cycle().id == accepted_plan.id
+    assert r.proposal_id is not None and len(llm.calls) == 1
+
+
+def test_sync_closes_cycle_after_principal(repo, coach_home, fake_garmin):
+    cycle = _short_cycle(repo)
+    old = repo.add(Proposal(analysis="a", changes_json="[]", status="pending"))
+    llm = FakeLLMProvider([adjustment_json()])
+    r = sync(repo, fake_garmin, llm, now=NOW)
+    assert repo.active_cycle() is None
+    with repo.transaction() as db:
+        assert db.get(Cycle, cycle.id).status == "done"
+        assert db.get(Proposal, old.id).status == "stale"
+    assert r.proposal_id is None and llm.calls == [] and repo.pending_proposal() is None
+    assert [g.race_date for g in repo.upcoming_goals()] == [date(2027, 3, 7)]
+    assert load_settings().proposal_due is False
+
+
+def test_race_day_activity_still_matched_before_close(repo, coach_home, fake_garmin):
+    cycle = _short_cycle(repo)
+    r = sync(repo, fake_garmin, FakeLLMProvider([]), now=NOW)
+    assert r.matched == 1
+    (s,) = repo.sessions(cycle.id)
+    assert s.status == "done" and repo.activity_by_garmin_id(1).session_id == s.id
+
+
+def test_sync_retries_removal_of_done_cycle_sessions(repo, coach_home, fake_garmin):
+    """Une séance d'un cycle terminé restée à retirer de la montre est nettoyée à la synchro suivante."""
+    from coach.plan.models import Session
+
+    done = repo.add(make_cycle(plan_start=date(2026, 9, 7), end_date=date(2026, 11, 1), status="done"))
+    fake_garmin.workouts[700] = {}
+    fake_garmin.schedules[701] = (700, date(2026, 11, 5))
+    fake_garmin.calendar[date(2026, 11, 5)] = [701]
+    s = make_db_session(done.id, week_index=8, order=1)
+    s.status, s.sync_error, s.pending_removal = "sync_error", "Synchronisation Garmin échouée : x", True
+    s.pending_old_workout_id, s.pending_old_schedule_id = 700, 701
+    s = repo.add(s)
+    # remplacement inachevé d'une séance encore à venir : seul le nettoyage des anciens ids reste à faire
+    fake_garmin.workouts[710] = {}
+    replaced = make_db_session(done.id, week_index=8, order=2)
+    replaced.status, replaced.sync_error, replaced.scheduled_date = "sync_error", "x", date(2026, 11, 6)
+    replaced.garmin_workout_id, replaced.garmin_schedule_id = 720, 721
+    replaced.pending_old_workout_id = 710
+    replaced = repo.add(replaced)
+    sync(repo, fake_garmin, FakeLLMProvider([]), now=NOW)
+    with repo.transaction() as db:
+        assert db.get(Session, s.id) is None
+        assert db.get(Session, replaced.id).status == "exported"
+    assert fake_garmin.workouts == {} and fake_garmin.schedules == {}

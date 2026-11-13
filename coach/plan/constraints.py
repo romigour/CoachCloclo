@@ -8,10 +8,10 @@ from typing import TYPE_CHECKING
 from coach.llm.schemas import AdjustmentResponse, PlanResponse, SessionSpec
 from coach.plan.calendar import plan_start as monday_of
 from coach.plan.calendar import suggested_date
-from coach.plan.models import ALL_DAYS, Goal, Session
+from coach.plan.models import ALL_DAYS, Cycle, Session
 
 if TYPE_CHECKING:
-    from coach.plan.models import Event
+    from coach.plan.models import Event, Goal
 
 
 @dataclass(frozen=True)
@@ -21,17 +21,25 @@ class PlanConstraints:
     today: date
     include_bike: bool = False
     events: tuple["Event", ...] = ()
-    plan_start: date | None = None  # lundi de la semaine 1 ; sert à situer une semaine allégée
+    plan_start: date | None = None  # lundi de la semaine 1 ; sert à situer une semaine allégée ou une course
+    race_dates: tuple[date, ...] = ()  # jours de course des objectifs du cycle
+    sessions_per_week: int | None = None  # limite d'une semaine, dont chaque course prend une place
+    end_date: date | None = None  # fin du cycle (course qui le termine) : aucune séance après
 
     @classmethod
-    def of(cls, goal: Goal, today: date, events: Sequence["Event"] = ()) -> "PlanConstraints":
+    def of(
+        cls, cycle: Cycle, today: date, events: Sequence["Event"] = (), goals: Sequence["Goal"] = ()
+    ) -> "PlanConstraints":
         return cls(
-            available_days=tuple(goal.available_days()),
-            long_run_day=goal.long_run_day,
+            available_days=tuple(cycle.available_days()),
+            long_run_day=cycle.long_run_day,
             today=today,
-            include_bike=goal.include_bike,
+            include_bike=cycle.include_bike,
             events=tuple(events),
-            plan_start=goal.plan_start,
+            plan_start=cycle.plan_start,
+            race_dates=tuple(sorted({g.race_date for g in goals})),
+            sessions_per_week=cycle.sessions_per_week,
+            end_date=cycle.end_date,
         )
 
 
@@ -43,13 +51,13 @@ class Planned:
     exported: bool
 
 
-def planned_from_plan(goal: Goal, plan: PlanResponse) -> list[Planned]:
+def planned_from_plan(cycle: Cycle, plan: PlanResponse) -> list[Planned]:
     """Séances d'un plan complet, aucune n'étant encore exportée."""
     return [
         Planned(
             f"semaine {week.week_index}, séance {s.order}",
             s,
-            suggested_date(goal, s.week_index, s.suggested_day),
+            suggested_date(cycle, s.week_index, s.suggested_day),
             exported=False,
         )
         for week in plan.weeks
@@ -61,7 +69,7 @@ def _is_exported(s: Session) -> bool:
     return s.status == "exported" and s.scheduled_date is not None
 
 
-def planned_after_adjustment(goal: Goal, upcoming: list[Session], adj: AdjustmentResponse) -> list[Planned]:
+def planned_after_adjustment(cycle: Cycle, upcoming: list[Session], adj: AdjustmentResponse) -> list[Planned]:
     """État du plan restant après application de `adj` aux séances `upcoming`.
 
     Les ajouts sont libellés « ajout {i} », i étant la position (base 1) du changement dans `adj.changes`.
@@ -77,13 +85,13 @@ def planned_after_adjustment(goal: Goal, upcoming: list[Session], adj: Adjustmen
             planned.append(Planned(f"séance {s.id}", spec, s.scheduled_date, exported=True))
         else:
             planned.append(
-                Planned(f"séance {s.id}", spec, suggested_date(goal, spec.week_index, spec.suggested_day), False)
+                Planned(f"séance {s.id}", spec, suggested_date(cycle, spec.week_index, spec.suggested_day), False)
             )
     for i, ch in enumerate(adj.changes, start=1):
         if ch.op == "add":
             spec = ch.session
             planned.append(
-                Planned(f"ajout {i}", spec, suggested_date(goal, spec.week_index, spec.suggested_day), False)
+                Planned(f"ajout {i}", spec, suggested_date(cycle, spec.week_index, spec.suggested_day), False)
             )
     return planned
 
@@ -124,11 +132,17 @@ def allowed_days(c: PlanConstraints, d: date) -> set[str]:
 
 
 def constraint_errors(
-    planned: list[Planned], c: PlanConstraints, *, fixed_counts: Mapping[int, int] | None = None
+    planned: list[Planned],
+    c: PlanConstraints,
+    *,
+    fixed_counts: Mapping[int, int] | None = None,
+    reject_past: bool = False,
 ) -> list[str]:
     """Violations des règles de disponibilité ; vide si tout est respecté.
 
     `fixed_counts` (séances done/missed/sync_error par semaine) compte dans la limite d'une semaine allégée.
+    `reject_past` (génération) : aucune séance non exportée avant `c.today`. Un ajustement ne l'active pas :
+    ses séances à faire de la semaine courante peuvent déjà être passées sans être marquées manquées.
     """
     errors: list[str] = []
     periods = blocked_periods(c)
@@ -154,7 +168,23 @@ def constraint_errors(
                     errors.append(f"{p.label} : séance exportée pendant {name}, à retirer (op remove)")
                 else:
                     errors.append(f"{p.label} : tombe pendant {name}")
+        if p.date in c.race_dates:
+            race = f"le jour de la course du {_fmt(p.date)}"
+            if p.exported:
+                errors.append(f"{p.label} : séance exportée {race}, à retirer (op remove)")
+            else:
+                errors.append(f"{p.label} : tombe {race}")
+        if c.end_date is not None and p.date > c.end_date:
+            if p.exported:
+                errors.append(
+                    f"{p.label} : séance exportée après la fin du cycle ({_fmt(c.end_date)}), à retirer (op remove)"
+                )
+            else:
+                errors.append(f"{p.label} : tombe après la fin du cycle ({_fmt(c.end_date)})")
+        if reject_past and not p.exported and p.date < c.today:
+            errors.append(f"{p.label} : tombe avant aujourd'hui ({_fmt(p.date)})")
     errors += _light_week_count_errors(planned, c, fixed_counts or {})
+    errors += _race_week_count_errors(planned, c, fixed_counts or {})
     errors += _bike_errors(planned, c)
     return errors
 
@@ -186,11 +216,32 @@ def _bike_errors(planned: list[Planned], c: PlanConstraints) -> list[str]:
 def _long_run_day_free(
     c: PlanConstraints, monday: date, periods: list[tuple[date, date, str]], restricted: list[list[str] | None]
 ) -> bool:
-    """Vrai si le jour de sortie longue est bloqué ou exclu cette semaine-là (tout jour possible convient)."""
+    """Vrai si le jour de sortie longue est bloqué (imprévu, jour de course) ou exclu cette semaine-là
+    (tout jour possible convient)."""
     if any(c.long_run_day not in days for days in restricted):
         return True
     d = monday + timedelta(days=ALL_DAYS.index(c.long_run_day))
-    return any(start <= d <= end for start, end, _ in periods)
+    return d in c.race_dates or any(start <= d <= end for start, end, _ in periods)
+
+
+def _race_week_count_errors(planned: list[Planned], c: PlanConstraints, fixed_counts: Mapping[int, int]) -> list[str]:
+    """Une course compte comme une séance de sa semaine : avec k courses, au plus `sessions_per_week − k`
+    séances (fixes comprises). Les semaines sans course sont déjà contrôlées par la validation du plan."""
+    if c.plan_start is None or c.sessions_per_week is None:
+        return []
+    races: dict[int, int] = {}
+    for d in c.race_dates:
+        week = (d - c.plan_start).days // 7 + 1
+        races[week] = races.get(week, 0) + 1
+    errors: list[str] = []
+    for week, k in sorted(races.items()):
+        upcoming = sum(1 for p in planned if p.spec.week_index == week)
+        total = fixed_counts.get(week, 0) + upcoming
+        cap = max(0, c.sessions_per_week - k)
+        # rien à corriger si aucune séance n'est prévue cette semaine-là
+        if upcoming and total > cap:
+            errors.append(f"semaine {week} : {total} séances pour {cap} possibles ({k} course(s) cette semaine)")
+    return errors
 
 
 def _light_week_count_errors(planned: list[Planned], c: PlanConstraints, fixed_counts: Mapping[int, int]) -> list[str]:

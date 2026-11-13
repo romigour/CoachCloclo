@@ -12,7 +12,7 @@ from coach.plan.constraints import (
 )
 from coach.plan.models import ALL_DAYS, Event
 from tests.llm.factories import make_plan, make_session
-from tests.plan.factories import make_db_session, make_goal
+from tests.plan.factories import make_cycle, make_db_session, make_goal
 
 TODAY = date(2026, 11, 2)
 
@@ -62,27 +62,27 @@ def test_long_run_on_long_run_day_and_no_long_run_day_are_accepted():
 
 
 def test_unchanged_todo_on_removed_day_is_rejected():
-    goal = make_goal(available_days_json=json.dumps(["mardi", "jeudi", "dimanche"]))
+    cycle = make_cycle(available_days_json=json.dumps(["mardi", "jeudi", "dimanche"]))
     s = make_db_session(1, suggested_day="lundi")
     s.id = 7
-    planned = planned_after_adjustment(goal, [s], AdjustmentResponse(analysis="", changes=[]))
-    assert constraint_errors(planned, PlanConstraints.of(goal, TODAY)) == [
+    planned = planned_after_adjustment(cycle, [s], AdjustmentResponse(analysis="", changes=[]))
+    assert constraint_errors(planned, PlanConstraints.of(cycle, TODAY)) == [
         "séance 7 : lundi n'est pas un jour possible"
     ]
 
 
 def test_planned_from_plan_labels_and_dates():
-    goal = make_goal()
+    cycle = make_cycle()
     plan = make_plan(2, [1, 2])
-    planned = planned_from_plan(goal, plan)
+    planned = planned_from_plan(cycle, plan)
     assert [p.label for p in planned] == ["semaine 1, séance 1", "semaine 2, séance 1", "semaine 2, séance 2"]
-    assert planned[0].date == date(2026, 10, 27)  # mardi de la semaine 1
-    assert planned[1].date == date(2026, 11, 3)
+    assert planned[0].date == date(2026, 10, 29)  # jeudi de la semaine 1
+    assert planned[1].date == date(2026, 11, 5)
     assert not any(p.exported for p in planned)
 
 
 def test_planned_after_adjustment_applies_remove_modify_add():
-    goal = make_goal()
+    cycle = make_cycle()
     kept, removed, modified, exported = (
         make_db_session(1, order=o, suggested_day="mardi") for o in (1, 2, 3, 4)
     )
@@ -101,7 +101,7 @@ def test_planned_after_adjustment_applies_remove_modify_add():
             Change(op="add", session=make_session(week_index=2, suggested_day="samedi", order=5), reason="r"),
         ],
     )
-    planned = planned_after_adjustment(goal, [kept, removed, modified, exported], adj)
+    planned = planned_after_adjustment(cycle, [kept, removed, modified, exported], adj)
 
     assert [p.label for p in planned] == ["séance 10", "séance 12", "séance 13", "ajout 4"]
     by_label = {p.label: p for p in planned}
@@ -114,9 +114,9 @@ def test_planned_after_adjustment_applies_remove_modify_add():
     assert by_label["ajout 4"].date == date(2026, 11, 7) and not by_label["ajout 4"].exported
 
 
-def test_constraints_of_goal():
-    goal = make_goal(available_days_json=json.dumps(["mardi", "dimanche"]), long_run_day="dimanche")
-    c = PlanConstraints.of(goal, TODAY)
+def test_constraints_of_cycle():
+    cycle = make_cycle(available_days_json=json.dumps(["mardi", "dimanche"]), long_run_day="dimanche")
+    c = PlanConstraints.of(cycle, TODAY)
     assert c.available_days == ("mardi", "dimanche")
     assert c.long_run_day == "dimanche"
     assert c.today == TODAY
@@ -135,7 +135,7 @@ def test_exported_long_run_ignores_long_run_day():
 
 
 def _ev(kind, start, end=None, **kw):
-    return Event(goal_id=1, kind=kind, start_date=start, end_date=end, **kw)
+    return Event(cycle_id=1, kind=kind, start_date=start, end_date=end, **kw)
 
 
 def _ec(*events, today=TODAY, available=ALL_DAYS, long_run_day=None):
@@ -301,13 +301,13 @@ def test_fatigue_does_not_block():
     assert constraint_errors(p, c) == []
 
 
-def test_constraints_of_goal_carries_plan_start():
-    assert PlanConstraints.of(make_goal(), TODAY).plan_start == date(2026, 10, 26)
+def test_constraints_of_cycle_carries_plan_start():
+    assert PlanConstraints.of(make_cycle(), TODAY).plan_start == date(2026, 10, 26)
 
 
 def test_constraints_of_reads_include_bike():
-    assert PlanConstraints.of(make_goal(), date(2026, 11, 2)).include_bike is False
-    assert PlanConstraints.of(make_goal(include_bike=True), date(2026, 11, 2)).include_bike is True
+    assert PlanConstraints.of(make_cycle(), date(2026, 11, 2)).include_bike is False
+    assert PlanConstraints.of(make_cycle(include_bike=True), date(2026, 11, 2)).include_bike is True
 
 
 def _bike_c(include_bike=True):
@@ -375,3 +375,119 @@ def test_light_week_message_singular_and_plural():
     assert constraint_errors(p, _ec(_light(1)), fixed_counts={2: 2}) == [
         "semaine 2 : 3 séances pour 1 au plus (semaine allégée)"
     ]
+
+
+# --- jours de course ------------------------------------------------------------------------
+
+PLAN_START = date(2026, 11, 2)  # lundi de la semaine 1
+
+
+def _race_constraints(*race_dates, sessions_per_week=None):
+    return PlanConstraints(
+        available_days=ALL_DAYS, long_run_day=None, today=TODAY, plan_start=PLAN_START,
+        race_dates=tuple(race_dates), sessions_per_week=sessions_per_week,
+    )
+
+
+def test_race_day_session_rejected():
+    c = _race_constraints(date(2026, 11, 15))
+    p = [
+        Planned("semaine 2, séance 1", make_session(week_index=2, suggested_day="dimanche"), date(2026, 11, 15), False),
+        Planned("semaine 2, séance 2", make_session(week_index=2, suggested_day="samedi"), date(2026, 11, 14), False),
+    ]
+    assert constraint_errors(p, c) == ["semaine 2, séance 1 : tombe le jour de la course du 15/11"]
+
+
+def test_exported_session_on_race_day_must_be_removed():
+    c = _race_constraints(date(2026, 11, 15))
+    p = [Planned("séance 7", make_session(week_index=2, suggested_day="mardi"), date(2026, 11, 15), True)]
+    assert constraint_errors(p, c) == [
+        "séance 7 : séance exportée le jour de la course du 15/11, à retirer (op remove)"
+    ]
+
+
+def _week2(n: int) -> list[Planned]:
+    return [
+        Planned(f"séance {i}", make_session(week_index=2, order=i), date(2026, 11, 10), False)
+        for i in range(1, n + 1)
+    ]
+
+
+def test_week_cap_counts_races():
+    """4 séances par semaine, 2 courses la semaine 2 : 2 séances au plus, fixes comprises."""
+    c = _race_constraints(date(2026, 11, 14), date(2026, 11, 15), sessions_per_week=4)
+    assert constraint_errors(_week2(3), c) == ["semaine 2 : 3 séances pour 2 possibles (2 course(s) cette semaine)"]
+    assert constraint_errors(_week2(2), c) == []
+    assert constraint_errors(_week2(1), c, fixed_counts={2: 2}) == [
+        "semaine 2 : 3 séances pour 2 possibles (2 course(s) cette semaine)"
+    ]
+
+
+def test_week_cap_ignores_weeks_without_race_or_planned_session():
+    c = _race_constraints(date(2026, 11, 22), sessions_per_week=3)  # course en semaine 3
+    assert constraint_errors(_week2(3), c) == []  # semaine 2 : pas de course, déjà contrôlée ailleurs
+    assert constraint_errors([], c, fixed_counts={3: 5}) == []  # rien à corriger : aucune séance prévue
+    assert constraint_errors(_week2(3), _race_constraints(date(2026, 11, 15))) == []  # sans limite connue
+
+
+def test_long_run_free_when_race_on_long_run_day():
+    """Course le dimanche, jour de sortie longue : la sortie longue de la semaine peut tomber un autre jour."""
+    c = PlanConstraints(
+        available_days=ALL_DAYS, long_run_day="dimanche", today=TODAY, plan_start=PLAN_START,
+        race_dates=(date(2026, 11, 15),),
+    )
+    sl = make_session(week_index=2, type="sortie_longue", suggested_day="samedi")
+    assert constraint_errors([Planned("séance 1", sl, date(2026, 11, 14), False)], c) == []
+    # une autre semaine, le dimanche reste imposé
+    sl3 = make_session(week_index=3, type="sortie_longue", suggested_day="samedi")
+    assert constraint_errors([Planned("séance 2", sl3, date(2026, 11, 21), False)], c) == [
+        "séance 2 : la sortie longue doit tomber le dimanche"
+    ]
+
+
+def test_week_cap_never_negative():
+    c = _race_constraints(date(2026, 11, 14), date(2026, 11, 15), sessions_per_week=1)
+    assert constraint_errors(_week2(1), c) == ["semaine 2 : 1 séances pour 0 possibles (2 course(s) cette semaine)"]
+
+
+def test_constraints_of_reads_race_dates_and_sessions_per_week():
+    goals = [make_goal(race_date=date(2026, 12, 20)), make_goal(race_date=date(2027, 1, 31))]
+    c = PlanConstraints.of(make_cycle(sessions_per_week=4), TODAY, goals=goals)
+    assert c.race_dates == (date(2026, 12, 20), date(2027, 1, 31))
+    assert c.sessions_per_week == 4
+    assert PlanConstraints.of(make_cycle(), TODAY).race_dates == ()
+
+
+# --- fin du cycle et jours passés -----------------------------------------------------------
+
+
+def test_session_after_cycle_end_rejected():
+    """Course (fin du cycle) le mercredi 18/11 : rien après, une séance exportée est à retirer."""
+    c = PlanConstraints(available_days=ALL_DAYS, long_run_day=None, today=TODAY, end_date=date(2026, 11, 18))
+    p = [
+        Planned("semaine 3, séance 1", make_session(week_index=3, suggested_day="mardi"), date(2026, 11, 17), False),
+        Planned("semaine 3, séance 2", make_session(week_index=3, suggested_day="samedi"), date(2026, 11, 21), False),
+        Planned("séance 9", make_session(week_index=3, suggested_day="jeudi"), date(2026, 11, 19), True),
+    ]
+    assert constraint_errors(p, c) == [
+        "semaine 3, séance 2 : tombe après la fin du cycle (18/11)",
+        "séance 9 : séance exportée après la fin du cycle (18/11), à retirer (op remove)",
+    ]
+    # sans fin connue : pas de contrôle
+    assert constraint_errors(p, _constraints()) == []
+
+
+def test_constraints_of_reads_end_date():
+    assert PlanConstraints.of(make_cycle(end_date=date(2027, 2, 7)), TODAY).end_date == date(2027, 2, 7)
+
+
+def test_session_before_today_rejected_only_when_asked():
+    """Génération : aucune séance (non exportée) avant aujourd'hui ; un ajustement n'est pas concerné."""
+    c = PlanConstraints(available_days=ALL_DAYS, long_run_day=None, today=date(2026, 11, 4))
+    p = [
+        Planned("semaine 1, séance 1", make_session(suggested_day="mardi"), date(2026, 11, 3), False),
+        Planned("semaine 1, séance 2", make_session(suggested_day="mercredi"), date(2026, 11, 4), False),
+        Planned("séance 3", make_session(suggested_day="lundi"), date(2026, 11, 2), True),
+    ]
+    assert constraint_errors(p, c, reject_past=True) == ["semaine 1, séance 1 : tombe avant aujourd'hui (03/11)"]
+    assert constraint_errors(p, c) == []

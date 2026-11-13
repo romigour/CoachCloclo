@@ -6,7 +6,7 @@ import pytest
 from coach.analysis.zones import compute_zones
 from coach.garmin.port import FakeGarminClient, GarminAuthRequired, GarminUnavailable
 from coach.llm.schemas import Change
-from coach.plan.models import AthleteSnapshot, Event, Goal, Proposal
+from coach.plan.models import AthleteSnapshot, Cycle, Event, Proposal
 from coach.services import CoachError
 from coach.services.garmin_export import (
     ExportError,
@@ -19,7 +19,7 @@ from coach.services.garmin_export import (
     unschedule_session,
 )
 from tests.llm.factories import make_session
-from tests.plan.factories import make_db_session, make_goal
+from tests.plan.factories import make_db_session, make_cycle
 
 ZONES = compute_zones(
     threshold_pace_s_km=300, pred_10k_s=None, garmin_hr_zones=None, hr_max=190, hr_rest=50
@@ -33,14 +33,14 @@ def fake_garmin():
 
 
 @pytest.fixture
-def goal(repo) -> Goal:
+def cycle(repo) -> Cycle:
     repo.add(AthleteSnapshot(date=date(2026, 11, 1), zones_json=ZONES.model_dump_json()))
-    return repo.add(make_goal())
+    return repo.add(make_cycle())
 
 
 @pytest.fixture
-def session_w3(repo, goal):
-    return repo.add(make_db_session(goal.id, week_index=3))
+def session_w3(repo, cycle):
+    return repo.add(make_db_session(cycle.id, week_index=3))
 
 
 @pytest.fixture
@@ -81,7 +81,7 @@ def test_export_outside_week_rejected(repo, fake_garmin, session_w3):
 
 
 def test_export_without_snapshot_rejected(repo, fake_garmin):
-    g = repo.add(make_goal())
+    g = repo.add(make_cycle())
     s = repo.add(make_db_session(g.id, week_index=3))
     with pytest.raises(ExportError, match="Synchronise"):
         export_session(repo, fake_garmin, s.id, D)
@@ -93,9 +93,9 @@ def test_export_requires_todo(repo, fake_garmin, exported_session):
         export_session(repo, fake_garmin, exported_session.id, D)
 
 
-def test_export_returns_48h_warning(repo, fake_garmin, goal):
-    a = repo.add(make_db_session(goal.id, week_index=3, order=1, type="VMA", title="VMA"))
-    b = repo.add(make_db_session(goal.id, week_index=3, order=2, type="seuil", title="Seuil"))
+def test_export_returns_48h_warning(repo, fake_garmin, cycle):
+    a = repo.add(make_db_session(cycle.id, week_index=3, order=1, type="VMA", title="VMA"))
+    b = repo.add(make_db_session(cycle.id, week_index=3, order=2, type="seuil", title="Seuil"))
     assert export_session(repo, fake_garmin, a.id, D) == []
     assert check_export(repo, b.id, date(2026, 11, 11)) != []
     n = len(fake_garmin.calls)
@@ -106,7 +106,7 @@ def test_export_returns_48h_warning(repo, fake_garmin, goal):
 
 
 def test_check_export_warns_outside_available_days(repo, fake_garmin):
-    g = repo.add(make_goal(available_days_json='["mardi", "jeudi", "dimanche"]'))
+    g = repo.add(make_cycle(available_days_json='["mardi", "jeudi", "dimanche"]'))
     s = repo.add(make_db_session(g.id, week_index=3))
     assert "Jour hors de tes disponibilités" in check_export(repo, s.id, date(2026, 11, 9))  # lundi
     assert "Jour hors de tes disponibilités" not in check_export(repo, s.id, D)  # mardi
@@ -117,7 +117,7 @@ def test_check_export_writes_nothing(repo, fake_garmin, session_w3):
     assert fake_garmin.calls == [] and repo.session(session_w3.id).status == "todo"
 
 
-def test_export_schedule_failure_deletes_upload(repo, goal, session_w3):
+def test_export_schedule_failure_deletes_upload(repo, cycle, session_w3):
     g = FakeGarminClient(fail_on={"schedule"})
     with pytest.raises(GarminUnavailable):
         export_session(repo, g, session_w3.id, D)
@@ -125,7 +125,7 @@ def test_export_schedule_failure_deletes_upload(repo, goal, session_w3):
     assert g.workouts == {} and s.status == "todo" and s.garmin_workout_id is None
 
 
-def test_export_auth_error_propagates(repo, goal, session_w3):
+def test_export_auth_error_propagates(repo, cycle, session_w3):
     class Auth(FakeGarminClient):
         def upload_workout(self, workout):
             raise GarminAuthRequired("x")
@@ -247,8 +247,8 @@ def test_remove_exported_failure_keeps_row_in_sync_error(repo, fake_garmin, expo
     assert fake_garmin.workouts == {}
 
 
-def test_todo_change_makes_no_garmin_call(repo, fake_garmin, goal, session_w3):
-    other = repo.add(make_db_session(goal.id, week_index=3, order=2))
+def test_todo_change_makes_no_garmin_call(repo, fake_garmin, cycle, session_w3):
+    other = repo.add(make_db_session(cycle.id, week_index=3, order=2))
     added = Change(op="add", session=make_session(week_index=3, order=3, title="Ajoutée"), reason="r")
     p = proposal_of(
         repo,
@@ -260,12 +260,12 @@ def test_todo_change_makes_no_garmin_call(repo, fake_garmin, goal, session_w3):
     assert fake_garmin.calls == []
     s = repo.session(session_w3.id)
     assert s.title == "Nouvelle séance" and s.status == "todo" and s.id == session_w3.id
-    week = repo.sessions(goal.id, 3)
+    week = repo.sessions(cycle.id, 3)
     assert [x.title for x in week] == ["Nouvelle séance", "Ajoutée"]
     assert week[1].status == "todo"
 
 
-def test_apply_rolls_back_on_unknown_session(repo, fake_garmin, goal, session_w3):
+def test_apply_rolls_back_on_unknown_session(repo, fake_garmin, cycle, session_w3):
     p = proposal_of(repo, modify(session_w3.id), modify(9999))
     with pytest.raises(ExportError):
         apply_proposal(repo, fake_garmin, p.id)
@@ -323,7 +323,7 @@ def test_proposal_on_done_or_missed_rejected(repo, fake_garmin, session_w3, stat
     assert repo.pending_proposal().id == p.id
 
 
-def test_conversion_failure_changes_nothing(repo, goal, fake_garmin, session_w3):
+def test_conversion_failure_changes_nothing(repo, cycle, fake_garmin, session_w3):
     # zones sans allure : un workout cible allure ne peut pas être converti
     no_pace = compute_zones(
         threshold_pace_s_km=None, pred_10k_s=None, garmin_hr_zones=None, hr_max=190, hr_rest=50
@@ -340,7 +340,7 @@ def test_conversion_failure_changes_nothing(repo, goal, fake_garmin, session_w3)
     assert repo.pending_proposal().id == p.id and fake_garmin.calls == []
 
 
-def test_one_failure_does_not_stop_other_sessions(repo, goal):
+def test_one_failure_does_not_stop_other_sessions(repo, cycle):
     class FailFirstUpload(FakeGarminClient):
         n = 0
 
@@ -351,8 +351,8 @@ def test_one_failure_does_not_stop_other_sessions(repo, goal):
             return super().upload_workout(workout)
 
     g = FailFirstUpload()
-    a = repo.add(make_db_session(goal.id, week_index=3, order=1))
-    b = repo.add(make_db_session(goal.id, week_index=3, order=2, title="B"))
+    a = repo.add(make_db_session(cycle.id, week_index=3, order=1))
+    b = repo.add(make_db_session(cycle.id, week_index=3, order=2, title="B"))
     export_session(repo, g, a.id, D)
     export_session(repo, g, b.id, date(2026, 11, 12))
     p = proposal_of(repo, modify(a.id), modify(b.id))
@@ -362,7 +362,7 @@ def test_one_failure_does_not_stop_other_sessions(repo, goal):
     assert sb.status == "exported" and sb.title == "Nouvelle séance"
 
 
-def test_preconversion_error_aborts_before_commit(repo, goal, fake_garmin, session_w3, monkeypatch):
+def test_preconversion_error_aborts_before_commit(repo, cycle, fake_garmin, session_w3, monkeypatch):
     export_session(repo, fake_garmin, session_w3.id, D)
     p = proposal_of(repo, modify(session_w3.id))
     import coach.services.garmin_export as ge
@@ -377,7 +377,7 @@ def test_preconversion_error_aborts_before_commit(repo, goal, fake_garmin, sessi
     assert repo.pending_proposal().id == p.id
 
 
-def test_retry_with_past_date_rejected(repo, goal, exported_session):
+def test_retry_with_past_date_rejected(repo, cycle, exported_session):
     g = FakeGarminClient(fail_on={"schedule"}, today=date(2026, 11, 20))
     g.workouts[exported_session.garmin_workout_id] = {}
     g.schedules[exported_session.garmin_schedule_id] = (exported_session.garmin_workout_id, D)
@@ -401,7 +401,7 @@ def test_unschedule_failure_keeps_schedule_cleared(repo, fake_garmin, exported_s
     assert repo.session(exported_session.id).status == "todo" and fake_garmin.workouts == {}
 
 
-def test_valueerror_after_commit_becomes_sync_error(repo, goal, fake_garmin, exported_session, monkeypatch):
+def test_valueerror_after_commit_becomes_sync_error(repo, cycle, fake_garmin, exported_session, monkeypatch):
     import coach.services.garmin_export as ge
 
     def boom(*a, **k):
@@ -414,7 +414,7 @@ def test_valueerror_after_commit_becomes_sync_error(repo, goal, fake_garmin, exp
     assert s.status == "sync_error" and "conversion cassée" in s.sync_error
 
 
-def test_export_and_move_refuse_past_date(repo, goal, session_w3):
+def test_export_and_move_refuse_past_date(repo, cycle, session_w3):
     g = FakeGarminClient(today=date(2026, 11, 11))
     with pytest.raises(ExportError, match="passé"):
         export_session(repo, g, session_w3.id, D)
@@ -486,7 +486,7 @@ def test_move_sync_error_outside_week_or_pending_removal_rejected(repo, fake_gar
     assert fake_garmin.calls == []
 
 
-def test_failed_replacement_then_past_date_then_unschedule_leaves_no_orphan(repo, coach_home, goal):
+def test_failed_replacement_then_past_date_then_unschedule_leaves_no_orphan(repo, coach_home, cycle):
     from datetime import datetime
 
     from coach.garmin.port import Metrics
@@ -494,7 +494,7 @@ def test_failed_replacement_then_past_date_then_unschedule_leaves_no_orphan(repo
     from coach.services.sync import sync
 
     g = FakeGarminClient(metrics=Metrics(hr_max=190, hr_rest=50, threshold_pace_s_km=300))
-    s = repo.add(make_db_session(goal.id, week_index=3))
+    s = repo.add(make_db_session(cycle.id, week_index=3))
     export_session(repo, g, s.id, D)
     g.fail_on = {"schedule"}
     assert apply_proposal(repo, g, proposal_of(repo, modify(s.id)).id) == [s.id]
@@ -510,15 +510,15 @@ def test_failed_replacement_then_past_date_then_unschedule_leaves_no_orphan(repo
     assert repo.session(s.id).status == "missed"
 
 
-def test_export_check_warns_during_event(repo, fake_garmin, goal):
-    s = repo.add(make_db_session(goal.id, week_index=3))
-    repo.add(Event(goal_id=goal.id, kind="unavailable", start_date=D, end_date=D))
-    repo.add(Event(goal_id=goal.id, kind="injury", start_date=date(2026, 11, 9)))  # arrêt ouvert
+def test_export_check_warns_during_event(repo, fake_garmin, cycle):
+    s = repo.add(make_db_session(cycle.id, week_index=3))
+    repo.add(Event(cycle_id=cycle.id, kind="unavailable", start_date=D, end_date=D))
+    repo.add(Event(cycle_id=cycle.id, kind="injury", start_date=date(2026, 11, 9)))  # arrêt ouvert
     warnings = check_export(repo, s.id, D)
     assert "Pendant ton imprévu : indisponibilité du 10/11 au 10/11" in warnings
     assert "Pendant ton imprévu : arrêt depuis le 09/11" in warnings
     # avant le début de l'arrêt ouvert, rien ne bloque
-    earlier = repo.add(make_db_session(goal.id, week_index=2))
+    earlier = repo.add(make_db_session(cycle.id, week_index=2))
     assert not any("imprévu" in w for w in check_export(repo, earlier.id, date(2026, 11, 3)))
 
 
@@ -529,11 +529,11 @@ def test_apply_proposal_modify_copies_sport(repo, fake_garmin, session_w3):
 
 
 def test_check_export_uses_light_week_days_for_availability(repo, fake_garmin):
-    g = repo.add(make_goal())  # plan du lundi 2026-10-26 ; semaine 3 : lundi 09/11
+    g = repo.add(make_cycle())  # plan du lundi 2026-10-26 ; semaine 3 : lundi 09/11
     s = repo.add(make_db_session(g.id, week_index=3))
     repo.add(
         Event(
-            goal_id=g.id,
+            cycle_id=g.id,
             kind="light_week",
             start_date=date(2026, 11, 9),
             end_date=date(2026, 11, 15),
@@ -543,3 +543,18 @@ def test_check_export_uses_light_week_days_for_availability(repo, fake_garmin):
     )
     assert "Jour hors de tes disponibilités" in check_export(repo, s.id, date(2026, 11, 11))  # mercredi
     assert "Jour hors de tes disponibilités" not in check_export(repo, s.id, date(2026, 11, 12))  # jeudi
+
+
+def test_export_and_move_warn_on_race_day(repo, fake_garmin, session_w3):
+    """Une séance placée le jour d'une course du cycle donne un avertissement, sans bloquer."""
+    from tests.plan.factories import make_goal
+
+    repo.add(make_goal(race_date=date(2026, 11, 12), type="route", distance_km=10, priority="plaisir"))
+    repo.add(make_goal(race_date=date(2026, 11, 13), status="archived"))  # objectif retiré : ignoré
+    assert check_export(repo, session_w3.id, D) == []
+    assert export_session(repo, fake_garmin, session_w3.id, D) == []
+    warning = "Ce jour-là, tu cours course sur route de 10 km"
+    assert check_export(repo, session_w3.id, date(2026, 11, 12)) == [warning]
+    assert move_session(repo, fake_garmin, session_w3.id, date(2026, 11, 12)) == [warning]
+    assert repo.session(session_w3.id).scheduled_date == date(2026, 11, 12)
+    assert check_export(repo, session_w3.id, date(2026, 11, 13)) == []

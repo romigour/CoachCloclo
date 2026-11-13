@@ -22,13 +22,14 @@ function mock(list: CoachEvent[]) {
 }
 
 test("past events are hidden, current and open-ended ones shown", async () => {
-  mock([
+  const f = mock([
     ev(1, { start_date: "2026-10-18", end_date: "2026-10-20" }),
     ev(2, { kind: "injury", start_date: "2026-11-01", end_date: null }),
     ev(3, {}),
   ]);
-  render(EventList, { goalId: 3, today: "2026-11-03" });
+  render(EventList, { today: "2026-11-03" });
   await screen.findByText(/Blessure \/ maladie · depuis le 01\/11/);
+  expect(f.mock.calls[0][0]).toBe("/api/cycle/events");
   expect(screen.getByText(/Indisponible · du 05\/11 au 08\/11/)).toBeVisible();
   expect(screen.queryByText(/18\/10/)).toBeNull();
 });
@@ -37,12 +38,12 @@ test("deleting asks whether to recompute, and yes requests an adjustment", async
   const f = mock([ev(3, {})]);
   const onproposal = vi.fn();
   const onchanged = vi.fn();
-  render(EventList, { goalId: 3, today: "2026-11-03", onproposal, onchanged });
+  render(EventList, { today: "2026-11-03", onproposal, onchanged });
   await fireEvent.click(await screen.findByRole("button", { name: "Supprimer" }));
   expect(await screen.findByText("Recalculer le plan ?")).toBeVisible();
   expect(f.mock.calls.some((c) => c[0] === "/api/events/3" && (c[1] as RequestInit).method === "DELETE")).toBe(true);
   await waitFor(() => expect(onchanged).toHaveBeenCalled());
   await fireEvent.click(screen.getByRole("button", { name: "Oui" }));
   await waitFor(() => expect(onproposal).toHaveBeenCalledWith(9));
-  expect(f.mock.calls.some((c) => c[0] === "/api/goals/3/adjust")).toBe(true);
+  expect(f.mock.calls.some((c) => c[0] === "/api/cycle/adjust")).toBe(true);
 });

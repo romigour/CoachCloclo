@@ -2,7 +2,7 @@
 
 from datetime import date, timedelta
 
-from coach.plan.models import Goal
+from coach.plan.models import Cycle
 
 
 def plan_start(today: date) -> date:
@@ -15,18 +15,18 @@ def n_weeks(start: date, race_date: date) -> int:
     return (race_date - start).days // 7 + 1
 
 
-def week_monday(goal: Goal, week_index: int) -> date:
-    return goal.plan_start + timedelta(weeks=week_index - 1)
+def week_monday(cycle: Cycle, week_index: int) -> date:
+    return cycle.plan_start + timedelta(weeks=week_index - 1)
 
 
 _WEEKDAYS = ("lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche")
 
 
-def suggested_date(goal: Goal, week_index: int, suggested_day: str) -> date:
+def suggested_date(cycle: Cycle, week_index: int, suggested_day: str) -> date:
     """Date du jour suggéré (nom français du jour) dans la semaine `week_index`."""
-    return week_monday(goal, week_index) + timedelta(days=_WEEKDAYS.index(suggested_day))
+    return week_monday(cycle, week_index) + timedelta(days=_WEEKDAYS.index(suggested_day))
 
 
-def week_of(goal: Goal, d: date) -> int:
+def week_of(cycle: Cycle, d: date) -> int:
     """Index (base 1) de la semaine de `d` ; peut sortir de [1, n] hors du plan."""
-    return (d - goal.plan_start).days // 7 + 1
+    return (d - cycle.plan_start).days // 7 + 1

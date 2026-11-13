@@ -1,17 +1,21 @@
 <script lang="ts">
-  import type { Week } from "../lib/api";
+  import type { Goal, Week } from "../lib/api";
   import { STATUS_LABEL } from "../lib/labels";
   import { formatDuration, peakLevel, totalSeconds } from "../lib/profile";
   import { days } from "../lib/week";
+  import RaceDayCard from "./RaceDayCard.svelte";
 
   let {
     weeks,
     today,
     selected = null,
     readonly = false,
+    races = [],
     onselect,
   }: {
     weeks: Week[];
+    /** Objectifs du cycle : une carte « Course » le jour de chacun. */
+    races?: Goal[];
     today: string;
     selected?: number | null;
     readonly?: boolean;
@@ -48,6 +52,7 @@
         </div>
         {#each days(w) as d (d.date)}
           <div class="cal-cell" role="cell">
+            {#each races.filter((g) => g.race_date === d.date) as g (g.id)}<RaceDayCard goal={g} />{/each}
             {#each d.sessions as s (s.id)}
               <button
                 class="cal-session {s.status}"

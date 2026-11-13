@@ -1,17 +1,17 @@
 <script lang="ts">
-  import { api, type EventInput, type EventKind, type Goal, type Session, type Week } from "../lib/api";
+  import { api, type Cycle, type EventInput, type EventKind, type Session, type Week } from "../lib/api";
   import { addDays, formatDay, todayIso, WEEKDAYS } from "../lib/dates";
   import ErrorBanner from "./ErrorBanner.svelte";
 
   let {
-    goal,
+    cycle,
     weeks,
     sessions,
     today = todayIso(),
     onclose,
     onproposal,
   }: {
-    goal: Goal;
+    cycle: Cycle;
     weeks: Week[];
     /** Séances proposées pour une fatigue : celles qui ne sont pas faites, cette semaine ou à venir. */
     sessions: Session[];
@@ -30,7 +30,7 @@
   const cap = (d: string) => d.charAt(0).toUpperCase() + d.slice(1);
   // une semaine déjà terminée ne peut plus être allégée
   const futureWeeks = $derived(weeks.filter((w) => addDays(w.week_monday, 6) >= today));
-  const goalDays = $derived(WEEKDAYS.filter((d) => (goal.available_days ?? WEEKDAYS).includes(d)));
+  const planDays = $derived(WEEKDAYS.filter((d) => (cycle.available_days ?? WEEKDAYS).includes(d)));
 
   let kind = $state<EventKind | null>(null);
   let start = $state("");
@@ -81,7 +81,7 @@
     busy = true;
     error = null;
     try {
-      const r = await api.createEvent(goal.id, body());
+      const r = await api.createEvent(body());
       if (r.proposal_id != null) onproposal?.(r.proposal_id);
       else failure = r.error ?? "Claude n'a pas pu ajuster ton plan";
     } catch (e) {
@@ -95,7 +95,7 @@
     busy = true;
     error = null;
     try {
-      const r = await api.requestAdjustment(goal.id);
+      const r = await api.requestAdjustment();
       onproposal?.(r.proposal_id);
     } catch (e) {
       error = e;
@@ -156,7 +156,7 @@
         <fieldset>
           <legend>Jours possibles cette semaine-là (facultatif)</legend>
           <div class="chips" role="group" aria-label="Jours possibles cette semaine-là">
-            {#each goalDays as d (d)}
+            {#each planDays as d (d)}
               <label class="day">
                 <input type="checkbox" checked={days.includes(d)} onchange={(e) => toggleDay(d, e.currentTarget.checked)} />
                 <span>{cap(d)}</span>

@@ -4,7 +4,7 @@ from datetime import date, timedelta
 
 from coach.llm.schemas import HARD_TYPES, RepeatSpec
 from coach.plan.calendar import week_monday
-from coach.plan.models import Activity, Goal, Session
+from coach.plan.models import Activity, Cycle, Session
 
 RUNNING_TYPES = {"running", "trail_running", "treadmill_running", "track_running"}
 CYCLING_TYPES = {"cycling", "road_biking", "indoor_cycling", "virtual_ride", "gravel_cycling", "mountain_biking"}
@@ -82,14 +82,14 @@ def match_activities(sessions: list[Session], activities: list[Activity]) -> lis
     return pairs
 
 
-def mark_missed(sessions: list[Session], goal: Goal, today: date) -> list[int]:
+def mark_missed(sessions: list[Session], cycle: Cycle, today: date) -> list[int]:
     """Ids des séances todo/exported dont la semaine est entièrement passée."""
     return [
         s.id
         for s in sessions
         if (s.status == "todo" or _scheduled(s))
         and not _awaiting_cleanup(s)
-        and week_monday(goal, s.week_index) + timedelta(days=6) < today
+        and week_monday(cycle, s.week_index) + timedelta(days=6) < today
     ]
 
 

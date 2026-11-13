@@ -81,21 +81,31 @@ def _migrate(engine: Engine) -> None:
         # priorité des objectifs
         _add_columns(conn, "goal", {"priority": "VARCHAR NOT NULL DEFAULT 'principal'"})
         # séances et imprévus rattachés à un cycle (l'id du cycle reprend celui de l'objectif)
+        legacy = False
         for table in ("session", "event"):
             cols = {row[1] for row in conn.execute(text(f"PRAGMA table_info({table})"))}
             if "goal_id" in cols and "cycle_id" not in cols:
                 conn.execute(text(f"ALTER TABLE {table} RENAME COLUMN goal_id TO cycle_id"))
-        # un cycle par objectif existant, de même id
-        conn.execute(
-            text("""
-                INSERT INTO cycle (id, created_at, status, plan_start, end_date, sessions_per_week,
-                    available_days_json, long_run_day, include_bike, plan_accepted, needs_generation)
-                SELECT id, created_at, CASE WHEN status = 'active' THEN 'active' ELSE 'done' END,
-                    plan_start, race_date, sessions_per_week, available_days_json, long_run_day,
-                    include_bike, plan_accepted, 0
-                FROM goal WHERE id NOT IN (SELECT id FROM cycle)
-            """)
-        )
+                legacy = True
+        if legacy:
+            # base d'avant les cycles : un cycle par objectif, de même id. Seul le plus récent des objectifs
+            # actifs (comme l'ancien `active_goal`) garde un cycle actif ; les autres sont archivés.
+            conn.execute(
+                text(
+                    "UPDATE goal SET status = 'archived' WHERE status = 'active' "
+                    "AND id < (SELECT MAX(id) FROM goal WHERE status = 'active')"
+                )
+            )
+            conn.execute(
+                text("""
+                    INSERT INTO cycle (id, created_at, status, plan_start, end_date, sessions_per_week,
+                        available_days_json, long_run_day, include_bike, plan_accepted, needs_generation)
+                    SELECT id, created_at, CASE WHEN status = 'active' THEN 'active' ELSE 'done' END,
+                        plan_start, race_date, sessions_per_week, available_days_json, long_run_day,
+                        include_bike, plan_accepted, 0
+                    FROM goal WHERE id NOT IN (SELECT id FROM cycle)
+                """)
+            )
 
 
 class Repo:

@@ -399,3 +399,58 @@ def test_migration_cycle_is_idempotent(tmp_path):
 
         assert conn.execute(text("SELECT COUNT(*) FROM cycle")).scalar() == 2
     assert [s.status for s in Repo(engine).sessions(7)] == ["exported"]
+
+
+def _count_cycles(engine):
+    from sqlalchemy import text
+
+    with engine.connect() as conn:
+        return conn.execute(text("SELECT COUNT(*) FROM cycle")).scalar()
+
+
+def test_migration_does_not_backfill_cycles_on_later_startups(tmp_path):
+    path = tmp_path / "old.db"
+    _old_db_with_plan(path)
+    repo = Repo(make_engine(path))
+    before = repo.active_cycle().id
+    repo.add(make_goal(race_date=date(2027, 5, 30)))  # objectif secondaire : pas de cycle propre
+    engine = make_engine(path)
+    assert _count_cycles(engine) == 2
+    assert Repo(engine).active_cycle().id == before
+
+
+def test_migration_keeps_only_latest_active_goal_active(tmp_path):
+    path = tmp_path / "old.db"
+    _old_db_with_plan(path)
+    con = sqlite3.connect(path)
+    con.execute(
+        "INSERT INTO goal VALUES (5, '2026-08-01', 'route', 10, 0, '2026-11-30', 3, NULL, NULL, 'active', "
+        "'2026-08-05', 1, NULL, NULL, '[]', NULL, 0)"
+    )
+    con.commit()
+    con.close()
+    repo = Repo(make_engine(path))
+    assert repo.active_cycle().id == 7
+    assert [g.id for g in repo.upcoming_goals()] == [7]
+    with repo.transaction() as db:
+        from coach.plan.models import Cycle
+
+        assert db.get(Goal, 5).status == "archived" and db.get(Cycle, 5).status == "done"
+
+
+def test_migration_archived_goal_sessions_keep_done_cycle(tmp_path):
+    path = tmp_path / "old.db"
+    _old_db_with_plan(path)
+    con = sqlite3.connect(path)
+    con.execute(
+        "INSERT INTO session VALUES (2, 3, 1, 1, 'mardi', NULL, 'EF', 'hr', 't', 'd', '[]', NULL, NULL, "
+        "'done', NULL, NULL, NULL, NULL, NULL, NULL, 0)"
+    )
+    con.commit()
+    con.close()
+    repo = Repo(make_engine(path))
+    assert [s.status for s in repo.sessions(3)] == ["done"]
+    with repo.transaction() as db:
+        from coach.plan.models import Cycle
+
+        assert db.get(Cycle, 3).status == "done"

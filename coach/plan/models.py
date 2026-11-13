@@ -46,7 +46,7 @@ class Goal(SQLModel, table=True):
     sessions_per_week: int
     gpx_path: str | None = None
     gpx_summary_json: str | None = None
-    status: str = "active"  # "active" | "archived"
+    status: str = "active"  # "active" | "done" | "archived"
     plan_start: dt.date
     plan_accepted: bool = False
     target_time_s: int | None = None

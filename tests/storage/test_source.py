@@ -42,3 +42,14 @@ def test_local_source_engine_creates_db(tmp_path):
     engine = LocalSource(tmp_path / "c.db").engine()
     assert (tmp_path / "c.db").exists()
     engine.dispose()
+
+
+def test_turso_network_failure_is_cloud_unreachable(monkeypatch):
+    from coach.storage.cloud_errors import CloudUnreachable
+
+    def unreachable(engine):
+        raise ValueError("Hrana: `http error: `error trying to connect: dns error``")
+
+    monkeypatch.setattr(source_mod, "prepare_engine", unreachable)
+    with pytest.raises(CloudUnreachable):
+        TursoSource("libsql://x.turso.io", "tok").engine()

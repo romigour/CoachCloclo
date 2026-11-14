@@ -10,6 +10,7 @@ from sqlalchemy.engine import Engine
 
 from coach.config import Settings, db_path
 from coach.plan.repo import make_engine, prepare_engine
+from coach.storage.cloud_errors import as_unreachable, is_cloud_failure
 from coach.storage.libsql_dialect import remote_engine
 
 
@@ -43,8 +44,16 @@ class TursoSource:
         self.token = token
 
     def engine(self) -> Engine:
+        """Lève `CloudUnreachable` si la base ne répond pas ou refuse le jeton."""
         host = self.url.split("://", 1)[-1].rstrip("/")  # accepte libsql://, https:// ou un hôte nu
-        return prepare_engine(remote_engine(host, self.token))
+        engine = remote_engine(host, self.token)
+        try:
+            return prepare_engine(engine)
+        except Exception as exc:
+            engine.dispose()
+            if is_cloud_failure(exc):
+                raise as_unreachable(exc) from exc
+            raise
 
 
 def source_from_settings(s: Settings) -> DataSource:

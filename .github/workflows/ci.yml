@@ -32,6 +32,7 @@ jobs:
           npm ci
           npm test
           npm run build
+          npm run build:mobile
       - name: Tests Python
         run: uv run pytest
       - name: Build wheel

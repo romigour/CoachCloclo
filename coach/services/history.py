@@ -18,6 +18,14 @@ from coach.garmin.port import (
 from coach.plan.models import PersonalRecord
 from coach.plan.repo import Repo
 from coach.services.activities import store_summaries
+from coach.storage.lock import (
+    IMPORT_TTL,
+    GarminLocked,
+    garmin_lock,
+    held_elsewhere,
+    machine_id,
+    try_acquire,
+)
 
 log = logging.getLogger(__name__)
 
@@ -50,10 +58,15 @@ def save_state(repo: Repo, s: HistoryState) -> None:
     repo.set_state(STATE_KEY, s.model_dump(mode="json"))
 
 
-def recover_orphan(repo: Repo) -> None:
-    """Un import « en cours » trouvé au démarrage a été interrompu : on le marque en erreur."""
+def recover_orphan(repo: Repo, holder: str | None = None) -> None:
+    """Un import « en cours » trouvé au démarrage a été interrompu : on le marque en erreur.
+
+    Sauf s'il tourne sur un autre PC (verrou Garmin détenu ailleurs et non expiré).
+    """
     state = load_state(repo)
-    if state.status == "running":
+    if state.status == "running" and not held_elsewhere(
+        repo, holder or machine_id(), datetime.now(timezone.utc)
+    ):
         state.status = "error"
         state.error = "Import interrompu"
         save_state(repo, state)
@@ -79,19 +92,33 @@ def _error_message(exc: Exception) -> str:
 
 
 def import_history(
-    repo: Repo, garmin: GarminPort, *, sleep: Callable[[float], None] = time.sleep
+    repo: Repo,
+    garmin: GarminPort,
+    *,
+    sleep: Callable[[float], None] = time.sleep,
+    holder: str | None = None,
 ) -> int:
     """Importe toutes les activités page par page ; retourne le nombre ajouté.
 
     Reprenable : les activités déjà en base sont ignorées. En cas d'erreur, ce qui a été
     importé est conservé et l'état passe à `error` avant de relever l'exception.
+    Sous verrou Garmin (`IMPORT_TTL`, prolongé à chaque page) ; s'il est pris ailleurs au départ,
+    lève `GarminLocked` sans toucher à l'état de l'import de l'autre PC.
     """
+    holder = holder or machine_id()
+    with garmin_lock(repo, holder, IMPORT_TTL):
+        return _import_pages(repo, garmin, sleep, holder)
+
+
+def _import_pages(repo: Repo, garmin: GarminPort, sleep: Callable[[float], None], holder: str) -> int:
     state = HistoryState(status="running")
     save_state(repo, state)
     total = 0
     try:
         offset = 0
         while True:
+            if not try_acquire(repo, holder, IMPORT_TTL, datetime.now(timezone.utc)):
+                raise GarminLocked()
             page = garmin.activities_page(offset, PAGE_SIZE)
             total += store_summaries(repo, page)
             state.imported = total
@@ -117,9 +144,10 @@ def import_history(
 class HistoryRunner:
     """Lance l'import dans un thread démon, un seul à la fois."""
 
-    def __init__(self, repo: Repo, garmin_factory: Callable[[], GarminPort]):
+    def __init__(self, repo: Repo, garmin_factory: Callable[[], GarminPort], holder: str | None = None):
         self._repo = repo
         self._factory = garmin_factory
+        self._holder = holder or machine_id()
         self._lock = threading.Lock()
         self._thread: threading.Thread | None = None
 
@@ -128,6 +156,9 @@ class HistoryRunner:
         return self._lock.locked()
 
     def start(self) -> bool:
+        """Faux si un import tourne déjà ici, ou si un autre PC détient le verrou Garmin."""
+        if held_elsewhere(self._repo, self._holder, datetime.now(timezone.utc)):
+            return False
         if not self._lock.acquire(blocking=False):
             return False
         try:
@@ -146,7 +177,7 @@ class HistoryRunner:
                 save_state(self._repo, HistoryState(status="error", error=_error_message(exc)))
                 return
             try:
-                import_history(self._repo, garmin)
+                import_history(self._repo, garmin, holder=self._holder)
             except Exception:
                 # déjà enregistrée dans l'état par import_history ; trace pour le journal serveur
                 log.exception("Import de l'historique Garmin échoué")

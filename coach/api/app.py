@@ -61,6 +61,7 @@ from coach.services import race_strategy
 from coach.services.adjust import request_adjustment
 from coach.services.events import EventInput, EventResult, create_event, delete_event, resume_injury
 from coach.storage.legacy import import_legacy_files
+from coach.storage.lock import SYNC_TTL, GarminLocked, LockedGarmin, garmin_lock, held_elsewhere, machine_id
 from coach.storage.source import source_from_settings
 from coach.services.history import HistoryRunner, load_state, recover_orphan
 from coach.services.laps import fetch_laps, latest_zones, session_comparison
@@ -240,6 +241,7 @@ def _register_errors(app: FastAPI) -> None:
 
     add(GarminAuthRequired, 401, "garmin_auth", "Connexion Garmin requise")
     add(GarminRateLimited, 429, "garmin_rate_limited", "Garmin limite les requêtes, réessaie plus tard")
+    add(GarminLocked, 409, "garmin_locked")  # avant GarminUnavailable, dont elle hérite
     add(GarminUnavailable, 502, "garmin_unavailable")
     add(LLMUsageLimit, 429, "llm_limit", "Limite d'usage de Claude atteinte")
     add(LLMUnavailable, 503, "llm_unavailable")
@@ -305,7 +307,9 @@ def create_app(
         raise ValueError("Le mode LAN exige un PIN : lance `coach start --lan` pour en définir un")
 
     app = FastAPI(title="CoachCloclo")
-    app.state.garmin_factory = garmin_factory
+    holder = machine_id()
+    # chaque écriture Garmin passe par le verrou entre PC, sur la base courante (bascule à chaud)
+    app.state.garmin_factory = lambda: LockedGarmin(garmin_factory(), lambda: app.state.repo, holder)
     app.state.llm_factory = llm_factory
     settings = load_settings()
     app.state.repo = repo or Repo(source_from_settings(settings).engine())
@@ -317,8 +321,9 @@ def create_app(
     app.state.pin_failures = 0
     app.state.pin_locked_until = 0.0
     pin_lock = threading.Lock()
-    recover_orphan(app.state.repo)  # un import resté « en cours » a été interrompu par l'arrêt précédent
-    app.state.history = HistoryRunner(app.state.repo, garmin_factory)
+    # un import resté « en cours » a été interrompu par l'arrêt précédent (sauf s'il tourne sur un autre PC)
+    recover_orphan(app.state.repo, holder)
+    app.state.history = HistoryRunner(app.state.repo, app.state.garmin_factory, holder)
     _register_errors(app)
 
     def get_repo(request: Request) -> Repo:
@@ -711,7 +716,8 @@ def create_app(
 
     @api.post("/sync")
     def post_sync(repo: RepoDep, garmin: GarminDep, llm: LLMDep):
-        result = sync(repo, garmin, llm, now=datetime.now(timezone.utc))
+        with garmin_lock(repo, holder, SYNC_TTL):
+            result = sync(repo, garmin, llm, now=datetime.now(timezone.utc))
         if load_state(repo).status == "idle":  # premier lancement : import de l'historique complet
             app.state.history.start()
         return result
@@ -807,7 +813,9 @@ def create_app(
         return {"status": "ok"}
 
     @api.post("/history/import")
-    def post_history_import():
+    def post_history_import(repo: RepoDep):
+        if held_elsewhere(repo, holder, datetime.now(timezone.utc)):
+            raise GarminLocked()
         if not app.state.history.start():
             return _error(409, "history_running", "Un import est déjà en cours")
         return {"status": "started"}

@@ -1267,3 +1267,88 @@ def test_post_next_cycle_without_body_or_goal(make_client, repo):
     assert r.status_code == 422 and r.json()["detail"] == "Aucun objectif à venir"
     _finished_cycle(repo)
     assert client.post("/api/cycle/next").status_code == 200
+
+
+# --- verrou Garmin entre PC ---------------------------------------------------------------------
+
+
+def _lock_elsewhere(repo):
+    from datetime import datetime, timedelta, timezone
+
+    from coach.plan.models import GarminLock
+    from coach.storage.lock import try_acquire
+
+    with repo.transaction() as db:  # un verrou d'écriture de ce PC encore actif est écrasé
+        lock = db.get(GarminLock, 1)
+        if lock is not None:
+            db.delete(lock)
+    assert try_acquire(repo, "autre-pc", timedelta(minutes=15), datetime.now(timezone.utc))
+
+
+def _assert_locked(r):
+    from coach.storage.lock import LOCK_MSG
+
+    assert r.status_code == 409
+    assert r.json() == {"code": "garmin_locked", "detail": LOCK_MSG}
+
+
+def test_business_export_with_lock_held_leaves_sync_error(make_client, repo):
+    import json as _json
+
+    from coach.plan.models import Proposal
+    from coach.storage.lock import LOCK_MSG
+
+    client = make_client(llm=FakeLLMProvider([valid_plan_json(14, 3)]))
+    _accepted_goal(client)
+    sid = client.get("/api/plan").json()["weeks"][0]["sessions"][0]["id"]
+    assert client.post(f"/api/sessions/{sid}/export", json={"date": "2026-11-05"}).status_code == 200
+    with repo.transaction() as db:
+        p = Proposal(analysis="x", changes_json=_json.dumps([{"op": "remove", "session_id": sid, "reason": "r"}]))
+        db.add(p)
+        db.flush()
+        pid = p.id
+    _lock_elsewhere(repo)
+    r = client.post(f"/api/proposals/{pid}/accept")
+    assert r.status_code == 200 and r.json() == {"sync_error_ids": [sid]}
+    s = repo.session(sid)
+    assert s.status == "sync_error" and LOCK_MSG in s.sync_error and s.pending_removal
+
+
+def test_sync_endpoint_409_when_locked(make_client, repo):
+    client = make_client()
+    _lock_elsewhere(repo)
+    _assert_locked(client.post("/api/sync"))
+
+
+def test_history_import_409_when_locked(make_client, repo):
+    client = make_client()
+    client.app.state.history = FakeRunner(result=True)
+    _lock_elsewhere(repo)
+    _assert_locked(client.post("/api/history/import"))
+    assert client.app.state.history.calls == 0
+
+
+def test_manual_export_409_when_locked(make_client, repo, fake_garmin):
+    client = make_client(llm=FakeLLMProvider([valid_plan_json(14, 3)]))
+    _accepted_goal(client)
+    sid = client.get("/api/plan").json()["weeks"][0]["sessions"][0]["id"]
+    _lock_elsewhere(repo)
+    _assert_locked(client.post(f"/api/sessions/{sid}/export", json={"date": "2026-11-05"}))
+    assert fake_garmin.calls == [] and repo.session(sid).status == "todo"
+
+
+def test_sync_takes_and_releases_lock(make_client, repo):
+    from datetime import datetime, timezone
+
+    from coach.storage.lock import held_elsewhere
+
+    seen = []
+
+    class Spy(FakeGarminClient):
+        def activities(self, start, end):
+            seen.append(held_elsewhere(repo, "autre-pc", datetime.now(timezone.utc)))
+            return super().activities(start, end)
+
+    assert make_client(garmin=Spy(metrics=METRICS)).post("/api/sync").status_code == 200
+    assert seen == [True]
+    assert not held_elsewhere(repo, "autre-pc", datetime.now(timezone.utc))

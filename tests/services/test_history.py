@@ -1,5 +1,5 @@
 import threading
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 
 import pytest
 
@@ -20,6 +20,7 @@ from coach.services.history import (
     refresh_records,
     save_state,
 )
+from coach.storage.lock import IMPORT_TTL, LOCK_MSG, GarminLocked, held_elsewhere, release, try_acquire
 
 
 def make_activities(n: int) -> list[ActivitySummary]:
@@ -166,11 +167,70 @@ def test_runner_logs_import_failure(repo, coach_home, caplog):
     assert any(r.exc_info for r in caplog.records)
 
 
-def test_recover_orphan(repo):
+def test_recover_orphan(repo, coach_home):
     save_state(repo, HistoryState(status="running", imported=4))
     recover_orphan(repo)
     state = load_state(repo)
     assert state.status == "error" and state.error == "Import interrompu"
+
+
+def test_recover_orphan_keeps_running_import_of_other_pc(repo, coach_home):
+    save_state(repo, HistoryState(status="running", imported=4))
+    try_acquire(repo, "autre-pc", IMPORT_TTL, datetime.now(timezone.utc))
+    recover_orphan(repo, "moi")
+    assert load_state(repo).status == "running"
+    calls = []
+    runner = HistoryRunner(repo, lambda: calls.append(1) or FakeGarminClient(), holder="moi")
+    assert runner.start() is False
+    runner.join(timeout=5)
+    assert calls == [] and load_state(repo).status == "running"
+
+
+def test_recover_orphan_marks_interrupted_when_lock_expired(repo, coach_home):
+    save_state(repo, HistoryState(status="running", imported=4))
+    try_acquire(repo, "autre-pc", IMPORT_TTL, datetime.now(timezone.utc) - timedelta(minutes=10))
+    recover_orphan(repo, "moi")
+    state = load_state(repo)
+    assert state.status == "error" and state.error == "Import interrompu"
+
+
+def test_recover_orphan_marks_own_running_import_interrupted(repo, coach_home):
+    """Verrou encore détenu par ce PC (arrêt brutal) : l'import est bien orphelin."""
+    save_state(repo, HistoryState(status="running"))
+    try_acquire(repo, "moi", IMPORT_TTL, datetime.now(timezone.utc))
+    recover_orphan(repo, "moi")
+    assert load_state(repo).status == "error"
+
+
+def test_import_refused_when_locked_elsewhere_keeps_other_state(repo, coach_home):
+    save_state(repo, HistoryState(status="running", imported=7))
+    try_acquire(repo, "autre-pc", IMPORT_TTL, datetime.now(timezone.utc))
+    with pytest.raises(GarminLocked):
+        import_history(repo, FakeGarminClient(activities=make_activities(3)), sleep=lambda s: None, holder="moi")
+    assert load_state(repo) == HistoryState(status="running", imported=7)
+
+
+def test_import_holds_lock_per_page_then_releases(repo, coach_home):
+    seen = []
+
+    class Spy(FakeGarminClient):
+        def activities_page(self, offset, limit):
+            seen.append(held_elsewhere(repo, "autre-pc", datetime.now(timezone.utc)))
+            return super().activities_page(offset, limit)
+
+    import_history(repo, Spy(activities=make_activities(150)), sleep=lambda s: None, holder="moi")
+    assert seen == [True, True, True]
+    assert not held_elsewhere(repo, "autre-pc", datetime.now(timezone.utc))
+
+
+def test_import_stops_when_lock_lost_between_pages(repo, coach_home):
+    def steal(_s):
+        release(repo, "moi")
+        try_acquire(repo, "autre-pc", IMPORT_TTL, datetime.now(timezone.utc))
+
+    with pytest.raises(GarminLocked):
+        import_history(repo, FakeGarminClient(activities=make_activities(150)), sleep=steal, holder="moi")
+    assert load_state(repo).error == LOCK_MSG
 
 
 def test_state_roundtrip_in_db(repo):

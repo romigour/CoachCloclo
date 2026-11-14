@@ -1678,3 +1678,40 @@ def test_storage_view_never_returns_token(storage_client):
     for r in (_enable(client), client.get("/api/storage"), client.get("/api/status")):
         assert r.status_code == 200
         assert STORAGE_TOKEN not in r.text
+
+
+def test_cloud_mode_refuses_another_url(storage_client, cloud):
+    client = storage_client()
+    assert _enable(client).status_code == 200
+    body = {"url": "libsql://autre-base.turso.io", "token": "autre", "replace_local": True}
+    r = client.post("/api/storage/cloud", json=body)
+    assert r.status_code == 409
+    assert r.json() == {"code": "cloud_url_change", "detail": "Reviens d'abord au stockage local pour changer de base cloud."}
+    s = load_settings()
+    assert (s.turso_url, s.turso_token) == ("libsql://base.turso.io", STORAGE_TOKEN)
+
+
+def test_cloud_mode_accepts_same_host_new_token(storage_client, cloud):
+    client = storage_client()
+    assert _enable(client).status_code == 200
+    r = client.post("/api/storage/cloud", json={"url": "https://BASE.turso.io/", "token": "nouveau"})
+    assert r.status_code == 200
+    assert load_settings().turso_token == "nouveau"
+    assert _session_titles(client) == ["Séance locale"]
+
+
+@pytest.mark.parametrize("body", [{"url": "   ", "token": "t"}, {"url": "libsql://base.turso.io", "token": "  "}])
+def test_enable_blank_fields_rejected(storage_client, body):
+    client = storage_client()
+    r = client.post("/api/storage/cloud", json=body)
+    assert r.status_code == 422
+    assert load_settings().storage_mode == "local"
+
+
+def test_switch_recovers_orphan_import(storage_client, _home):
+    client = storage_client()
+    save_state(client.app.state.repo, HistoryState(status="running"))  # import interrompu, sans thread
+    assert _enable(client).status_code == 200
+    from coach.services.history import load_state
+
+    assert load_state(client.app.state.repo).status == "error"

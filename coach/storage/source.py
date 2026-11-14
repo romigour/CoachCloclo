@@ -32,6 +32,15 @@ class LocalSource:
         return make_engine(self.path)
 
 
+def turso_host(url: str) -> str:
+    """Hôte d'une URL Turso : accepte libsql://, https:// ou un hôte nu (casse et / final ignorés)."""
+    return url.strip().split("://", 1)[-1].rstrip("/").lower()
+
+
+def same_turso_url(a: str | None, b: str | None) -> bool:
+    return bool(a) and bool(b) and turso_host(a) == turso_host(b)
+
+
 class TursoSource:
     kind = "turso"
 
@@ -45,7 +54,7 @@ class TursoSource:
 
     def engine(self) -> Engine:
         """Lève `CloudUnreachable` si la base ne répond pas ou refuse le jeton."""
-        host = self.url.split("://", 1)[-1].rstrip("/")  # accepte libsql://, https:// ou un hôte nu
+        host = turso_host(self.url)
         engine = remote_engine(host, self.token)
         try:
             return prepare_engine(engine)

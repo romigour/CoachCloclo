@@ -59,12 +59,15 @@ class OpenedSource:
 
 def probe(source: DataSource) -> Engine:
     """Ouvre la base, puis y lit et écrit une valeur ; `SchemaTooNew` passe tel quel."""
+    engine = None
     try:
         engine = source.engine()
         repo = Repo(engine)
         repo.get_state(PROBE_KEY)
         repo.set_state(PROBE_KEY, {"at": datetime.now(timezone.utc).isoformat()})
     except Exception as exc:
+        if engine is not None:
+            engine.dispose()
         if is_cloud_failure(exc):
             raise as_unreachable(exc) from exc
         raise
@@ -104,7 +107,11 @@ def disable_cloud(cloud: Engine, local: LocalSource) -> Engine:
     tmp_engine.dispose()
     # un journal périmé de l'ancien coach.db serait rejoué sur la nouvelle base
     _remove_sqlite_files(local.path)
-    os.replace(tmp, local.path)
+    try:
+        os.replace(tmp, local.path)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
     return local.engine()
 
 

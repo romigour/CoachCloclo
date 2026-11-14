@@ -198,3 +198,45 @@ def test_delete_local_files(tmp_path):
     delete_local_files(tmp_path)
     assert sorted(p.name for p in tmp_path.iterdir()) == ["settings.json"]
     delete_local_files(tmp_path)  # idempotent
+
+
+def test_probe_disposes_engine_when_read_write_fails(tmp_path, monkeypatch):
+    disposed = []
+
+    class Source(FakeSource):
+        def engine(self):
+            eng = super().engine()
+            monkeypatch.setattr(eng, "dispose", lambda: disposed.append(True))
+            return eng
+
+    def refuse(self, key, value):
+        raise ValueError(HRANA_401)
+
+    monkeypatch.setattr(Repo, "set_state", refuse)
+    with pytest.raises(CloudUnreachable):
+        probe(Source(tmp_path / "cloud.db"))
+    assert disposed == [True]
+
+
+def test_disable_replace_failure_removes_temp(tmp_path, monkeypatch):
+    cloud = make_engine(tmp_path / "cloud.db")
+    _fill(cloud)
+    home = tmp_path / "home"
+    home.mkdir()
+
+    def locked(src, dst):
+        raise PermissionError("coach.db ouvert")
+
+    monkeypatch.setattr(switch.os, "replace", locked)
+    with pytest.raises(PermissionError):
+        disable_cloud(cloud, LocalSource(home / "coach.db"))
+    assert list(home.iterdir()) == []
+
+
+def test_same_cloud_url_normalises():
+    from coach.storage.source import same_turso_url
+
+    assert same_turso_url("libsql://Base-Org.turso.io", "https://base-org.turso.io/")
+    assert same_turso_url("base-org.turso.io", "libsql://base-org.turso.io")
+    assert not same_turso_url("libsql://a.turso.io", "libsql://b.turso.io")
+    assert not same_turso_url(None, "libsql://b.turso.io")

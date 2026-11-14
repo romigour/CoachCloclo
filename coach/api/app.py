@@ -18,7 +18,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi import APIRouter, Depends, FastAPI, File, Form, Query, Request, UploadFile
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field, ValidationError, model_validator
+from pydantic import BaseModel, Field, StringConstraints, ValidationError, model_validator
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import DBAPIError
 from sqlmodel import select
@@ -68,7 +68,7 @@ from coach.services.events import EventInput, EventResult, create_event, delete_
 from coach.storage.legacy import import_legacy_files
 from coach.storage.lock import SYNC_TTL, GarminLocked, LockedGarmin, garmin_lock, held_elsewhere, machine_id
 from coach.storage.cloud_errors import UNREACHABLE_MSG, CloudUnreachable, is_cloud_failure
-from coach.storage.source import DataSource, LocalSource, source_from_settings
+from coach.storage.source import DataSource, LocalSource, same_turso_url, source_from_settings
 from coach.storage.switch import (
     CloudStatus,
     NeedsConfirmation,
@@ -140,8 +140,8 @@ class SettingsBody(BaseModel):
 
 
 class CloudBody(BaseModel):
-    url: str = Field(min_length=1)
-    token: str = Field(min_length=1)
+    url: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
+    token: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
     replace_local: bool = False
 
 
@@ -379,6 +379,8 @@ def create_app(
         app.state.cloud = cloud
         app.state.history = HistoryRunner(new, app.state.garmin_factory, holder)
         app.state.storage_error = None
+        # un import « en cours » dans la nouvelle base a été interrompu (sauf s'il tourne sur un autre PC)
+        recover_orphan(new, holder)
 
     def open_storage() -> bool:
         """Ouvre la base des réglages. En mode cloud, une panne laisse l'app démarrée mais « indisponible »."""
@@ -408,8 +410,8 @@ def create_app(
         if not storage_lock.acquire(blocking=False):
             return
         try:
-            if app.state.repo is None and open_storage():
-                recover_orphan(app.state.repo, holder)
+            if app.state.repo is None:
+                open_storage()
         finally:
             storage_lock.release()
 
@@ -417,15 +419,13 @@ def create_app(
         install_repo(repo, cloud=False)
     elif open_storage() and not app.state.cloud:
         import_legacy_files(app.state.repo, data_dir())  # reprise des fichiers d'une installation existante (idempotente)
+        recover_orphan(app.state.repo, holder)  # history.json repris peut être resté « en cours »
     app.state.mfa = {}  # login_id -> (état MFA, expiration) ; jamais renvoyé au client
     app.state.lan = lan
     app.state.sessions = set()
     app.state.pin_failures = 0
     app.state.pin_locked_until = 0.0
     pin_lock = threading.Lock()
-    if app.state.repo is not None:
-        # un import resté « en cours » a été interrompu par l'arrêt précédent (sauf s'il tourne sur un autre PC)
-        recover_orphan(app.state.repo, holder)
     _register_errors(app)
 
     def get_repo(request: Request) -> Repo:
@@ -981,8 +981,11 @@ def create_app(
     def enable(body: CloudBody):
         settings = load_settings()
         was_local = settings.storage_mode == "local"
+        if not was_local and not same_turso_url(settings.turso_url, body.url):
+            # une autre base adoptée sans copie ni marqueur pourrait être écrasée plus tard par un autre PC
+            return _error(409, "cloud_url_change", "Reviens d'abord au stockage local pour changer de base cloud.")
         target = settings.model_copy(
-            update={"storage_mode": "turso", "turso_url": body.url.strip(), "turso_token": body.token.strip()}
+            update={"storage_mode": "turso", "turso_url": body.url, "turso_token": body.token}
         )
         source = source_for(target)
         try:
@@ -1001,7 +1004,7 @@ def create_app(
                 engine.dispose()
                 return _error(409, "needs_confirmation", "Les données de ce PC seront remplacées par celles du cloud")
         else:
-            # déjà en mode cloud (nouveaux identifiants, base indisponible) : jamais de copie, la base est adoptée
+            # déjà en mode cloud, même base (nouveau jeton, base indisponible) : jamais de copie
             result = engine
         save_settings(target)  # 3.
         install_repo(Repo(result), cloud=True)  # 4.

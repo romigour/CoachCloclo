@@ -105,14 +105,20 @@
 
 {#if plan}
   {#if !plan.cycle}
-    <p class="card">Aucun objectif pour l'instant. <a href="#/goal">Créer un objectif</a></p>
+    <p class="card">
+      Aucun objectif pour l'instant.
+      {#if READONLY}À faire depuis l'ordinateur.{:else}<a href="#/goal">Créer un objectif</a>{/if}
+    </p>
   {:else if !plan.cycle.plan_accepted && !stale}
-    <p class="card">Ton plan n'est pas encore validé. <a href="#/goal">Relire le brouillon</a></p>
+    <p class="card">
+      Ton plan n'est pas encore validé.
+      {#if READONLY}À faire depuis l'ordinateur.{:else}<a href="#/goal">Relire le brouillon</a>{/if}
+    </p>
   {:else}
     {#if stale}
       <section class="card row spread" aria-label="Plan à recalculer">
         <p>Le plan doit être recalculé pour tenir compte de tes objectifs. En attendant, voici le plan précédent.</p>
-        <a class="more" href="#/plan">Recalculer le plan</a>
+        {#if READONLY}<span class="more">À faire depuis l'ordinateur</span>{:else}<a class="more" href="#/plan">Recalculer le plan</a>{/if}
       </section>
     {/if}
     <InjuryBanner injury={plan.open_injury ?? null} {today} onproposal={goProposal} onresumed={load} />

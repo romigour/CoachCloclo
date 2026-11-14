@@ -174,6 +174,9 @@ Les écrans existants sont réutilisés ; les parties d'écriture sont masquées
   déploie avec `actions/deploy-pages`. *Décision du concepteur.*
 - Action manuelle de l'utilisateur, une fois : passer la source Pages de « branche master /docs »
   à « GitHub Actions » dans les réglages du dépôt. Le guide reste à `/CoachCloclo/guide/`.
+- Seconde action manuelle, une fois : l'environnement `github-pages` n'autorise par défaut que la
+  branche par défaut, ce qui bloque les déploiements sur tag. Réglages → Environments →
+  `github-pages` → Deployment branches and tags → ajouter une règle autorisant les tags `v*`.
 - README + guide : une section « Version mobile » (URL, création du jeton lecture seule).
 
 ### 5.7 Tests

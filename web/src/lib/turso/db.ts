@@ -14,11 +14,12 @@ const MESSAGES = {
   unreachable: "Base Turso injoignable",
   schema_too_new: "Base plus récente que cette version mobile : recharge la page pour la mettre à jour",
   schema_outdated: "Mets à jour l'appli de bureau puis relance-la une fois",
+  unexpected: "Erreur inattendue",
 } as const;
 
-const fail = (code: keyof typeof MESSAGES) => new ApiError(code, MESSAGES[code]);
+export const fail = (code: keyof typeof MESSAGES) => new ApiError(code, MESSAGES[code]);
 
-function statusOf(e: unknown): number | undefined {
+export function statusOf(e: unknown): number | undefined {
   if (typeof e !== "object" || e === null) return undefined;
   const o = e as { status?: unknown; statusCode?: unknown; cause?: unknown };
   for (const s of [o.status, o.statusCode]) if (typeof s === "number") return s;
@@ -29,7 +30,7 @@ export function toApiError(e: unknown): ApiError {
   if (e instanceof ApiError) return e;
   const msg = e instanceof Error ? e.message : String(e);
   const status = statusOf(e);
-  if (status === 401 || status === 403 || /\b(401|403)\b|unauthorized|forbidden|auth/i.test(msg)) return fail("auth");
+  if (status === 401 || status === 403 || /\b(401|403)\b|unauthori[sz]ed|forbidden/i.test(msg)) return fail("auth");
   if (e instanceof TypeError || /fetch failed|network/i.test(msg)) return fail("unreachable");
   if (/no such (column|table)/i.test(msg)) return fail("schema_outdated");
   return fail("unreachable");
@@ -69,7 +70,6 @@ export const REQUIRED_COLUMNS: Record<string, string[]> = {
     "id", "garmin_activity_id", "date", "type_key", "duration_s", "distance_m", "d_plus_m",
     "avg_hr", "raw_json", "session_id", "match_source",
   ],
-  activitylaps: ["activity_id", "laps_json"],
   race: [
     "id", "activity_id", "name", "official_time_s", "overall_rank", "overall_total",
     "category", "category_rank", "category_total", "excluded",
@@ -90,10 +90,14 @@ export async function checkSchema(db: Db): Promise<void> {
   }
   if (typeof v !== "number") throw fail("schema_outdated");
   if (v > KNOWN_SCHEMA) throw fail("schema_too_new");
+  // Un seul SELECT ordinaire (un jeton en lecture seule peut refuser PRAGMA) : les noms de tables sont des constantes.
+  const sql = Object.keys(REQUIRED_COLUMNS)
+    .map((t) => `SELECT '${t}' AS t, name FROM pragma_table_info('${t}')`)
+    .join(" UNION ALL ");
+  const info = await db.execute(sql);
+  const have = new Set(info.rows.map((row) => `${row.t}.${row.name}`));
   for (const [table, cols] of Object.entries(REQUIRED_COLUMNS)) {
-    const info = await db.execute(`PRAGMA table_info(${table})`);
-    const have = new Set(info.rows.map((row) => String(row.name)));
-    if (cols.some((c) => !have.has(c))) throw fail("schema_outdated");
+    if (cols.some((c) => !have.has(`${table}.${c}`))) throw fail("schema_outdated");
   }
 }
 

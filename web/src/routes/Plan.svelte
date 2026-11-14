@@ -125,9 +125,15 @@
 
 {#if plan}
   {#if !plan.cycle}
-    <p class="card">Aucun objectif. <a href="#/goal">Créer un objectif</a></p>
+    <p class="card">
+      Aucun objectif.
+      {#if READONLY}À faire depuis l'ordinateur.{:else}<a href="#/goal">Créer un objectif</a>{/if}
+    </p>
   {:else if !plan.cycle.plan_accepted && !stale}
-    <p class="card">Le plan n'est pas encore validé. <a href="#/goal">Relire le brouillon</a></p>
+    <p class="card">
+      Le plan n'est pas encore validé.
+      {#if READONLY}À faire depuis l'ordinateur.{:else}<a href="#/goal">Relire le brouillon</a>{/if}
+    </p>
   {:else}
     {#if stale}
       <section class="card row spread" aria-label="Plan à recalculer">

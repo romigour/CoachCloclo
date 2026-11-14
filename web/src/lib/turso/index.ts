@@ -2,7 +2,7 @@
 import { ApiError, type Status } from "../api";
 import { todayIso } from "../dates";
 import { loadCredentials, type Credentials } from "./credentials";
-import { checkSchema, openDb, toApiError, type Db } from "./db";
+import { checkSchema, fail, openDb, type Db } from "./db";
 import * as r from "./reads";
 import * as s from "./stats";
 
@@ -33,7 +33,8 @@ async function run<T>(fn: (db: Db) => Promise<T>): Promise<T> {
   try {
     return await fn(await client());
   } catch (e) {
-    throw toApiError(e);
+    // Les erreurs de transport sont déjà traduites par openDb().execute ; le reste est un défaut du code.
+    throw e instanceof ApiError ? e : fail("unexpected");
   }
 }
 
@@ -60,7 +61,7 @@ export async function status(): Promise<Status> {
   try {
     return await run((db) => r.status(db, todayIso()));
   } catch (e) {
-    const err = toApiError(e);
+    const err = e as ApiError;
     if (UNAVAILABLE.has(err.code) || err.code.startsWith("schema_")) {
       return minimalStatus(err.code, String(err.detail));
     }

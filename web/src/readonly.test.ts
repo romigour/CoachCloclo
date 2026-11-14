@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/svelte";
+import { fireEvent, render, screen, waitFor } from "@testing-library/svelte";
 import { beforeEach, expect, test, vi } from "vitest";
 
 vi.mock("./lib/mode", () => ({ READONLY: true }));
@@ -18,6 +18,14 @@ vi.mock("./lib/turso", () => {
     events: async () => f.events,
     activities: async (w: number) => f.activities[String(w)] ?? [],
     zones: async () => f.zones,
+    checkConnection: async () => {},
+    saveCredentials: (c: { url: string; token: string }) => {
+      creds.value = c;
+    },
+    clearCredentials: () => {
+      creds.value = null;
+    },
+    normalizeHost: (u: string) => u.replace(/^libsql:\/\//, ""),
     statsActivities: async () => over.stats ?? f.stats_activities,
     statsRecords: async () => f.stats_records,
   };
@@ -140,4 +148,57 @@ test("ErrorBanner : lien et redirection vers la connexion", async () => {
   unmount();
   render(ErrorBanner, { error: new ApiError("garmin_auth", "Garmin refusé", 401) });
   await waitFor(() => expect(location.hash).toBe("#/connection"));
+});
+
+const DESKTOP_ONLY = ['a[href="#/goal"]', 'a[href="#/setup"]', 'a[href="#/race"]', 'a[href="#/proposal"]'];
+const noDesktopLink = () => {
+  for (const sel of DESKTOP_ONLY) expect(document.querySelector(sel)).toBeNull();
+};
+
+test.each([
+  ["sans cycle", { cycle: null }],
+  ["plan non validé", { cycle: { ...f.plan.cycle, plan_accepted: false } }],
+])("Today et Plan, %s : aucun lien vers une page de bureau", async (_n, patch) => {
+  over.plan = { ...f.plan, ...patch };
+  const today = render(Today, { today: TODAY, status: { ...f.status, ...patch } });
+  expect((await screen.findAllByText(/À faire depuis l'ordinateur/)).length).toBeGreaterThan(0);
+  noDesktopLink();
+  today.unmount();
+  render(Plan, { today: TODAY });
+  expect((await screen.findAllByText(/À faire depuis l'ordinateur/)).length).toBeGreaterThan(0);
+  noDesktopLink();
+});
+
+test("App : un hash de page de bureau est renvoyé vers une route autorisée", async () => {
+  location.hash = "#/goal";
+  render(App);
+  await waitFor(() => expect(["#/today", "#/stats"]).toContain(location.hash));
+  location.hash = "#/setup";
+  await waitFor(() => expect(["#/today", "#/stats"]).toContain(location.hash));
+});
+
+test("App : première connexion, les zones sont relues après l'enregistrement", async () => {
+  creds.value = null;
+  render(App);
+  await waitFor(() => expect(location.hash).toBe("#/connection"));
+  // Comme pour Stats : l'import dynamique concurrent contourne le mock du module, on observe donc `api.zones`.
+  const zones = vi.spyOn(api, "zones").mockImplementation(async () => f.zones);
+  const before = zones.mock.calls.length;
+  await fireEvent.input(await screen.findByLabelText("URL de la base"), { target: { value: "libsql://x.turso.io" } });
+  await fireEvent.input(screen.getByLabelText("Jeton d'accès"), { target: { value: "tok" } });
+  await fireEvent.click(screen.getByRole("button", { name: "Valider" }));
+  await waitFor(() => expect(zones.mock.calls.length).toBeGreaterThan(before));
+  await waitFor(() => expect(["#/today", "#/stats"]).toContain(location.hash));
+});
+
+test("Connexion effacée : retour à la connexion, Aujourd'hui y renvoie", async () => {
+  vi.spyOn(window, "confirm").mockReturnValue(true);
+  location.hash = "#/connection";
+  render(App);
+  await fireEvent.click(await screen.findByRole("button", { name: "Effacer" }));
+  await waitFor(() => expect(creds.value).toBeNull());
+  expect(await screen.findByLabelText("URL de la base")).toBeInTheDocument();
+  location.hash = "#/today";
+  await waitFor(() => expect(location.hash).toBe("#/connection"));
+  expect(screen.queryByRole("link", { name: "Modifier la connexion" })).toBeNull();
 });

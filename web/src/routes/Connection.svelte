@@ -2,7 +2,7 @@
   import { onMount } from "svelte";
   import { ApiError } from "../lib/api";
 
-  let { onchanged }: { onchanged: () => void } = $props();
+  let { onchanged, oncleared }: { onchanged: () => void; oncleared?: () => void } = $props();
 
   // Chargé à la demande : libsql ne doit pas entrer dans le build de bureau.
   const turso = () => import("../lib/turso");
@@ -78,9 +78,11 @@
     if (busy || !confirm("Effacer la connexion de ce téléphone ?")) return;
     busy = true;
     error = "";
+    let cleared = false;
     try {
       const t = await turso();
       t.clearCredentials();
+      cleared = true;
       creds = null;
       host = "";
       editing = false;
@@ -91,6 +93,7 @@
     } finally {
       busy = false;
     }
+    if (cleared) oncleared?.();
   }
 </script>
 

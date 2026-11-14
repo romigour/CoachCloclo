@@ -117,7 +117,10 @@ Une appli mobile en lecture seule, installable sur l'écran d'accueil du télép
 - Tu peux consulter Aujourd'hui (la séance du jour), Plan (la semaine, imprévus visibles) et Statistiques. Aucune action ne crée, modifie ou supprime quoi que ce soit.
 - Si elle affiche « Mets à jour l'appli de bureau puis relance-la une fois », installe la dernière version de l'appli de bureau et relance-la.
 
-Elle est publiée par le workflow `pages.yml`, construite depuis le dernier tag `v*`.
+Elle est publiée par le workflow `pages.yml`, construite depuis le dernier tag `v*`. Deux réglages à faire une seule fois dans le dépôt GitHub :
+
+1. Settings → Pages → Source : « GitHub Actions ».
+2. Settings → Environments → `github-pages` → Deployment branches and tags → ajouter une règle autorisant les tags `v*` (par défaut, seule la branche par défaut peut déployer, ce qui bloque les déploiements sur tag).
 
 ## Usage de Claude
 

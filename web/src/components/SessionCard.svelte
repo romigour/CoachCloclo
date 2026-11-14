@@ -164,6 +164,13 @@
 
   {#if session.chaining_note}<p class="tip">{session.chaining_note}</p>{/if}
 
+  {#if READONLY && (matched || session.status === "done")}
+    <p class="matched">
+      <span class="meta">Activité :</span>
+      {matched ? formatActivity(matched) : "rattachée"}
+    </p>
+  {/if}
+
   {#if !READONLY && !readonly}
     <div class="row spread">
       {#if matched || session.status === "done"}

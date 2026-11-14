@@ -101,6 +101,14 @@ test("status() relance les erreurs hors stockage", async () => {
   await expect(turso.status()).rejects.toMatchObject({ code: "boom" });
 });
 
+test("erreur inattendue : code unexpected, ni masquée en injoignable ni dégradée par status()", async () => {
+  m.creds = creds(9);
+  m.plan.mockRejectedValueOnce(new Error("bug"));
+  await expect(turso.plan()).rejects.toMatchObject({ code: "unexpected", message: "Erreur inattendue" });
+  m.plan.mockRejectedValueOnce(new TypeError("x is undefined"));
+  await expect(turso.status()).rejects.toMatchObject({ code: "unexpected" });
+});
+
 test("course : l'entrée du cache remplacée puis vidée ne casse pas l'appel en cours", async () => {
   m.creds = creds(7);
   let release!: () => void;

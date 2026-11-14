@@ -60,8 +60,26 @@
 
   /** Connexion Turso enregistrée : on relit les données puis on va à l'accueil. */
   async function connected() {
+    version++; // relit les zones et recharge les pages (première connexion ou changement de base)
     await refresh();
     location.hash = home();
+  }
+
+  /** Connexion effacée : on reste sur la page de connexion et on oublie l'état de l'ancienne base. */
+  function cleared() {
+    status = null;
+    error = null;
+    location.hash = "#/connection";
+  }
+
+  /** Lecture seule : toute route inconnue ou sans identifiants est renvoyée vers l'accueil ou la connexion. */
+  async function guard() {
+    const { loadCredentials } = await import("./lib/turso");
+    if (!loadCredentials()) {
+      if (location.hash !== "#/connection") location.hash = "#/connection";
+    } else if (!parse()) {
+      location.hash = home();
+    }
   }
 
   /** Relit l'état ; `clear` efface l'erreur affichée (pas depuis le sondage, qui la ferait disparaître). */
@@ -139,6 +157,7 @@
       route = parse();
       raceGoalId = parseGoalId();
       error = null;
+      if (READONLY && route !== "connection") guard();
     };
     window.addEventListener("hashchange", onhash);
     start();
@@ -225,7 +244,7 @@
       {:else if READONLY && route === "connection"}
         <!-- Import dynamique gardé par READONLY : libsql reste hors du build de bureau. -->
         {#await import("./routes/Connection.svelte") then { default: Connection }}
-          <Connection onchanged={connected} />
+          <Connection onchanged={connected} oncleared={cleared} />
         {:catch}
           <section class="card stack" role="alert">
             <p>Impossible de charger l'écran de connexion.</p>

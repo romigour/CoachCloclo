@@ -45,6 +45,9 @@ describe("toApiError", () => {
     expect(toApiError(Object.assign(new Error("boom"), { status: 401 })).code).toBe("auth");
     expect(toApiError(Object.assign(new Error("boom"), { cause: { status: 403 } })).code).toBe("auth");
     expect(toApiError(new Error("whatever")).code).toBe("unreachable");
+    expect(toApiError(new Error("HTTP 403 Forbidden")).code).toBe("auth");
+    expect(toApiError(new Error("Unauthorised")).code).toBe("auth");
+    expect(toApiError(new Error("author not found")).code).toBe("unreachable"); // plus de sous-chaîne « auth » nue
   });
 
   it("garde une ApiError telle quelle", () => {

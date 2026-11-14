@@ -34,18 +34,34 @@ jobs:
         with:
           path: release
           fetch-depth: 0
-      - name: Dernier tag v*
+      - name: Dernier tag v* et prise en charge de build:mobile
+        id: pwa
         run: |
           set -euo pipefail
-          tag="$(git -C release describe --tags --abbrev=0 --match 'v*')"
-          echo "Version mobile construite depuis $tag"
+          git -C release fetch --tags --force
+          tag="$(git -C release tag --list 'v*' --sort=-v:refname | head -1)"
+          if [ -z "$tag" ]; then
+            echo "::warning::Aucun tag v* : version mobile ignorée, seul le guide est publié."
+            echo "build=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           git -C release checkout "$tag"
+          if node -e 'process.exit(require("./release/web/package.json").scripts?.["build:mobile"] ? 0 : 1)'; then
+            echo "Version mobile construite depuis $tag"
+            echo "build=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::Le tag $tag n'a pas de script build:mobile : version mobile ignorée, seul le guide est publié."
+            echo "build=false" >> "$GITHUB_OUTPUT"
+          fi
       - uses: actions/setup-node@v4
+        if: steps.pwa.outputs.build == 'true'
         with:
           node-version: "22"
           cache: npm
           cache-dependency-path: release/web/package-lock.json
+      # Un échec ici (tag avec build:mobile) est une vraie régression : le job échoue.
       - name: Build mobile
+        if: steps.pwa.outputs.build == 'true'
         working-directory: release/web
         run: |
           set -euo pipefail
@@ -58,8 +74,10 @@ jobs:
           set -euo pipefail
           mkdir public
           cp -r _site/. public/
-          mkdir -p public/app
-          cp -r release/web/dist-mobile/. public/app/
+          if [ "${{ steps.pwa.outputs.build }}" = "true" ]; then
+            mkdir -p public/app
+            cp -r release/web/dist-mobile/. public/app/
+          fi
       - uses: actions/upload-pages-artifact@v3
         with:
           path: public

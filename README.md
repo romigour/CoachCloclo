@@ -110,7 +110,7 @@ Les données du cloud sont alors perdues pour ce PC. Si ce PC avait adopté le c
 
 ## Version mobile
 
-Une appli mobile en lecture seule, installable sur l'écran d'accueil du téléphone : <https://romigour.github.io/CoachCloclo/app/>. Elle lit ta base Turso, donc le stockage cloud doit déjà être activé sur l'appli de bureau (voir [Stockage dans le cloud](#stockage-dans-le-cloud-turso)).
+Une appli mobile en lecture seule, installable sur l'écran d'accueil du téléphone : <https://romigour.github.io/CoachCloclo/app/>. Elle lit ta base Turso, donc le stockage cloud doit déjà être activé sur l'appli de bureau (voir [Stockage dans le cloud](#stockage-dans-le-cloud-turso)). Différence avec le [mode LAN](#mode-lan-et-pin) : le LAN exige le PC allumé et le téléphone sur le même réseau, avec toutes les fonctions ; la version mobile marche partout, en lecture seule, via Turso.
 
 - Au premier lancement, elle demande seulement l'URL et le jeton Turso, enregistrés sur le téléphone. L'écran « Connexion » permet de les modifier ou de les effacer.
 - Crée un jeton en lecture seule : `turso db tokens create <base> --read-only`.

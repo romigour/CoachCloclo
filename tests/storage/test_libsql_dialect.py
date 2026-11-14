@@ -48,3 +48,22 @@ def test_local_file_migrations_and_rollback(engine):
         assert len(db.exec(select(Goal)).all()) == 1
     with engine.connect() as c:
         assert c.execute(text("select count(*) from goal")).scalar() == 1
+
+
+def test_remote_pool_is_queue_pool():
+    from sqlalchemy import pool
+
+    d = create_engine("sqlite+libsql://example.turso.io?secure=true").dialect
+    assert d.get_pool_class(make_url("sqlite+libsql://example.turso.io?secure=true")) is pool.QueuePool
+
+
+def test_remote_engine_options():
+    from sqlalchemy import pool
+
+    from coach.storage.libsql_dialect import remote_engine
+
+    e = remote_engine("libsql://example.turso.io", "tok")
+    assert isinstance(e.pool, pool.QueuePool)
+    assert e.pool._pre_ping is True
+    assert e.pool._recycle == 60
+    assert e.dialect.create_connect_args(e.url) == (["https://example.turso.io"], {})

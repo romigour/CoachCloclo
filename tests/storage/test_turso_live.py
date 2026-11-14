@@ -12,13 +12,14 @@ Format : dialecte maison `coach.storage.libsql_dialect` (paquet `libsql`, roues 
   - Non vérifié hors réseau : que `libsql.connect("https://<hôte>", auth_token=...)` accepte le mode distant pur."""
 
 import os
+from concurrent.futures import ThreadPoolExecutor
 import time
 from datetime import date, timedelta
 
 import pytest
-from sqlmodel import SQLModel, create_engine, delete, select
+from sqlmodel import SQLModel, delete, select
 
-import coach.storage.libsql_dialect  # noqa: F401  (enregistre sqlite+libsql)
+from coach.storage.libsql_dialect import remote_engine
 from coach.plan import repo as repo_mod
 from coach.plan.models import Activity, Goal
 from coach.plan.repo import Repo
@@ -37,11 +38,7 @@ _BASE_ID = 9_000_000_000  # ids d'activités d'essai, nettoyés après chaque te
 
 def _remote_engine():
     """Moteur sur la base distante : même logique que `make_engine` (création + migrations)."""
-    host = URL.split("://", 1)[-1].rstrip("/")
-    engine = create_engine(
-        f"sqlite+libsql://{host}?secure=true",
-        connect_args={"auth_token": TOKEN},
-    )
+    engine = remote_engine(URL, TOKEN)
     SQLModel.metadata.create_all(engine)
     repo_mod._migrate(engine)
     return engine
@@ -87,3 +84,12 @@ def test_turso_stats_latency(engine):
     print(f"all_activities + races : {elapsed:.2f} s")
     assert elapsed < 2
 
+
+
+def test_turso_concurrent_reads(engine):
+    repo = Repo(engine)
+    with repo.transaction() as db:
+        db.add_all(make_activity(garmin_activity_id=_BASE_ID + i) for i in range(50))
+    with ThreadPoolExecutor(8) as ex:
+        results = list(ex.map(lambda _: len(repo.all_activities()), range(32)))
+    assert len(set(results)) == 1 and results[0] >= 50

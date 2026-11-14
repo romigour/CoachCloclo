@@ -1,6 +1,6 @@
 # CoachCloclo
 
-Application locale qui génère tes plans d'entraînement running/trail à partir de tes données Garmin, avec Claude. Tout tourne sur ta machine ; tes données ne quittent pas ton ordinateur (hormis les appels à Garmin et à Claude).
+Application locale qui génère tes plans d'entraînement running/trail à partir de tes données Garmin, avec Claude. Tout tourne sur ta machine ; par défaut, tes données ne quittent pas ton ordinateur (hormis les appels à Garmin et à Claude). Tu peux en option les stocker dans le cloud, sur ta propre base Turso, pour retrouver les mêmes données sur deux PC (voir [Stockage dans le cloud](#stockage-dans-le-cloud-turso)).
 
 La page **Stats** (page d'accueil dès que des activités sont importées) donne une vue d'ensemble de toutes tes activités Garmin : chiffres clés, régularité, volume, progression en course, records et compétitions, avec des filtres par période et par sport. Elle ne demande pas d'objectif : la synchronisation importe tes activités dès que Garmin est connecté, puis l'historique complet est importé en arrière-plan (reprise possible après une interruption, et « Réimporter l'historique » dans les Réglages).
 
@@ -48,7 +48,7 @@ La commande `coachcloclo` est un alias de `coach`.
 
 ## Ce que vérifie `coach doctor`
 
-Python (>= 3.12), bibliothèque `garminconnect`, CLI `claude` installé, connexion Claude valide, tokens Garmin valides, dossier de données accessible en écriture, port 8765 libre. `--fix` corrige ce qui peut l'être : installation du CLI Claude, connexion Claude (lance `claude` en interactif ; connecte-toi puis tape `/exit`), connexion Garmin (`coach login-garmin`), création du dossier ; puis il revérifie. En mode clé API, la connexion Claude se règle dans les réglages de l'app. `--offline` saute les vérifications Claude et Garmin.
+Python (>= 3.12), bibliothèque `garminconnect`, CLI `claude` installé, connexion Claude valide, tokens Garmin valides, dossier de données accessible en écriture, base cloud joignable (seulement si le stockage cloud est activé), port 8765 libre. `--fix` corrige ce qui peut l'être : installation du CLI Claude, connexion Claude (lance `claude` en interactif ; connecte-toi puis tape `/exit`), connexion Garmin (`coach login-garmin`), création du dossier ; puis il revérifie. En mode clé API, la connexion Claude se règle dans les réglages de l'app. `--offline` saute les vérifications Claude, Garmin et cloud.
 
 ## Mode LAN et PIN
 
@@ -68,7 +68,45 @@ Dossier de données (surchargeable avec `COACH_HOME`) :
 - macOS : `~/Library/Application Support/CoachCloclo`
 - Linux : `~/.local/share/CoachCloclo`
 
-Il contient `coach.db` (base SQLite), `settings.json` (réglages, hash du PIN) et `garmin/` (tokens Garmin). Les tokens ne sont jamais envoyés ailleurs que chez Garmin ; ne partage pas ce dossier.
+Par défaut (mode local), il contient `coach.db` (base SQLite), `settings.json` (réglages, hash du PIN) et `garmin/` (tokens Garmin). Les tokens ne sont jamais envoyés ailleurs que chez Garmin ; ne partage pas ce dossier.
+
+En mode cloud, tes données (séances, plan, historique, état de synchro) vont dans ta base Turso et `coach.db` disparaît du PC. Restent sur chaque PC, jamais envoyés dans le cloud : les tokens Garmin, la connexion Claude et la clé API, le PIN, le réglage LAN, les logs, et l'URL et le jeton Turso eux-mêmes.
+
+## Stockage dans le cloud (Turso)
+
+Option pour retrouver les mêmes données sur plusieurs PC (maison, travail). Elle utilise ta propre base [Turso](https://turso.tech) ; c'est gratuit pour un usage personnel.
+
+### Mise en place
+
+1. Crée un compte sur turso.tech.
+2. Crée une base, dans une région proche de toi.
+3. Crée un jeton d'accès limité à cette seule base.
+4. Dans CoachCloclo, ouvre Réglages → Stockage des données, colle l'URL `libsql://…` et le jeton, puis active le stockage cloud.
+5. Sur le 2ᵉ PC, fais pareil avec la même URL et le même jeton : l'app détecte que la base contient déjà des données et te demande de confirmer. Elle adopte alors le cloud : les données de ce 2ᵉ PC ne sont pas envoyées dans le cloud, mais son ancienne base est gardée dans le dossier de données sous le nom `coach.db.bak`.
+   Si des séances de ce PC sont déjà sur ta montre, la demande de confirmation l'indique : elles n'en seront pas retirées. Retire d'abord ce plan de la montre si tu n'en veux plus.
+
+### Ce qui se passe
+
+- À l'activation sur une base cloud vide, tes données locales sont copiées dans le cloud. Les fichiers locaux ne sont supprimés qu'après vérification de la copie (même nombre de lignes dans chaque table).
+- « Revenir au stockage local » recopie les données du cloud sur ce PC. La base cloud est conservée : tes autres PC continuent de l'utiliser.
+- « Effacer mes données du cloud » ramène d'abord ce PC en local (les données sont recopiées ici), puis vide la base cloud. Les autres PC devront eux aussi revenir en local.
+- Pour changer de base cloud, reviens d'abord au stockage local, puis active la nouvelle.
+- En mode cloud, l'app a besoin du réseau. Si la base est injoignable, elle l'indique ; `coach doctor` vérifie aussi cet accès.
+- La synchro Garmin ne tourne que sur un PC à la fois : un autre PC qui essaie affiche « Synchronisation en cours sur un autre PC ».
+- Si un PC a une version de l'app trop ancienne pour la base, il demande de mettre à jour CoachCloclo.
+- Restent sur chaque PC : tokens Garmin, connexion Claude, clé API, PIN, mode LAN, et le jeton Turso.
+- Si un fichier local n'a pas pu être supprimé ou renommé pendant la bascule (fichier bloqué par un antivirus, par exemple), l'app s'en occupe au démarrage suivant en mode cloud. Un `coach.db` resté là n'est jamais supprimé : il est renommé en `coach.db.bak`.
+- Une bascule attend que l'app soit au repos : pendant une synchro, un import ou une génération de plan, elle répond « Une opération est en cours, réessaie dans un instant. »
+
+### Si la base cloud a disparu
+
+Si la base Turso est définitivement perdue (supprimée, compte fermé), « Revenir au stockage local » ne peut plus rien recopier. Pour repartir en local à la main :
+
+1. Ferme CoachCloclo.
+2. Dans `settings.json` du dossier de données (voir « Données et tokens »), remplace `"storage_mode": "turso"` par `"storage_mode": "local"`.
+3. Relance CoachCloclo : il repart sur `coach.db`, ou sur une base vide s'il n'y en a pas (le cas normal en mode cloud).
+
+Les données du cloud sont alors perdues pour ce PC. Si ce PC avait adopté le cloud, son ancienne base est dans `coach.db.bak` : renomme-la en `coach.db` (app fermée) pour la retrouver, telle qu'elle était avant l'adoption.
 
 ## Usage de Claude
 

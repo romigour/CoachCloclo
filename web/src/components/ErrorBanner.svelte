@@ -66,6 +66,9 @@
       {#if code === "llm_unavailable" && setupAvailable}
         <a href="#/welcome">Connecte Claude</a>
       {/if}
+      {#if code === "schema_too_new" || code === "cloud_unreachable"}
+        <a href="#/setup">Ouvrir les Réglages</a>
+      {/if}
     </div>
   {/if}
 {/if}

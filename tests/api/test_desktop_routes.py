@@ -53,8 +53,8 @@ class FakeClaude:
 
 
 @pytest.fixture(autouse=True)
-def _home(coach_home):
-    save_state(HistoryState(status="done"))
+def _home(coach_home, repo):
+    save_state(repo, HistoryState(status="done"))
     return coach_home
 
 

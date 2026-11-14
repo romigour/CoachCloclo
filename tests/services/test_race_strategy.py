@@ -5,6 +5,7 @@ import pytest
 
 from coach.analysis.race_plan import AidStation, RaceSettings
 from coach.garmin.port import FakeGarminClient, GarminUnavailable, Metrics
+from coach.plan.models import GpxFile
 from coach.services import CoachError
 from coach.llm.provider import FakeLLMProvider
 from coach.services.goals import GoalError, GoalInput, add_goal, remove_goal
@@ -48,6 +49,12 @@ def make_goal(repo, garmin, *, kind="trail", distance_km=10, gpx="trail_wpt.gpx"
         gpx=(FIXTURES / gpx).read_bytes() if gpx else None,
     )
     return add_goal(repo, garmin, FakeLLMProvider([]), data)[0]
+
+
+def _drop_gpx(repo, goal):
+    with repo.transaction() as db:
+        row = db.get(GpxFile, goal.id)
+        db.delete(row)
 
 
 def set_target(repo, goal, seconds, source="user"):
@@ -115,7 +122,7 @@ def test_reimport_replaces_stations(repo, coach_home, garmin):
 
 def test_missing_gpx_file_warns(repo, coach_home, garmin):
     goal = make_goal(repo, garmin)
-    Path(goal.gpx_path).unlink()
+    _drop_gpx(repo, goal)
     view = get_race_view(repo, garmin, goal.id)
     assert "Fichier GPX introuvable : découpage sans profil" in view.plan.warnings
     assert view.profile is None
@@ -226,7 +233,7 @@ def test_station_beyond_distance_message_in_french(repo, coach_home, garmin):
 def test_station_beyond_distance_ignored_on_read(repo, coach_home, garmin):
     goal = make_goal(repo, garmin, distance_km=9)
     save_settings(repo, garmin, goal.id, RaceSettings(aid_stations=[AidStation(km=9.5, name="X")]))
-    Path(goal.gpx_path).unlink()
+    _drop_gpx(repo, goal)
     view = get_race_view(repo, garmin, goal.id)
     assert "Ravito « X » au-delà de la distance : ignoré" in view.plan.warnings
     assert view.plan.aid_passages == [] and [s.name for s in view.settings.aid_stations] == ["X"]
@@ -299,3 +306,11 @@ def test_withdraw_race_garmin_error_raises(repo, coach_home, garmin):
     strategy = repo.race_strategy(goal.id)
     # la planification est retirée, le workout reste à supprimer
     assert (strategy.garmin_workout_id, strategy.garmin_schedule_id) == (view.workout_id, None)
+
+
+def test_race_strategy_reads_gpx_from_db(repo, coach_home, garmin):
+    goal = make_goal(repo, garmin)
+    assert repo.gpx(goal.id) is not None
+    view = get_race_view(repo, garmin, goal.id)
+    assert view.profile is not None
+    assert [s.name for s in view.settings.aid_stations] == ["Ravito Col"]

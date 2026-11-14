@@ -4,6 +4,7 @@
   import ErrorBanner from "../components/ErrorBanner.svelte";
   import GarminLogin from "../components/GarminLogin.svelte";
   import LanSettings from "../components/LanSettings.svelte";
+  import StorageSettings from "../components/StorageSettings.svelte";
   import UpdateSettings from "../components/UpdateSettings.svelte";
   import ThemeSettings from "../components/ThemeSettings.svelte";
   import Icon from "../components/Icon.svelte";
@@ -126,6 +127,8 @@
 <UpdateSettings />
 
 <LanSettings />
+
+<StorageSettings />
 
 <section class="card stack">
   <h2>Historique Garmin</h2>

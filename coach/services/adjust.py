@@ -7,7 +7,6 @@ from sqlmodel import Session as DbSession, select
 
 from coach.analysis.laps import StepComparison
 from coach.analysis.zones import Zones
-from coach.config import load_settings, save_settings
 from coach.garmin.port import GarminPort
 from coach.llm.client import ask_structured
 from coach.llm.prompts import SYSTEM_PROMPT, adjustment_estimates, build_adjustment_prompt, estimate_floors
@@ -140,6 +139,7 @@ def request_adjustment(
     """
     from coach.services.goals import GoalError  # import tardif : goals importe ce module
     from coach.services.plans import _active_cycle
+    from coach.services.sync import load_sync_state, save_sync_state  # import tardif : sync importe ce module
 
     cycle = _active_cycle(repo)
     if not cycle.plan_accepted:
@@ -150,7 +150,7 @@ def request_adjustment(
     )
     with repo.transaction() as db:
         proposal_id = save_proposal(db, adj)
-    settings = load_settings()
-    settings.proposal_due = False
-    save_settings(settings)
+    state = load_sync_state(repo)
+    state.proposal_due = False
+    save_sync_state(repo, state)
     return proposal_id

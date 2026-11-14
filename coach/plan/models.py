@@ -225,3 +225,25 @@ class RaceStrategy(SQLModel, table=True):
     export_error: str | None = None
     # Empreinte (settings_json + basis_json) du plan au dernier export réussi
     exported_hash: str | None = None
+
+
+class AppState(SQLModel, table=True):
+    """Paires clé/valeur JSON (version de schéma, historique, synchro, marqueur de copie)."""
+
+    key: str = Field(primary_key=True)
+    value_json: str
+
+
+class GpxFile(SQLModel, table=True):
+    """Fichier GPX d'un objectif."""
+
+    goal_id: int = Field(primary_key=True)
+    data: bytes
+
+
+class GarminLock(SQLModel, table=True):
+    """Verrou de synchronisation Garmin entre plusieurs PC (une seule ligne, id = 1)."""
+
+    id: int = Field(default=1, primary_key=True)
+    holder: str
+    expires_at: dt.datetime

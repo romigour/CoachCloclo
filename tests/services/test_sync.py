@@ -4,14 +4,13 @@ from datetime import date, datetime, timedelta
 import pytest
 from sqlmodel import select
 
-from coach.config import load_settings
 from coach.garmin.port import ActivitySummary, FakeGarminClient, LapSummary, Metrics
 from coach.llm.provider import FakeLLMProvider, LLMUsageLimit
 from coach.llm.schemas import AdjustmentResponse, Change
 from coach.plan.models import Activity, Cycle, Event, Proposal
 from coach.services.events import delete_event
 from tests.llm.factories import make_session
-from coach.services.sync import SyncResult, sync
+from coach.services.sync import SyncResult, SyncState, load_sync_state, save_sync_state, sync
 from tests.plan.factories import make_cycle, make_db_session, make_goal
 
 NOW = datetime(2026, 11, 4, 8, 0)
@@ -87,7 +86,7 @@ def test_sync_matches_and_creates_proposal(repo, coach_home, fake_garmin, accept
     pending = repo.pending_proposal()
     assert r.proposal_id == pending.id
     assert pending.analysis == "Tout va bien" and json.loads(pending.changes_json) == []
-    assert load_settings().last_sync_at == NOW
+    assert load_sync_state(repo).last_sync_at == NOW
 
 
 def test_sync_without_news_creates_no_proposal(repo, coach_home, fake_garmin, accepted_plan):
@@ -115,7 +114,7 @@ def test_llm_failure_keeps_matching(repo, coach_home, fake_garmin, accepted_plan
         sync(repo, fake_garmin, FailingLLM(LLMUsageLimit()), now=NOW)
     assert any(s.status == "done" for s in repo.sessions(accepted_plan.id))
     assert repo.activity_by_garmin_id(1).session_id is not None
-    assert load_settings().last_sync_at == NOW
+    assert load_sync_state(repo).last_sync_at == NOW
     assert repo.pending_proposal() is None
 
 
@@ -174,19 +173,17 @@ def test_first_sync_window_is_56_days(repo, coach_home, accepted_plan):
 def test_proposal_retried_after_llm_failure(repo, coach_home, fake_garmin, accepted_plan):
     with pytest.raises(LLMUsageLimit):
         sync(repo, fake_garmin, FailingLLM(LLMUsageLimit()), now=NOW)
-    assert load_settings().proposal_due is True
+    assert load_sync_state(repo).proposal_due is True
     llm = FakeLLMProvider([adjustment_json()])
     r = sync(repo, fake_garmin, llm, now=NOW + timedelta(hours=1))
     assert r.matched == 0 and r.proposal_id is not None and len(llm.calls) == 1
-    assert load_settings().proposal_due is False
+    assert load_sync_state(repo).proposal_due is False
     r3 = sync(repo, fake_garmin, llm, now=NOW + timedelta(hours=2))
     assert r3.proposal_id is None and len(llm.calls) == 1
 
 
 def test_overlap_window_two_days(repo, coach_home, accepted_plan):
-    from coach.config import Settings, save_settings
-
-    save_settings(Settings(last_sync_at=datetime(2026, 11, 3, 8, 0)))
+    save_sync_state(repo, SyncState(last_sync_at=datetime(2026, 11, 3, 8, 0)))
     inside = run_summary(garmin_id=20, d=date(2026, 11, 1))
     outside = run_summary(garmin_id=21, d=date(2026, 10, 31))
     garmin = FakeGarminClient(metrics=METRICS, activities=[inside, outside], today=date(2026, 11, 4))
@@ -277,7 +274,7 @@ def test_sync_skips_proposal_during_open_injury(repo, coach_home, fake_garmin, a
     llm = FakeLLMProvider([adjustment_json()])
     r = sync(repo, fake_garmin, llm, now=NOW)
     assert r.matched == 1 and r.proposal_id is None and llm.calls == []
-    assert load_settings().proposal_due is True
+    assert load_sync_state(repo).proposal_due is True
 
 
 def test_deleting_open_injury_resumes_sync_proposals(repo, coach_home, fake_garmin, accepted_plan):
@@ -285,7 +282,7 @@ def test_deleting_open_injury_resumes_sync_proposals(repo, coach_home, fake_garm
     assert sync(repo, fake_garmin, FakeLLMProvider([adjustment_json()]), now=NOW).proposal_id is None
     delete_event(repo, injury.id)
     r = sync(repo, fake_garmin, FakeLLMProvider([adjustment_json()]), now=NOW)
-    assert r.proposal_id is not None and load_settings().proposal_due is False
+    assert r.proposal_id is not None and load_sync_state(repo).proposal_due is False
 
 
 # --- clôture des objectifs et du cycle ---------------------------------------------------------
@@ -325,7 +322,7 @@ def test_sync_closes_cycle_after_principal(repo, coach_home, fake_garmin):
         assert db.get(Proposal, old.id).status == "stale"
     assert r.proposal_id is None and llm.calls == [] and repo.pending_proposal() is None
     assert [g.race_date for g in repo.upcoming_goals()] == [date(2027, 3, 7)]
-    assert load_settings().proposal_due is False
+    assert load_sync_state(repo).proposal_due is False
 
 
 def test_race_day_activity_still_matched_before_close(repo, coach_home, fake_garmin):

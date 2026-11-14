@@ -175,3 +175,48 @@ def test_fix_claude_auth_without_cli_fails():
 def test_fix_claude_auth_not_fixable():
     c = Check(name="claude_auth", ok=False, detail="", fix_hint="x", fixable=False)
     assert fix(c) is False
+
+
+def _turso(coach_home):
+    from coach.config import load_settings, save_settings
+
+    s = load_settings()
+    s.storage_mode, s.turso_url, s.turso_token = "turso", "libsql://x.turso.io", "t"
+    save_settings(s)
+
+
+def test_doctor_checks_cloud_when_enabled(coach_home, monkeypatch):
+    from coach.storage.cloud_errors import CloudUnreachable
+
+    _turso(coach_home)
+
+    def boom(source):
+        raise CloudUnreachable("Base cloud injoignable")
+
+    monkeypatch.setattr("coach.doctor.probe", boom)
+    checks = run_checks(live=False, which=lambda n: "/x")
+    c = by_name(checks, "cloud_db")
+    assert not c.ok and "injoignable" in c.detail
+
+
+def test_doctor_cloud_ok_when_probe_succeeds(coach_home, monkeypatch):
+    from unittest.mock import MagicMock
+
+    _turso(coach_home)
+    monkeypatch.setattr("coach.doctor.probe", lambda source: MagicMock())
+    assert by_name(run_checks(live=False, which=lambda n: "/x"), "cloud_db").ok
+
+
+def test_doctor_no_cloud_check_in_local_mode(coach_home):
+    assert "cloud_db" not in [c.name for c in run_checks(live=False, which=lambda n: "/x")]
+
+
+def test_doctor_cloud_check_skipped_offline(coach_home, monkeypatch):
+    _turso(coach_home)
+
+    def boom(source):
+        raise AssertionError("pas d'appel réseau hors ligne")
+
+    monkeypatch.setattr("coach.doctor.probe", boom)
+    c = by_name(run_checks(live=False, offline=True, which=lambda n: "/x"), "cloud_db")
+    assert c.ok and c.detail == "non vérifié (hors ligne)"

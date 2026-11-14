@@ -1,7 +1,9 @@
 """Application FastAPI : routes JSON sous /api, protection par PIN en mode LAN."""
 
+import functools
 import ipaddress
 import json
+import logging
 import secrets
 import socket
 import threading
@@ -16,14 +18,17 @@ from fastapi.exceptions import RequestValidationError
 from fastapi import APIRouter, Depends, FastAPI, File, Form, Query, Request, UploadFile
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field, ValidationError, model_validator
+from pydantic import BaseModel, Field, StringConstraints, ValidationError, model_validator
+from sqlalchemy.engine import Engine
+from sqlalchemy.exc import DBAPIError
 from sqlmodel import select
+from starlette.concurrency import run_in_threadpool
 
 from coach.analysis.compliance import activity_types_for
 from coach.analysis.gpx import GpxError
 from coach.api.desktop_routes import desktop_router
 from coach.api.deps import get_garmin, get_llm, is_loopback, verify_pin
-from coach.config import Settings, db_path, load_settings, save_settings, tokenstore_dir
+from coach.config import Settings, data_dir, load_settings, save_settings, tokenstore_dir
 from coach.desktop.context import Desktop
 from coach.garmin.client import GarminClient
 from coach.garmin.port import (
@@ -42,7 +47,7 @@ from coach.llm.provider import (
 )
 from coach.plan import calendar
 from coach.plan.models import Activity, Cycle, Event, Goal, Proposal, Session
-from coach.plan.repo import Repo, make_engine
+from coach.plan.repo import SCHEMA_VERSION, Repo, SchemaTooNew
 from coach.services import CoachError
 from coach.services import garmin_export as export
 from coach.services.goals import (
@@ -60,6 +65,22 @@ from coach.analysis.race_plan import RaceSettings
 from coach.services import race_strategy
 from coach.services.adjust import request_adjustment
 from coach.services.events import EventInput, EventResult, create_event, delete_event, resume_injury
+from coach.storage.legacy import import_legacy_files
+from coach.storage.lock import SYNC_TTL, GarminLocked, LockedGarmin, garmin_lock, held_elsewhere, machine_id
+from coach.storage.cloud_errors import UNREACHABLE_MSG, CloudUnreachable, is_cloud_failure
+from coach.storage.source import DataSource, LocalSource, same_turso_url, source_from_settings
+from coach.storage.switch import (
+    Adopted,
+    CloudStatus,
+    NeedsConfirmation,
+    OpenedSource,
+    delete_local_files,
+    disable_cloud,
+    enable_cloud,
+    probe,
+    sessions_on_watch,
+    wipe_cloud,
+)
 from coach.services.history import HistoryRunner, load_state, recover_orphan
 from coach.services.laps import fetch_laps, latest_zones, session_comparison
 from coach.services.sync import sync
@@ -74,6 +95,26 @@ MAX_GPX_BYTES = 10 * 1024 * 1024
 LOCAL_HOSTS = {"127.0.0.1", "localhost", "[::1]"}
 SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
 WEB_DIST = Path(__file__).resolve().parent.parent / "web_dist"
+SCHEMA_TOO_NEW_MSG = "Mets à jour CoachCloclo sur ce PC"
+STORAGE_RETRY_S = 10  # délai entre deux essais de réouverture d'une base cloud indisponible
+SCHEMA_CHECK_S = 60  # en mode cloud, relecture de la version du schéma (un autre PC a pu mettre à jour)
+STORAGE_BUSY_MSG = "Une opération est en cours, réessaie dans un instant."
+# routes utiles sans base de données : réglages du stockage, statut, PIN, réglages, connexion Garmin, bureau
+NO_DB_PATHS = (
+    "/api/storage",
+    "/api/status",
+    "/api/version",
+    "/api/auth/pin",
+    "/api/settings",
+    "/api/garmin/",
+    "/api/setup/",
+    "/api/update",
+    "/api/lan",
+)
+# routes qui ne lisent jamais la base : seules les autres comptent comme requêtes en cours (bascule)
+DB_FREE_PATHS = tuple(p for p in NO_DB_PATHS if p != "/api/status")
+
+log = logging.getLogger(__name__)
 
 
 class LoginBody(BaseModel):
@@ -102,6 +143,12 @@ class SettingsBody(BaseModel):
     llm_mode: Literal["cli", "api"]
     anthropic_api_key: str | None = None
     anthropic_model: str | None = None
+
+
+class CloudBody(BaseModel):
+    url: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
+    token: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
+    replace_local: bool = False
 
 
 class RaceBody(BaseModel):
@@ -140,6 +187,10 @@ def _activity_row(a: Activity) -> dict:
 
 def _error(status: int, code: str, detail) -> JSONResponse:
     return JSONResponse(status_code=status, content={"code": code, "detail": detail})
+
+
+def _local_only() -> JSONResponse:
+    return _error(403, "local_only", "Action possible seulement depuis l'ordinateur où tourne CoachCloclo")
 
 
 def _invalid(errors: list[dict], prefix: tuple = ()) -> JSONResponse:
@@ -238,6 +289,7 @@ def _register_errors(app: FastAPI) -> None:
 
     add(GarminAuthRequired, 401, "garmin_auth", "Connexion Garmin requise")
     add(GarminRateLimited, 429, "garmin_rate_limited", "Garmin limite les requêtes, réessaie plus tard")
+    add(GarminLocked, 409, "garmin_locked")  # avant GarminUnavailable, dont elle hérite
     add(GarminUnavailable, 502, "garmin_unavailable")
     add(LLMUsageLimit, 429, "llm_limit", "Limite d'usage de Claude atteinte")
     add(LLMUnavailable, 503, "llm_unavailable")
@@ -246,6 +298,19 @@ def _register_errors(app: FastAPI) -> None:
     add(LLMError, 502, "llm_error")  # après les sous-classes (la plus précise l'emporte)
     add(CoachError, 422, "invalid")  # inclut GoalError et ExportError
     add(GpxError, 422, "invalid_gpx")
+    add(SchemaTooNew, 409, "schema_too_new", SCHEMA_TOO_NEW_MSG)
+    add(CloudUnreachable, 503, "cloud_unreachable", UNREACHABLE_MSG)
+
+    async def database_handler(request: Request, exc: Exception) -> JSONResponse:
+        # libsql lève des ValueError brutes : seules les pannes réseau en mode cloud sont traduites,
+        # toute autre erreur (bug, erreur SQL, mode local) reste une erreur serveur.
+        if request.app.state.cloud and is_cloud_failure(exc):
+            log.warning("Base cloud injoignable : %s", type(exc).__name__)
+            return _error(503, "cloud_unreachable", UNREACHABLE_MSG)
+        raise exc
+
+    app.add_exception_handler(ValueError, database_handler)  # après CoachError et GpxError, plus précises
+    app.add_exception_handler(DBAPIError, database_handler)
 
     async def validation_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
         return _invalid(exc.errors())
@@ -297,23 +362,125 @@ def create_app(
     clock: Callable[[], float] = time.monotonic,
     extra_hosts: set[str] | frozenset[str] = frozenset(),
     desktop: Desktop | None = None,
+    source_for: Callable[[Settings], DataSource] = source_from_settings,
 ) -> FastAPI:
-    """`login_client` (start_login/finish_login) et `clock` sont injectables pour les tests."""
+    """`login_client` (start_login/finish_login), `clock` et `source_for` sont injectables pour les tests."""
     if lan and not load_settings().pin_hash:
         raise ValueError("Le mode LAN exige un PIN : lance `coach start --lan` pour en définir un")
 
     app = FastAPI(title="CoachCloclo")
-    app.state.garmin_factory = garmin_factory
+    holder = machine_id()
+    # chaque écriture Garmin passe par le verrou entre PC, sur la base courante (bascule à chaud)
+    app.state.garmin_factory = lambda: LockedGarmin(garmin_factory(), lambda: app.state.repo, holder)
     app.state.llm_factory = llm_factory
-    app.state.repo = repo or Repo(make_engine(db_path()))
+    app.state.repo = None  # None : base cloud indisponible (voir `storage_error`)
+    app.state.history = None
+    app.state.storage_error = None  # (statut HTTP, code, message) tant que la base est indisponible
+    app.state.storage_retry_at = 0.0
+    app.state.schema_check_at = 0.0
+    storage_lock = threading.Lock()  # une seule bascule ou réouverture de base à la fois
+    # requêtes en cours sur la base, et bascule en cours : une bascule attend que la base soit au repos,
+    # et aucune requête ne démarre sur l'ancienne base pendant la bascule
+    activity_lock = threading.Lock()
+    activity = {"in_flight": 0, "switching": False}
+
+    def install_repo(new: Repo, cloud: bool) -> None:
+        """Branche l'app sur `new` ; l'import d'historique suit la base courante."""
+        app.state.repo = new
+        app.state.cloud = cloud
+        app.state.history = HistoryRunner(new, app.state.garmin_factory, holder)
+        app.state.storage_error = None
+        app.state.schema_check_at = clock() + SCHEMA_CHECK_S  # version contrôlée à l'ouverture
+        # un import « en cours » dans la nouvelle base a été interrompu (sauf s'il tourne sur un autre PC)
+        recover_orphan(new, holder)
+
+    def open_storage() -> bool:
+        """Ouvre la base des réglages. En mode cloud, une panne laisse l'app démarrée mais « indisponible »."""
+        settings = load_settings()
+        app.state.cloud = settings.storage_mode == "turso"
+        try:
+            engine = source_for(settings).engine()
+        except Exception as exc:
+            if not app.state.cloud:
+                raise
+            if isinstance(exc, SchemaTooNew):
+                app.state.storage_error = (409, "schema_too_new", SCHEMA_TOO_NEW_MSG)
+            elif is_cloud_failure(exc):
+                app.state.storage_error = (503, "cloud_unreachable", UNREACHABLE_MSG)
+            else:
+                raise
+            app.state.storage_retry_at = clock() + STORAGE_RETRY_S
+            log.warning("Base cloud indisponible : %s", exc)
+            return False
+        install_repo(Repo(engine), app.state.cloud)
+        return True
+
+    def retry_storage() -> None:
+        """Nouvel essai d'ouverture de la base cloud, au plus une fois par STORAGE_RETRY_S."""
+        if app.state.repo is not None or clock() < app.state.storage_retry_at:
+            return
+        if not storage_lock.acquire(blocking=False):
+            return
+        try:
+            if app.state.repo is None:
+                open_storage()
+        finally:
+            storage_lock.release()
+
+    def drop_repo_if_schema_too_new() -> bool:
+        """Mode cloud : un autre PC a pu mettre la base à jour. Relu au plus une fois par SCHEMA_CHECK_S.
+
+        Vrai si la base est désormais refusée (schéma plus récent) : l'app passe « indisponible »."""
+        current: Repo | None = app.state.repo
+        if current is None or not app.state.cloud or clock() < app.state.schema_check_at:
+            return False
+        if not storage_lock.acquire(blocking=False):  # bascule ou réouverture en cours
+            return False
+        try:
+            if app.state.repo is not current:
+                return False
+            app.state.schema_check_at = clock() + SCHEMA_CHECK_S
+            try:
+                row = current.get_state("schema_version")
+            except Exception as exc:
+                if not is_cloud_failure(exc):
+                    raise
+                return False  # panne réseau : la requête elle-même répondra 503
+            if row is None or row.get("v", 0) <= SCHEMA_VERSION:
+                return False
+            log.warning("Base cloud mise à jour par un autre PC (schéma %s)", row.get("v"))
+            app.state.repo = None
+            app.state.storage_error = (409, "schema_too_new", SCHEMA_TOO_NEW_MSG)
+            app.state.storage_retry_at = clock() + STORAGE_RETRY_S
+            current.engine.dispose()
+            return True
+        finally:
+            storage_lock.release()
+
+    def clean_leftover_files() -> None:
+        """Mode cloud ouvert : fichiers locaux restés d'une bascule (suppression ou renommage raté).
+
+        `coach.db` n'est jamais supprimé : ses données n'ont peut-être jamais été copiées (adoption dont le
+        renommage a échoué). Il devient `coach.db.bak` ; si le renommage échoue encore, il reste en place."""
+        try:
+            delete_local_files(data_dir(), keep_backup=True)
+        except OSError:
+            log.warning("Fichiers locaux restants non nettoyés (coach.db laissé en place)", exc_info=True)
+
+    if repo is not None:
+        install_repo(repo, cloud=False)
+    elif open_storage():
+        if app.state.cloud:
+            clean_leftover_files()
+        else:
+            import_legacy_files(app.state.repo, data_dir())  # reprise des fichiers d'une installation existante (idempotente)
+            recover_orphan(app.state.repo, holder)  # history.json repris peut être resté « en cours »
     app.state.mfa = {}  # login_id -> (état MFA, expiration) ; jamais renvoyé au client
     app.state.lan = lan
     app.state.sessions = set()
     app.state.pin_failures = 0
     app.state.pin_locked_until = 0.0
     pin_lock = threading.Lock()
-    recover_orphan()  # un import resté « en cours » a été interrompu par l'arrêt précédent
-    app.state.history = HistoryRunner(app.state.repo, garmin_factory)
     _register_errors(app)
 
     def get_repo(request: Request) -> Repo:
@@ -322,6 +489,31 @@ def create_app(
     RepoDep = Annotated[Repo, Depends(get_repo)]
     GarminDep = Annotated[GarminPort, Depends(get_garmin)]
     LLMDep = Annotated[LLMProvider, Depends(get_llm)]
+
+    @app.middleware("http")
+    async def storage_guard(request: Request, call_next):
+        # au plus près des routes : PIN, CSRF et hôte sont contrôlés avant
+        path = request.url.path
+        if path.startswith("/api/storage") and not is_loopback(request):
+            return _local_only()
+        if not path.startswith("/api") or path.startswith(DB_FREE_PATHS):
+            return await call_next(request)
+        with activity_lock:
+            if activity["switching"]:  # l'ancienne base est en train d'être quittée
+                return _error(409, "storage_busy", STORAGE_BUSY_MSG)
+            activity["in_flight"] += 1
+        try:
+            if not path.startswith(NO_DB_PATHS):
+                if await run_in_threadpool(drop_repo_if_schema_too_new):
+                    return _error(*app.state.storage_error)
+                if app.state.repo is None:
+                    await run_in_threadpool(retry_storage)
+                    if app.state.repo is None:
+                        return _error(*app.state.storage_error)
+            return await call_next(request)
+        finally:
+            with activity_lock:
+                activity["in_flight"] -= 1
 
     @app.middleware("http")
     async def require_pin(request: Request, call_next):
@@ -362,12 +554,29 @@ def create_app(
     # --- statut et authentification ---------------------------------------------------------
 
     @api.get("/status")
-    def status(repo: RepoDep):
+    def status():
         garmin = garmin_state(app.state.garmin_factory)
+        retry_storage()
+        repo: Repo | None = app.state.repo
+        if repo is None:  # base cloud indisponible : statut minimal, l'erreur pour le bandeau
+            _, code, detail = app.state.storage_error
+            return {
+                "garmin": garmin,
+                "llm_mode": load_settings().llm_mode,
+                "pending_proposal_id": None,
+                "cycle": None,
+                "goals": [],
+                "next_goal": None,
+                "past_goals": [],
+                "last_cycle": None,
+                "has_activities": False,
+                "history": {"status": "idle", "imported": 0, "error": None},
+                "storage": {"code": code, "detail": detail},
+            }
         cycle = repo.active_cycle()
         goals = repo.upcoming_goals()
         proposal = repo.pending_proposal()
-        history = load_state()
+        history = load_state(repo)
         # le thread peut ne pas avoir encore écrit son état : le runner fait foi
         history_status = "running" if app.state.history.running else history.status
         return {
@@ -386,6 +595,7 @@ def create_app(
                 "imported": history.imported,
                 "error": history.error,
             },
+            "storage": None,
         }
 
     @api.get("/version")
@@ -706,8 +916,9 @@ def create_app(
 
     @api.post("/sync")
     def post_sync(repo: RepoDep, garmin: GarminDep, llm: LLMDep):
-        result = sync(repo, garmin, llm, now=datetime.now(timezone.utc))
-        if load_state().status == "idle":  # premier lancement : import de l'historique complet
+        with garmin_lock(repo, holder, SYNC_TTL):
+            result = sync(repo, garmin, llm, now=datetime.now(timezone.utc))
+        if load_state(repo).status == "idle":  # premier lancement : import de l'historique complet
             app.state.history.start()
         return result
 
@@ -802,10 +1013,164 @@ def create_app(
         return {"status": "ok"}
 
     @api.post("/history/import")
-    def post_history_import():
+    def post_history_import(repo: RepoDep):
+        if held_elsewhere(repo, holder, datetime.now(timezone.utc)):
+            raise GarminLocked()
         if not app.state.history.start():
             return _error(409, "history_running", "Un import est déjà en cours")
         return {"status": "started"}
+
+    # --- stockage des données (réservé à ce PC : filtré par `storage_guard`) ----------------
+
+    def storage_view() -> CloudStatus:
+        s = load_settings()  # le jeton n'est jamais renvoyé
+        return CloudStatus(mode=s.storage_mode, turso_url=s.turso_url, has_turso_token=bool(s.turso_token))
+
+    def switch_refused() -> JSONResponse | None:
+        """Refus de bascule : la base changerait sous un import d'historique en cours."""
+        if app.state.history is not None and app.state.history.running:
+            return _error(409, "history_running", "Import de l'historique en cours : réessaie quand il sera terminé")
+        return None
+
+    def exclusive(route: Callable[..., object]) -> Callable[..., object]:
+        """Une seule bascule de stockage à la fois, base au repos (aucune requête ni import en cours)."""
+
+        @functools.wraps(route)
+        def wrapped(*args, **kwargs):
+            if not storage_lock.acquire(blocking=False):
+                return _error(409, "storage_busy", "Changement de stockage déjà en cours")
+            try:
+                with activity_lock:
+                    if activity["in_flight"] > 0:
+                        return _error(409, "storage_busy", STORAGE_BUSY_MSG)
+                    refused = switch_refused()
+                    if refused is not None:
+                        return refused
+                    activity["switching"] = True
+                try:
+                    return route(*args, **kwargs)
+                finally:
+                    with activity_lock:
+                        activity["switching"] = False
+            finally:
+                storage_lock.release()
+
+        return wrapped
+
+    def save_storage_settings(update: dict) -> None:
+        """Réglages relus juste avant l'écriture : seuls les champs du stockage changent."""
+        save_settings(load_settings().model_copy(update=update))
+
+    def adoption_warning(current: Repo) -> str:
+        detail = "Les données de ce PC seront remplacées par celles du cloud"
+        on_watch = sessions_on_watch(current.engine)
+        if on_watch:
+            detail += (
+                f". Attention : {on_watch} séance(s) de ce PC sont sur ta montre ; elles n'y seront pas retirées."
+                " Retire d'abord ce plan de la montre si besoin."
+            )
+        return detail
+
+    def enable(body: CloudBody):
+        settings = load_settings()
+        was_local = settings.storage_mode == "local"
+        if not was_local and not same_turso_url(settings.turso_url, body.url):
+            # une autre base adoptée sans copie ni marqueur pourrait être écrasée plus tard par un autre PC
+            return _error(409, "cloud_url_change", "Reviens d'abord au stockage local pour changer de base cloud.")
+        storage = {"storage_mode": "turso", "turso_url": body.url, "turso_token": body.token}
+        target = settings.model_copy(update=storage)
+        source = source_for(target)
+        try:
+            engine = probe(source)  # 1. SchemaTooNew -> 409 (gestionnaire global)
+        except CloudUnreachable as exc:
+            return _error(422, "cloud_unreachable", str(exc))
+        current: Repo | None = app.state.repo
+        adopted = False
+        if was_local and current is not None:
+            try:
+                result = enable_cloud(current.engine, OpenedSource(source.kind, engine), replace_local=body.replace_local)
+            except Exception:  # réseau, copie incomplète... : rien n'a changé de ce côté
+                log.exception("Transfert vers le cloud échoué")
+                engine.dispose()
+                return _error(422, "cloud_copy_failed", "Le transfert vers le cloud a échoué : tes données locales sont intactes.")
+            if isinstance(result, NeedsConfirmation):
+                engine.dispose()
+                return _error(409, "needs_confirmation", adoption_warning(current))
+            if isinstance(result, Adopted):
+                adopted, result = True, result.engine
+        else:
+            # déjà en mode cloud, même base (nouveau jeton, base indisponible) : jamais de copie
+            result = engine
+        save_storage_settings(storage)  # 3.
+        install_repo(Repo(result), cloud=True)  # 4.
+        if current is not None:
+            current.engine.dispose()  # libère coach.db avant sa suppression (Windows)
+        if was_local:
+            try:
+                # adoption : les données de ce PC ne sont pas dans le cloud, coach.db est gardé en coach.db.bak
+                delete_local_files(data_dir(), keep_backup=adopted)  # 5.
+            except OSError:
+                log.warning("Fichiers locaux non supprimés (encore ouverts ?)", exc_info=True)
+        return storage_view()
+
+    def back_to_local() -> Engine | JSONResponse:
+        """Recopie le cloud en local, puis bascule l'app ; renvoie le moteur cloud quitté."""
+        current: Repo | None = app.state.repo
+        if current is None:
+            return _error(503, "cloud_unreachable", UNREACHABLE_MSG)
+        storage = {"storage_mode": "local", "turso_url": None, "turso_token": None}
+        local = source_for(load_settings().model_copy(update=storage))
+        if not isinstance(local, LocalSource):
+            raise TypeError("source locale attendue")
+        try:
+            engine = disable_cloud(current.engine, local)  # 1.
+        except Exception as exc:
+            if is_cloud_failure(exc):
+                raise
+            log.exception("Retour en local échoué")
+            return _error(422, "local_copy_failed", "Le retour en local a échoué : tes données restent dans le cloud.")
+        save_storage_settings(storage)  # 2.
+        install_repo(Repo(engine), cloud=False)  # 3.
+        return current.engine
+
+    @api.get("/storage")
+    def get_storage() -> CloudStatus:
+        return storage_view()
+
+    @api.post("/storage/cloud")
+    @exclusive
+    def post_storage_cloud(body: CloudBody):
+        return enable(body)
+
+    @api.delete("/storage/cloud")
+    @exclusive
+    def delete_storage_cloud():
+        if load_settings().storage_mode == "local":
+            return storage_view()
+        left = back_to_local()
+        if isinstance(left, JSONResponse):
+            return left
+        left.dispose()
+        return storage_view()
+
+    @api.post("/storage/cloud/wipe")
+    @exclusive
+    def post_storage_wipe():
+        """Ce PC repasse en local (avec ses données), puis la base cloud est vidée pour tous les PC."""
+        if load_settings().storage_mode != "turso":
+            return _error(409, "not_cloud", "Le stockage dans le cloud n'est pas activé")
+        left = back_to_local()
+        if isinstance(left, JSONResponse):
+            return left
+        try:
+            wipe_cloud(left)
+        except Exception as exc:
+            if not is_cloud_failure(exc):
+                raise
+            return _error(503, "cloud_unreachable", "Ce PC est revenu en local, mais la base cloud n'a pas pu être vidée")
+        finally:
+            left.dispose()
+        return storage_view()
 
     app.include_router(api)
     if desktop is not None:

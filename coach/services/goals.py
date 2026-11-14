@@ -4,7 +4,6 @@ import json
 import re
 from collections.abc import Callable
 from datetime import date, timedelta
-from pathlib import Path
 from typing import Literal
 
 from pydantic import BaseModel, Field
@@ -12,7 +11,6 @@ from sqlmodel import Session as DbSession
 from sqlmodel import select
 
 from coach.analysis.gpx import GpxSummary, analyze_gpx
-from coach.config import data_dir
 from coach.garmin.port import GarminPort
 from coach.llm.prompts import NEW_GOAL_ID, fmt_duration
 from coach.llm.provider import LLMProvider
@@ -338,18 +336,13 @@ def _new_goal(data: GoalInput, summary: GpxSummary | None, cycle: Cycle) -> Goal
     )
 
 
-def _insert(db: DbSession, goal: Goal, gpx: bytes | None, written: list[Path]) -> Goal:
-    """Ajoute l'objectif et enregistre son GPX (chemin noté dans `written` pour l'annuler en cas d'échec)."""
+def _insert(repo: Repo, db: DbSession, goal: Goal, gpx: bytes | None) -> Goal:
+    """Ajoute l'objectif et son GPX dans la même transaction."""
     goal = Goal(**goal.model_dump())  # copie neuve : `goal` a pu être transmis à Claude
     db.add(goal)
     db.flush()  # obtient l'id
     if gpx is not None and goal.gpx_summary_json is not None:
-        path = data_dir() / "gpx" / f"{goal.id}.gpx"
-        path.parent.mkdir(parents=True, exist_ok=True)
-        written.append(path)
-        path.write_bytes(gpx)
-        goal.gpx_path = str(path)
-        db.add(goal)
+        repo.save_gpx(db, goal.id, gpx)
     return goal
 
 
@@ -387,17 +380,11 @@ def _create_first(repo: Repo, garmin: GarminPort, data: GoalInput, summary: GpxS
     cycle.plan_start, cycle.end_date = next_bounds(prev, today, [*others, new])
     new.plan_start = cycle.plan_start  # champ hérité, gardé cohérent
     cycle.recovery_from_goal_id = recovery_goal_id(repo, prev, today)
-    written: list[Path] = []
-    try:
-        with repo.transaction() as db:
-            db.add(cycle)
-            db.flush()
-            carry_open_injury(repo, db, prev, cycle.id)
-            goal = _insert(db, new, data.gpx, written)
-    except BaseException:
-        for path in written:
-            path.unlink(missing_ok=True)
-        raise
+    with repo.transaction() as db:
+        db.add(cycle)
+        db.flush()
+        carry_open_injury(repo, db, prev, cycle.id)
+        goal = _insert(repo, db, new, data.gpx)
     return goal
 
 
@@ -413,19 +400,13 @@ def add_goal(repo: Repo, garmin: GarminPort, llm: LLMProvider, data: GoalInput) 
     if data.race_date <= garmin.today():
         raise GoalError("La course doit être après aujourd'hui")
     new = _new_goal(data, summary, cycle)
-    written: list[Path] = []
-    try:
-        return _reshape(
-            repo, garmin, llm,
-            before=None,
-            after=new,
-            note=f"L'athlète a ajouté l'objectif {_describe(new)}. {_NOTE_END}",
-            write=lambda db: _insert(db, new, data.gpx, written),
-        )
-    except BaseException:
-        for path in written:
-            path.unlink(missing_ok=True)
-        raise
+    return _reshape(
+        repo, garmin, llm,
+        before=None,
+        after=new,
+        note=f"L'athlète a ajouté l'objectif {_describe(new)}. {_NOTE_END}",
+        write=lambda db: _insert(repo, db, new, data.gpx),
+    )
 
 
 def _write_goal(goal_id: int, update: dict) -> Callable[[DbSession], Goal]:

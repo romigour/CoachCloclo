@@ -5,7 +5,7 @@ from pydantic import ValidationError
 
 from sqlmodel import select
 
-from coach.config import load_settings, save_settings
+from coach.services.sync import SyncState, load_sync_state, save_sync_state
 from coach.llm.provider import FakeLLMProvider
 from coach.garmin.port import GarminAuthRequired, GarminRateLimited, GarminUnavailable
 from coach.plan.models import Event, Proposal, Session
@@ -223,12 +223,10 @@ def test_create_event_keeps_event_when_claude_fails(repo, coach_home, fake_garmi
 def test_request_adjustment_after_failure_succeeds(repo, coach_home, fake_garmin, accepted_plan):
     data = EventInput(kind="unavailable", start_date=date(2026, 11, 16), end_date=date(2026, 11, 18))
     create_event(repo, fake_garmin, FakeLLMProvider([]), data)
-    settings = load_settings()
-    settings.proposal_due = True
-    save_settings(settings)
+    save_sync_state(repo, SyncState(proposal_due=True))
     proposal_id = request_adjustment(repo, fake_garmin, FakeLLMProvider([adjustment_json()]))
     assert repo.pending_proposal().id == proposal_id
-    assert load_settings().proposal_due is False
+    assert load_sync_state(repo).proposal_due is False
 
 
 def test_fatigue_marks_session_missed(repo, coach_home, fake_garmin, accepted_plan):

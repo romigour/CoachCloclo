@@ -24,8 +24,9 @@ async function client(): Promise<Db> {
     });
     cached = { key, db, ready };
   }
-  await cached.ready;
-  return cached.db;
+  const current = cached;
+  await current.ready;
+  return current.db;
 }
 
 async function run<T>(fn: (db: Db) => Promise<T>): Promise<T> {

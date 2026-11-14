@@ -38,6 +38,10 @@ class Settings(BaseModel):
     last_sync_at: datetime | None = None
     proposal_due: bool = False
     lan_enabled: bool = False
+    # stockage : toujours local, jamais en base
+    storage_mode: Literal["local", "turso"] = "local"
+    turso_url: str | None = None
+    turso_token: str | None = None
 
 
 def load_settings() -> Settings:

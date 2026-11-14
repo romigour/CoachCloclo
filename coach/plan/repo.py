@@ -60,11 +60,15 @@ def _check_schema_version(engine: Engine) -> None:
         db.commit()
 
 
-def make_engine(path: Path) -> Engine:
-    """Moteur SQLite sur `path` ; crée les tables si besoin."""
-    engine = create_engine(f"sqlite:///{path}")
+def prepare_engine(engine: Engine) -> Engine:
+    """Contrôle de version, création des tables et migrations sur un moteur (local ou distant)."""
     _check_schema_version(engine)
     return engine
+
+
+def make_engine(path: Path) -> Engine:
+    """Moteur SQLite sur `path` ; crée les tables si besoin."""
+    return prepare_engine(create_engine(f"sqlite:///{path}"))
 
 
 def _add_columns(conn, table: str, columns: dict[str, str]) -> None:

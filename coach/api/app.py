@@ -23,7 +23,7 @@ from coach.analysis.compliance import activity_types_for
 from coach.analysis.gpx import GpxError
 from coach.api.desktop_routes import desktop_router
 from coach.api.deps import get_garmin, get_llm, is_loopback, verify_pin
-from coach.config import Settings, data_dir, db_path, load_settings, save_settings, tokenstore_dir
+from coach.config import Settings, data_dir, load_settings, save_settings, tokenstore_dir
 from coach.desktop.context import Desktop
 from coach.garmin.client import GarminClient
 from coach.garmin.port import (
@@ -42,7 +42,7 @@ from coach.llm.provider import (
 )
 from coach.plan import calendar
 from coach.plan.models import Activity, Cycle, Event, Goal, Proposal, Session
-from coach.plan.repo import Repo, make_engine
+from coach.plan.repo import Repo
 from coach.services import CoachError
 from coach.services import garmin_export as export
 from coach.services.goals import (
@@ -61,6 +61,7 @@ from coach.services import race_strategy
 from coach.services.adjust import request_adjustment
 from coach.services.events import EventInput, EventResult, create_event, delete_event, resume_injury
 from coach.storage.legacy import import_legacy_files
+from coach.storage.source import source_from_settings
 from coach.services.history import HistoryRunner, load_state, recover_orphan
 from coach.services.laps import fetch_laps, latest_zones, session_comparison
 from coach.services.sync import sync
@@ -306,8 +307,9 @@ def create_app(
     app = FastAPI(title="CoachCloclo")
     app.state.garmin_factory = garmin_factory
     app.state.llm_factory = llm_factory
-    app.state.repo = repo or Repo(make_engine(db_path()))
-    if repo is None:  # reprise des fichiers d'une installation existante (idempotente)
+    settings = load_settings()
+    app.state.repo = repo or Repo(source_from_settings(settings).engine())
+    if repo is None and settings.storage_mode == "local":  # reprise des fichiers d'une installation existante (idempotente)
         import_legacy_files(app.state.repo, data_dir())
     app.state.mfa = {}  # login_id -> (état MFA, expiration) ; jamais renvoyé au client
     app.state.lan = lan

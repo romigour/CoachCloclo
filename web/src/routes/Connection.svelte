@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import { ApiError } from "../lib/api";
 
   let { onchanged }: { onchanged: () => void } = $props();
 
@@ -16,16 +17,24 @@
   let token = $state("");
   let error = $state("");
   let busy = $state(false);
+  let loadError = $state(false);
 
   const showForm = $derived(loaded && (!creds || editing));
   const masked = $derived(creds ? "••••" + creds.token.slice(-4) : "");
 
-  onMount(async () => {
-    const t = await turso();
-    creds = t.loadCredentials();
-    host = creds ? t.normalizeHost(creds.url) : "";
-    loaded = true;
-  });
+  async function load() {
+    loadError = false;
+    try {
+      const t = await turso();
+      creds = t.loadCredentials();
+      host = creds ? t.normalizeHost(creds.url) : "";
+      loaded = true;
+    } catch {
+      loadError = true;
+    }
+  }
+
+  onMount(load);
 
   function edit() {
     if (!creds) return;
@@ -45,6 +54,7 @@
     if (busy) return;
     busy = true;
     error = "";
+    let ok = false;
     try {
       const t = await turso();
       const next = { url: url.trim(), token: token.trim() };
@@ -55,36 +65,51 @@
       editing = false;
       url = "";
       token = "";
-      onchanged();
+      ok = true;
     } catch (e) {
-      error = e instanceof Error ? e.message : "Connexion impossible";
+      error = e instanceof ApiError ? e.message : "Connexion impossible";
+    } finally {
+      busy = false;
+    }
+    if (ok) onchanged();
+  }
+
+  async function wipe() {
+    if (busy || !confirm("Effacer la connexion de ce téléphone ?")) return;
+    busy = true;
+    error = "";
+    try {
+      const t = await turso();
+      t.clearCredentials();
+      creds = null;
+      host = "";
+      editing = false;
+      url = "";
+      token = "";
+    } catch {
+      error = "Impossible d'effacer la connexion";
     } finally {
       busy = false;
     }
   }
-
-  async function wipe() {
-    if (!confirm("Effacer la connexion de ce téléphone ?")) return;
-    const t = await turso();
-    t.clearCredentials();
-    creds = null;
-    host = "";
-    editing = false;
-    url = "";
-    token = "";
-    error = "";
-  }
 </script>
 
-{#if loaded}
+{#if loadError}
+  <section class="card stack" role="alert">
+    <h2>Connexion à ta base</h2>
+    <p>Impossible de charger la connexion.</p>
+    <div class="row"><button type="button" class="primary" onclick={load}>Réessayer</button></div>
+  </section>
+{:else if loaded}
   <section class="card stack">
     <h2>Connexion à ta base</h2>
     {#if creds && !editing}
       <p>Base : <code>{host}</code></p>
       <p>Jeton : <code>{masked}</code></p>
+      {#if error}<p class="error" role="alert">{error}</p>{/if}
       <div class="row">
-        <button type="button" onclick={edit}>Modifier</button>
-        <button type="button" class="danger" onclick={wipe}>Effacer</button>
+        <button type="button" disabled={busy} onclick={edit}>Modifier</button>
+        <button type="button" class="danger" disabled={busy} onclick={wipe}>Effacer</button>
       </div>
     {:else if showForm}
       <p>
@@ -109,7 +134,7 @@
         {#if error}<p class="error" role="alert">{error}</p>{/if}
         <div class="row">
           <button class="primary" disabled={busy}>{busy ? "Vérification…" : "Valider"}</button>
-          {#if editing}<button type="button" onclick={cancel}>Annuler</button>{/if}
+          {#if editing}<button type="button" disabled={busy} onclick={cancel}>Annuler</button>{/if}
         </div>
       </form>
     {/if}

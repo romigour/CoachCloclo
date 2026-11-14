@@ -80,3 +80,24 @@ test("Effacer avec confirmation vide la connexion et le formulaire", async () =>
   await waitFor(() => expect(turso.clearCredentials).toHaveBeenCalled());
   expect((await screen.findByLabelText("URL de la base") as HTMLInputElement).value).toBe("");
 });
+
+test("Effacer refusé : rien n'est effacé", async () => {
+  turso.loadCredentials.mockReturnValue(saved);
+  vi.stubGlobal("confirm", vi.fn(() => false));
+  render(Connection, { onchanged: () => {} });
+  await fireEvent.click(await screen.findByRole("button", { name: "Effacer" }));
+  expect(turso.clearCredentials).not.toHaveBeenCalled();
+  expect(screen.getByText("ma-base.turso.io")).toBeTruthy();
+});
+
+test("échec de chargement : message d'erreur et Réessayer", async () => {
+  turso.loadCredentials.mockImplementationOnce(() => {
+    throw new Error("boom libsql");
+  });
+  render(Connection, { onchanged: () => {} });
+  expect(await screen.findByText("Impossible de charger la connexion.")).toBeTruthy();
+  expect(screen.queryByText(/boom/)).toBeNull();
+  turso.loadCredentials.mockReturnValue(saved);
+  await fireEvent.click(screen.getByRole("button", { name: "Réessayer" }));
+  expect(await screen.findByText("ma-base.turso.io")).toBeTruthy();
+});

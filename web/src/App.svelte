@@ -226,6 +226,11 @@
         <!-- Import dynamique gardé par READONLY : libsql reste hors du build de bureau. -->
         {#await import("./routes/Connection.svelte") then { default: Connection }}
           <Connection onchanged={connected} />
+        {:catch}
+          <section class="card stack" role="alert">
+            <p>Impossible de charger l'écran de connexion.</p>
+            <div class="row"><button type="button" class="primary" onclick={() => location.reload()}>Réessayer</button></div>
+          </section>
         {/await}
       {:else if route === "welcome"}
         <Welcome onconnected={garminConnected} />

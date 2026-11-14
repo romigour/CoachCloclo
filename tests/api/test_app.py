@@ -1,22 +1,29 @@
 import logging
+import sqlite3
 import threading
 from datetime import date
 from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import event, func
+from sqlalchemy import select as sa_select
+from sqlalchemy.exc import OperationalError
 
 from coach.api.app import create_app
 from coach.analysis.zones import Zones, compute_zones
 from coach.api.deps import hash_pin, valid_pin, verify_pin
-from coach.config import load_settings, save_settings
+from coach.config import db_path, load_settings, save_settings
 from coach.version import app_version
 from coach.garmin.port import FakeGarminClient, GarminAuthRequired, LapSummary, Metrics
 from coach.llm.provider import FakeLLMProvider, LLMError, LLMUsageLimit
 from coach.plan.models import Activity, AthleteSnapshot, Race
 from coach.services.history import HistoryState, save_state
 from tests.llm.factories import valid_plan_json
-from coach.plan.repo import Repo, make_engine
+from coach.plan.repo import Repo, SchemaTooNew, make_engine
+from coach.storage import switch as switch_mod
+from coach.storage.cloud_errors import CloudUnreachable
+from coach.storage.source import LocalSource
 from tests.plan.factories import make_activity, make_cycle, make_db_session
 from tests.services.test_sync import adjustment_json
 
@@ -1352,3 +1359,322 @@ def test_sync_takes_and_releases_lock(make_client, repo):
     assert make_client(garmin=Spy(metrics=METRICS)).post("/api/sync").status_code == 200
     assert seen == [True]
     assert not held_elsewhere(repo, "autre-pc", datetime.now(timezone.utc))
+
+
+# --- stockage cloud ---------------------------------------------------------------------------
+
+STORAGE_TOKEN = "jeton-secret-turso"
+LOCAL_PEER = ("127.0.0.1", 50000)
+TURSO_SETTINGS = {"storage_mode": "turso", "turso_url": "libsql://base.turso.io", "turso_token": STORAGE_TOKEN}
+
+
+class FakeCloud:
+    """« Base cloud » de test : un second fichier SQLite ; `fail` simule une erreur à l'ouverture."""
+
+    def __init__(self, path):
+        self.path = path
+        self.fail: Exception | None = None
+        self.opened: list[tuple[str, str]] = []
+
+    def source_for(self, settings):
+        if settings.storage_mode != "turso":
+            return LocalSource(db_path())
+        cloud = self
+
+        class _Source:
+            kind = "turso"
+
+            def engine(self):
+                cloud.opened.append((settings.turso_url, settings.turso_token))
+                if cloud.fail is not None:
+                    raise cloud.fail
+                return make_engine(cloud.path)
+
+        return _Source()
+
+
+def _activity_count(engine) -> int:
+    with engine.connect() as c:
+        return c.execute(sa_select(func.count()).select_from(Activity.__table__)).scalar()
+
+
+def _seed_local(home: Path, n: int = 2) -> None:
+    engine = make_engine(home / "coach.db")
+    with Repo(engine).transaction() as db:
+        cycle = make_cycle(status="active")
+        db.add(cycle)
+        db.flush()
+        db.add(make_db_session(cycle.id, title="Séance locale"))
+        for i in range(n):
+            db.add(make_activity(garmin_activity_id=500 + i))
+    engine.dispose()
+    (home / "gpx").mkdir(exist_ok=True)
+    (home / "gpx" / "1.gpx").write_text("<gpx/>")
+    (home / "history.json").write_text('{"status": "done"}')
+
+
+@pytest.fixture
+def cloud(tmp_path):
+    path = tmp_path / "cloud-db" / "cloud.db"
+    path.parent.mkdir()
+    return FakeCloud(path)
+
+
+@pytest.fixture
+def storage_client(_home, cloud, fake_garmin):
+    _seed_local(_home)
+    now = [0.0]
+
+    def build(peer=LOCAL_PEER):
+        app = create_app(
+            lan=False,
+            garmin_factory=lambda: fake_garmin,
+            llm_factory=lambda: FakeLLMProvider([]),
+            login_client=FakeLogin(False),
+            extra_hosts={"testserver"},
+            source_for=cloud.source_for,
+            clock=lambda: now[0],
+        )
+        client = TestClient(app, client=peer, headers={"X-Coach": "1"})
+        client.now = now
+        return client
+
+    return build
+
+
+def _enable(client, replace_local=False):
+    body = {"url": "libsql://base.turso.io", "token": STORAGE_TOKEN, "replace_local": replace_local}
+    return client.post("/api/storage/cloud", json=body)
+
+
+def _session_titles(client) -> list[str]:
+    return [s["title"] for w in client.get("/api/plan").json()["weeks"] for s in w["sessions"]]
+
+
+def _start_in_cloud_mode(cloud, fail: Exception) -> None:
+    save_settings(load_settings().model_copy(update=TURSO_SETTINGS))
+    cloud.fail = fail
+
+
+def test_storage_default_is_local(storage_client):
+    r = storage_client().get("/api/storage")
+    assert r.status_code == 200
+    assert r.json() == {"mode": "local", "turso_url": None, "has_turso_token": False}
+
+
+def test_enable_on_empty_cloud_copies_and_deletes_local(storage_client, _home, cloud):
+    client = storage_client()
+    before = client.get("/api/plan").json()
+    assert before["weeks"]
+    r = _enable(client)
+    assert r.status_code == 200, r.text
+    assert r.json() == {"mode": "turso", "turso_url": "libsql://base.turso.io", "has_turso_token": True}
+    assert not (_home / "coach.db").exists()
+    assert not (_home / "gpx").exists() and not (_home / "history.json").exists()
+    assert client.get("/api/storage").json()["mode"] == "turso"
+    assert client.get("/api/plan").json() == before
+    s = load_settings()
+    assert (s.storage_mode, s.turso_url, s.turso_token) == ("turso", "libsql://base.turso.io", STORAGE_TOKEN)
+    assert _activity_count(make_engine(cloud.path)) == 2
+
+
+def test_enable_on_nonempty_cloud_needs_confirmation_then_adopts(storage_client, _home, cloud):
+    other = _home / "autre-pc"
+    other.mkdir()
+    _seed_local(other, n=5)
+    remote = make_engine(cloud.path)
+    switch_mod.enable_cloud(make_engine(other / "coach.db"), switch_mod.OpenedSource("turso", remote), replace_local=False)
+    client = storage_client()
+    r = _enable(client)
+    assert r.status_code == 409
+    assert r.json() == {
+        "code": "needs_confirmation",
+        "detail": "Les données de ce PC seront remplacées par celles du cloud",
+    }
+    assert load_settings().storage_mode == "local" and (_home / "coach.db").exists()
+    r = _enable(client, replace_local=True)
+    assert r.status_code == 200
+    assert not (_home / "coach.db").exists()
+    assert _activity_count(remote) == 5  # rien de ce PC n'a été écrit dans le cloud
+    assert len(client.get("/api/stats/activities").json()["activities"]) == 5
+
+
+def test_enable_with_bad_token_changes_nothing(storage_client, _home, cloud):
+    cloud.fail = CloudUnreachable("Jeton Turso refusé : vérifie-le")
+    client = storage_client()
+    r = _enable(client)
+    assert r.status_code == 422
+    assert r.json() == {"code": "cloud_unreachable", "detail": "Jeton Turso refusé : vérifie-le"}
+    s = load_settings()
+    assert (s.storage_mode, s.turso_url, s.turso_token) == ("local", None, None)
+    assert (_home / "coach.db").exists() and (_home / "history.json").exists()
+    assert _session_titles(client) == ["Séance locale"]
+
+
+def test_enable_copy_failure_keeps_local(storage_client, _home, monkeypatch):
+    def boom(src, dst):
+        raise switch_mod.CopyMismatch("activity")
+
+    monkeypatch.setattr(switch_mod, "verify_copy", boom)
+    client = storage_client()
+    r = _enable(client)
+    assert r.status_code == 422
+    assert r.json() == {
+        "code": "cloud_copy_failed",
+        "detail": "Le transfert vers le cloud a échoué : tes données locales sont intactes.",
+    }
+    assert load_settings().storage_mode == "local"
+    assert (_home / "coach.db").exists() and (_home / "gpx" / "1.gpx").exists()
+    assert _session_titles(client) == ["Séance locale"]
+
+
+def test_schema_too_new_on_enable(storage_client, _home, cloud):
+    cloud.fail = SchemaTooNew("schéma 2 > 1")
+    client = storage_client()
+    r = _enable(client)
+    assert r.status_code == 409
+    assert r.json() == {"code": "schema_too_new", "detail": "Mets à jour CoachCloclo sur ce PC"}
+    assert load_settings().storage_mode == "local" and (_home / "coach.db").exists()
+
+
+def test_enable_refused_while_history_import_runs(storage_client):
+    client = storage_client()
+    client.app.state.history = FakeRunner(running=True)
+    r = _enable(client)
+    assert r.status_code == 409 and r.json()["code"] == "history_running"
+    assert load_settings().storage_mode == "local"
+
+
+def test_enable_recreates_history_runner_on_new_repo(storage_client):
+    client = storage_client()
+    old = client.app.state.history
+    assert _enable(client).status_code == 200
+    assert client.app.state.history is not old
+    assert client.app.state.history._repo is client.app.state.repo
+
+
+def test_disable_copies_back_and_keeps_cloud(storage_client, _home, cloud):
+    client = storage_client()
+    assert _enable(client).status_code == 200
+    remote = make_engine(cloud.path)
+    with Repo(remote).transaction() as db:
+        db.add(make_activity(garmin_activity_id=999))  # ajoutée depuis un autre PC
+    r = client.delete("/api/storage/cloud")
+    assert r.status_code == 200
+    assert r.json() == {"mode": "local", "turso_url": None, "has_turso_token": False}
+    s = load_settings()
+    assert (s.storage_mode, s.turso_url, s.turso_token) == ("local", None, None)
+    assert (_home / "coach.db").exists()
+    assert _activity_count(client.app.state.repo.engine) == 3
+    assert _activity_count(remote) == 3  # la désactivation n'efface jamais la base cloud
+    assert _session_titles(client) == ["Séance locale"]
+
+
+def test_wipe_cloud(storage_client, _home, cloud):
+    client = storage_client()
+    r = client.post("/api/storage/cloud/wipe")
+    assert r.status_code == 409 and r.json()["code"] == "not_cloud"
+    assert _enable(client).status_code == 200
+    r = client.post("/api/storage/cloud/wipe")
+    assert r.status_code == 200
+    assert r.json()["mode"] == "local"
+    remote = make_engine(cloud.path)
+    assert _activity_count(remote) == 0 and switch_mod.is_empty(remote)
+    assert _session_titles(client) == ["Séance locale"]  # ce PC garde ses données, en local
+
+
+def test_cloud_unreachable_returns_503(storage_client):
+    client = storage_client()
+    assert _enable(client).status_code == 200
+
+    @event.listens_for(client.app.state.repo.engine, "before_cursor_execute")
+    def coupure(*args):
+        raise sqlite3.OperationalError("unable to open database file")
+
+    r = client.get("/api/plan")
+    assert r.status_code == 503
+    assert r.json() == {"code": "cloud_unreachable", "detail": "Base cloud injoignable : vérifie ta connexion"}
+
+
+def test_libsql_network_error_returns_503(storage_client):
+    client = storage_client()
+    assert _enable(client).status_code == 200
+
+    @event.listens_for(client.app.state.repo.engine, "before_cursor_execute")
+    def coupure(*args):
+        raise ValueError("Hrana: `http error: `error trying to connect: dns error``")
+
+    assert client.get("/api/plan").status_code == 503
+
+
+def test_local_mode_db_error_is_not_cloud_unreachable(storage_client):
+    client = storage_client()
+
+    @event.listens_for(client.app.state.repo.engine, "before_cursor_execute")
+    def coupure(*args):
+        raise sqlite3.OperationalError("disk I/O error")
+
+    with pytest.raises(OperationalError):
+        client.get("/api/plan")
+
+
+def test_startup_with_unreachable_cloud_then_recovers(storage_client, cloud):
+    _start_in_cloud_mode(cloud, CloudUnreachable("Base cloud injoignable"))
+    client = storage_client()  # ne plante pas
+    assert client.get("/api/storage").json()["mode"] == "turso"
+    status = client.get("/api/status")
+    assert status.status_code == 200
+    assert status.json()["storage"]["code"] == "cloud_unreachable"
+    r = client.get("/api/plan")
+    assert r.status_code == 503 and r.json()["code"] == "cloud_unreachable"
+    cloud.fail = None
+    client.now[0] += 60  # nouvel essai après le délai
+    assert client.get("/api/plan").status_code == 200
+    assert client.get("/api/status").json()["storage"] is None
+
+
+def test_startup_retry_is_throttled(storage_client, cloud):
+    _start_in_cloud_mode(cloud, CloudUnreachable("Base cloud injoignable"))
+    client = storage_client()
+    tries = len(cloud.opened)
+    client.get("/api/plan")
+    client.get("/api/plan")
+    assert len(cloud.opened) == tries  # pas de nouvel essai réseau à chaque requête
+
+
+def test_startup_with_schema_too_new_cloud(storage_client, cloud):
+    _start_in_cloud_mode(cloud, SchemaTooNew("schéma 2 > 1"))
+    r = storage_client().get("/api/plan")
+    assert r.status_code == 409
+    assert r.json() == {"code": "schema_too_new", "detail": "Mets à jour CoachCloclo sur ce PC"}
+
+
+def test_resaving_settings_recovers_unavailable_cloud(storage_client, _home, cloud):
+    _start_in_cloud_mode(cloud, CloudUnreachable("Jeton Turso refusé : vérifie-le"))
+    client = storage_client()
+    cloud.fail = None
+    assert _enable(client).status_code == 200
+    assert load_settings().turso_token == STORAGE_TOKEN
+    assert client.get("/api/plan").status_code == 200
+    assert (_home / "coach.db").exists()  # pas de suppression : ce PC n'était pas en mode local
+
+
+def test_storage_routes_loopback_only(storage_client):
+    client = storage_client(peer=("192.168.1.20", 50000))
+    for method, path in [
+        ("get", "/api/storage"),
+        ("post", "/api/storage/cloud"),
+        ("delete", "/api/storage/cloud"),
+        ("post", "/api/storage/cloud/wipe"),
+    ]:
+        kw = {"json": {"url": "u", "token": "t"}} if (method, path) == ("post", "/api/storage/cloud") else {}
+        r = getattr(client, method)(path, **kw)
+        assert r.status_code == 403 and r.json()["code"] == "local_only", (method, path)
+    assert load_settings().storage_mode == "local"
+
+
+def test_storage_view_never_returns_token(storage_client):
+    client = storage_client()
+    for r in (_enable(client), client.get("/api/storage"), client.get("/api/status")):
+        assert r.status_code == 200
+        assert STORAGE_TOKEN not in r.text

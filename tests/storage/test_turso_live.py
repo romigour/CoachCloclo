@@ -93,3 +93,65 @@ def test_turso_concurrent_reads(engine):
     with ThreadPoolExecutor(8) as ex:
         results = list(ex.map(lambda _: len(repo.all_activities()), range(32)))
     assert len(set(results)) == 1 and results[0] >= 50
+
+
+def test_turso_lock_two_holders(engine):
+    """Sémantique de rowcount distante (INSERT ... ON CONFLICT, UPDATE conditionnel) : libre, pris, refusé, expiré."""
+    from datetime import datetime, timezone
+
+    from coach.storage.lock import held_elsewhere, release, try_acquire
+
+    repo = Repo(engine)
+    a, b = "essai-live-A", "essai-live-B"
+    ttl = timedelta(minutes=2)
+    release(repo, a)
+    release(repo, b)
+    now = datetime.now(timezone.utc)
+    try:
+        for _ in range(2):  # deux tours : l'état laissé par le premier ne doit rien fausser
+            assert try_acquire(repo, a, ttl, now)  # libre -> pris
+            assert held_elsewhere(repo, b, now)
+            assert try_acquire(repo, a, ttl, now)  # prolongation par le détenteur
+            assert not try_acquire(repo, b, ttl, now)  # refusé
+            later = now + ttl + timedelta(seconds=1)
+            assert try_acquire(repo, b, ttl, later)  # expiré -> accordé
+            assert not try_acquire(repo, a, ttl, later)
+            release(repo, b)
+            assert not held_elsewhere(repo, a, later)
+    finally:
+        release(repo, a)
+        release(repo, b)
+
+
+def test_turso_copy_roundtrip(tmp_path):
+    """Copie vérifiée local -> Turso puis retour. ATTENTION : vide la base de TEST distante."""
+    from coach.plan.repo import make_engine
+    from coach.storage.source import LocalSource, TursoSource
+    from coach.storage.switch import disable_cloud
+    from coach.storage.transfer import copy_all, is_empty, verify_copy, wipe
+    from tests.plan.factories import make_cycle, make_db_session
+
+    local = make_engine(tmp_path / "coach.db")
+    with Repo(local).transaction() as db:
+        cycle = make_cycle()
+        db.add(cycle)
+        db.flush()
+        db.add(make_db_session(cycle.id))
+        db.add_all(make_activity(garmin_activity_id=_BASE_ID + i) for i in range(200))
+    cloud = TursoSource(URL, TOKEN).engine()
+    try:
+        wipe(cloud)
+        assert is_empty(cloud)
+        start = time.perf_counter()
+        copy_all(local, cloud)
+        verify_copy(local, cloud)
+        print(f"copie de 200 activités vers Turso : {time.perf_counter() - start:.2f} s")
+        assert not is_empty(cloud)
+        (tmp_path / "back").mkdir()
+        back = disable_cloud(cloud, LocalSource(tmp_path / "back" / "coach.db"))
+        assert len(Repo(back).all_activities()) == 200
+        back.dispose()
+    finally:
+        wipe(cloud)
+        cloud.dispose()
+        local.dispose()

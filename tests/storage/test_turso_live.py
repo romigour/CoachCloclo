@@ -5,14 +5,11 @@ Lancer : `uv run pytest -m live tests/storage -v` avec une base Turso de TEST :
     COACH_TURSO_TOKEN = jeton d'accès de la base
 Sans ces variables, les tests sont ignorés (skip). Ne pas lancer en CI.
 
-Format validé en lisant le dialecte `sqlalchemy_libsql` 0.2.0 (hors réseau) :
-  - URL SQLAlchemy : `sqlite+libsql://<hôte>?secure=true`
-    (`secure=true` -> https/wss ; sans lui le dialecte utiliserait http en clair) ;
+Format : dialecte maison `coach.storage.libsql_dialect` (paquet `libsql`, roues Windows) :
+  - URL SQLAlchemy : `sqlite+libsql://<hôte>?secure=true` (secure -> https, sinon http) ;
     l'hôte est celui de COACH_TURSO_URL sans le schéma `libsql://`.
   - Jeton : PAS dans l'URL mais `create_engine(url, connect_args={"auth_token": token})`.
-  - Le dialecte importe `libsql_experimental` ; ce paquet n'a AUCUNE roue Windows
-    (compilation Rust requise, échec observé : libsql-ffi build.rs "Accès refusé").
-"""
+  - Non vérifié hors réseau : que `libsql.connect("https://<hôte>", auth_token=...)` accepte le mode distant pur."""
 
 import os
 import time
@@ -21,6 +18,7 @@ from datetime import date, timedelta
 import pytest
 from sqlmodel import SQLModel, create_engine, delete, select
 
+import coach.storage.libsql_dialect  # noqa: F401  (enregistre sqlite+libsql)
 from coach.plan import repo as repo_mod
 from coach.plan.models import Activity, Goal
 from coach.plan.repo import Repo
@@ -88,3 +86,4 @@ def test_turso_stats_latency(engine):
     elapsed = time.perf_counter() - start
     print(f"all_activities + races : {elapsed:.2f} s")
     assert elapsed < 2
+

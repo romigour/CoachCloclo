@@ -95,6 +95,7 @@ Option pour retrouver les mêmes données sur plusieurs PC (maison, travail). El
 - La synchro Garmin ne tourne que sur un PC à la fois : un autre PC qui essaie affiche « Synchronisation en cours sur un autre PC ».
 - Si un PC a une version de l'app trop ancienne pour la base, il demande de mettre à jour CoachCloclo.
 - Restent sur chaque PC : tokens Garmin, connexion Claude, clé API, PIN, mode LAN, et le jeton Turso.
+- Si un fichier local n'a pas pu être supprimé ou renommé pendant la bascule (fichier bloqué par un antivirus, par exemple), l'app s'en occupe au démarrage suivant en mode cloud. Un `coach.db` resté là n'est jamais supprimé : il est renommé en `coach.db.bak`.
 - Une bascule attend que l'app soit au repos : pendant une synchro, un import ou une génération de plan, elle répond « Une opération est en cours, réessaie dans un instant. »
 
 ### Si la base cloud a disparu

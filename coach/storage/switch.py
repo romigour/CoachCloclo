@@ -147,8 +147,8 @@ def wipe_cloud(cloud: Engine) -> None:
 def delete_local_files(home: Path, *, keep_backup: bool = False) -> None:
     """Supprime `coach.db` (et ses fichiers SQLite annexes), `gpx/` et `history.json` s'ils existent.
 
-    `keep_backup` : `coach.db` est renommé en `coach.db.bak` (remplace l'ancien) au lieu d'être supprimé.
-    `coach.db.bak` n'est jamais supprimé.
+    `keep_backup` : `coach.db` est renommé en `coach.db.bak` (remplace l'ancien) au lieu d'être supprimé ;
+    si le renommage échoue, OSError est levée et rien n'est supprimé. `coach.db.bak` n'est jamais supprimé.
     """
     db = home / "coach.db"
     if keep_backup and db.exists():

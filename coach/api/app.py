@@ -458,11 +458,14 @@ def create_app(
             storage_lock.release()
 
     def clean_leftover_files() -> None:
-        """Mode cloud ouvert : fichiers locaux restés d'une bascule (suppression ratée). Jamais `coach.db.bak`."""
+        """Mode cloud ouvert : fichiers locaux restés d'une bascule (suppression ou renommage raté).
+
+        `coach.db` n'est jamais supprimé : ses données n'ont peut-être jamais été copiées (adoption dont le
+        renommage a échoué). Il devient `coach.db.bak` ; si le renommage échoue encore, il reste en place."""
         try:
-            delete_local_files(data_dir())
+            delete_local_files(data_dir(), keep_backup=True)
         except OSError:
-            log.warning("Fichiers locaux restants non supprimés", exc_info=True)
+            log.warning("Fichiers locaux restants non nettoyés (coach.db laissé en place)", exc_info=True)
 
     if repo is not None:
         install_repo(repo, cloud=False)

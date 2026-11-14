@@ -1893,20 +1893,47 @@ def test_switch_keeps_settings_changed_meanwhile(storage_client, monkeypatch):
 # --- fichiers locaux restants au démarrage en mode cloud ----------------------------------------
 
 
-def test_cloud_startup_removes_leftover_local_files(storage_client, _home, cloud):
-    (_home / "coach.db.bak").write_text("sauvegarde")
+def test_cloud_startup_keeps_leftover_db_as_backup(storage_client, _home, cloud):
+    (_home / "coach.db.bak").write_text("ancienne sauvegarde")
     _start_in_cloud_mode(cloud, fail=None)  # coach.db, gpx/ et history.json restés d'une bascule
     client = storage_client()
     assert client.get("/api/plan").status_code == 200
     assert not (_home / "coach.db").exists()
     assert not (_home / "gpx").exists() and not (_home / "history.json").exists()
-    assert (_home / "coach.db.bak").read_text() == "sauvegarde"
+    backup = make_engine(_home / "coach.db.bak")  # jamais supprimé : renommé, à la place de l'ancienne sauvegarde
+    assert _activity_count(backup) == 2
+    backup.dispose()
+
+
+def test_failed_adoption_backup_survives_cloud_restart(storage_client, _home, cloud, monkeypatch):
+    _fill_other_pc_cloud(_home, cloud)
+    real_replace = switch_mod.os.replace
+    blocked = [True]
+
+    def replace(src, dst):
+        if blocked[0] and str(dst).endswith("coach.db.bak"):
+            raise PermissionError("coach.db tenu par l'antivirus")
+        return real_replace(src, dst)
+
+    monkeypatch.setattr(switch_mod.os, "replace", replace)
+    client = storage_client()
+    assert _enable(client, replace_local=True).status_code == 200
+    assert (_home / "coach.db").exists() and load_settings().storage_mode == "turso"
+
+    storage_client()  # redémarrage en mode cloud, renommage toujours impossible : coach.db reste
+    assert (_home / "coach.db").exists()
+    blocked[0] = False
+    storage_client()  # redémarrage suivant : coach.db devient coach.db.bak
+    assert not (_home / "coach.db").exists()
+    backup = make_engine(_home / "coach.db.bak")
+    assert _activity_count(backup) == 2  # les données de ce PC, jamais envoyées dans le cloud
+    backup.dispose()
 
 
 def test_cloud_startup_survives_undeletable_leftovers(storage_client, _home, cloud, monkeypatch):
     from coach.api import app as app_mod
 
-    def locked(home):
+    def locked(home, **kwargs):
         raise PermissionError("coach.db ouvert")
 
     monkeypatch.setattr(app_mod, "delete_local_files", locked)

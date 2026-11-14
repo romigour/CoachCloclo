@@ -58,6 +58,12 @@
     return status?.has_activities ? "#/stats" : "#/goal";
   }
 
+  /** Connexion Turso enregistrée : on relit les données puis on va à l'accueil. */
+  async function connected() {
+    await refresh();
+    location.hash = home();
+  }
+
   /** Relit l'état ; `clear` efface l'erreur affichée (pas depuis le sondage, qui la ferait disparaître). */
   async function refresh(clear = true) {
     try {
@@ -216,9 +222,11 @@
             {/if}
           </div>
         </section>
-      {:else if route === "connection"}
-        <!-- Placeholder : l'écran de connexion est fourni par la tâche 8. -->
-        <section class="card"></section>
+      {:else if READONLY && route === "connection"}
+        <!-- Import dynamique gardé par READONLY : libsql reste hors du build de bureau. -->
+        {#await import("./routes/Connection.svelte") then { default: Connection }}
+          <Connection onchanged={connected} />
+        {/await}
       {:else if route === "welcome"}
         <Welcome onconnected={garminConnected} />
       {:else if route === "setup"}

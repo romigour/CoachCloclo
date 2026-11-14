@@ -108,6 +108,17 @@ Si la base Turso est définitivement perdue (supprimée, compte fermé), « Reve
 
 Les données du cloud sont alors perdues pour ce PC. Si ce PC avait adopté le cloud, son ancienne base est dans `coach.db.bak` : renomme-la en `coach.db` (app fermée) pour la retrouver, telle qu'elle était avant l'adoption.
 
+## Version mobile
+
+Une appli mobile en lecture seule, installable sur l'écran d'accueil du téléphone : <https://romigour.github.io/CoachCloclo/app/>. Elle lit ta base Turso, donc le stockage cloud doit déjà être activé sur l'appli de bureau (voir [Stockage dans le cloud](#stockage-dans-le-cloud-turso)).
+
+- Au premier lancement, elle demande seulement l'URL et le jeton Turso, enregistrés sur le téléphone. L'écran « Connexion » permet de les modifier ou de les effacer.
+- Crée un jeton en lecture seule : `turso db tokens create <base> --read-only`.
+- Tu peux consulter Aujourd'hui (la séance du jour), Plan (la semaine, imprévus visibles) et Statistiques. Aucune action ne crée, modifie ou supprime quoi que ce soit.
+- Si elle affiche « Mets à jour l'appli de bureau puis relance-la une fois », installe la dernière version de l'appli de bureau et relance-la.
+
+Elle est publiée par le workflow `pages.yml`, construite depuis le dernier tag `v*`.
+
 ## Usage de Claude
 
 L'application appelle **ton propre CLI Claude Code** avec **ton propre abonnement**. C'est prévu pour un usage personnel : vérifie les conditions d'utilisation d'Anthropic pour ton cas. Alternative : renseigner une clé API Anthropic dans les réglages de l'app.

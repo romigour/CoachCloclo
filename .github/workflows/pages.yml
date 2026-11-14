@@ -1,0 +1,75 @@
+name: Pages
+
+# Publie le guide (commit déclencheur) et la version mobile (dernier tag v*).
+on:
+  push:
+    tags: ["v*"]
+    branches: [master]
+    paths: ["docs/**"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/configure-pages@v5
+      - name: Guide (Jekyll)
+        uses: actions/jekyll-build-pages@v1
+        with:
+          source: ./docs
+          destination: ./_site
+      # La version mobile est toujours construite depuis le dernier tag v*,
+      # pour rester alignée avec le schéma de base de l'appli de bureau publiée.
+      - uses: actions/checkout@v4
+        with:
+          path: release
+          fetch-depth: 0
+      - name: Dernier tag v*
+        run: |
+          set -euo pipefail
+          tag="$(git -C release describe --tags --abbrev=0 --match 'v*')"
+          echo "Version mobile construite depuis $tag"
+          git -C release checkout "$tag"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: release/web/package-lock.json
+      - name: Build mobile
+        working-directory: release/web
+        run: |
+          set -euo pipefail
+          npm ci
+          npm run build:mobile
+          test -f dist-mobile/index.html
+      # jekyll-build-pages écrit _site en root (Docker) : on assemble dans un dossier neuf.
+      - name: Assemble le site
+        run: |
+          set -euo pipefail
+          mkdir public
+          cp -r _site/. public/
+          mkdir -p public/app
+          cp -r release/web/dist-mobile/. public/app/
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: public
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

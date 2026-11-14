@@ -407,6 +407,22 @@ footer { border-top: 1px solid var(--line); padding-block: 28px 40px; color: var
 </section>
 
 <div class="wrap">
+  <section class="feature" id="mobile">
+    <div class="feature-head">
+      <span class="eyebrow">Version mobile</span>
+      <h2>Ton plan en lecture seule, partout.</h2>
+      <p class="lead">Une appli installable sur l'écran d'accueil de ton téléphone, qui lit ta base Turso sans rien pouvoir y modifier. Elle demande que l'appli de bureau soit déjà en stockage cloud (Turso). Contrairement à l'accès par le réseau local (ci-dessus), qui exige que le PC soit allumé et le téléphone sur le même réseau et donne toutes les fonctions, la version mobile marche partout, en lecture seule, via Turso.</p>
+    </div>
+    <ul class="points">
+      <li><b>Installe-la.</b> Ouvre <a href="https://romigour.github.io/CoachCloclo/app/">romigour.github.io/CoachCloclo/app</a> sur ton téléphone, puis « Ajouter à l'écran d'accueil ».</li>
+      <li><b>Connecte-la.</b> Au premier lancement, elle demande seulement l'URL et le jeton Turso, enregistrés sur le téléphone. Crée un jeton en lecture seule : <code>turso db tokens create &lt;base&gt; --read-only</code>. L'écran « Connexion » permet de les modifier ou de les effacer.</li>
+      <li><b>Consulte.</b> Aujourd'hui (la séance du jour), Plan (la semaine, imprévus visibles) et Statistiques. Aucune action ne peut créer, modifier ou supprimer quoi que ce soit.</li>
+      <li><b>Mets à jour au besoin.</b> Si elle affiche « Mets à jour l'appli de bureau puis relance-la une fois », installe la dernière version de l'appli de bureau et relance-la.</li>
+    </ul>
+  </section>
+</div>
+
+<div class="wrap">
   <section class="start" id="demarrer">
     <div class="feature-head">
       <span class="eyebrow">Démarrer</span>

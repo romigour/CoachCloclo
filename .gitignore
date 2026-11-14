@@ -6,6 +6,7 @@ dist/
 .superpowers/
 garmin_tokens.json
 coach/web_dist/
+web/dist-mobile/
 node_modules/
 .pytest_cache/
 build/

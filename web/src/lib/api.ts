@@ -1,4 +1,5 @@
 import type { Weekday } from "./dates";
+import { READONLY } from "./mode";
 
 export class ApiError extends Error {
   code: string;
@@ -479,14 +480,18 @@ const patch = <T>(p: string, b: unknown) => request<T>("PATCH", p, b);
 const del = <T>(p: string) => request<T>("DELETE", p);
 const post = <T>(p: string, b?: unknown) => request<T>("POST", p, b ?? {});
 
-export const api = {
-  status: () => get<Status>("/status"),
+const rawApi = {
+  status: async (): Promise<Status> => {
+    if (READONLY) return (await import("./turso")).status();
+    return get<Status>("/status");
+  },
   pin: (pin: string) => post<{ status: string }>("/auth/pin", { pin }),
   login: (email: string, password: string) =>
     post<{ status: "ok" | "needs_mfa"; login_id?: string }>("/garmin/login", { email, password }),
   mfa: (login_id: string, code: string) => post<{ status: string }>("/garmin/mfa", { login_id, code }),
   /** `null` sous `coach start` (pas d'appli de bureau : l'endpoint répond 404). */
   setupStatus: async (): Promise<SetupStatus | null> => {
+    if (READONLY) return null;
     try {
       return await get<SetupStatus>("/setup/status");
     } catch (e) {
@@ -496,6 +501,7 @@ export const api = {
   },
   /** `null` sous `coach start` (pas d'appli de bureau : l'endpoint répond 404). */
   update: async (): Promise<UpdateView | null> => {
+    if (READONLY) return null;
     try {
       return await get<UpdateView>("/update");
     } catch (e) {
@@ -505,6 +511,7 @@ export const api = {
   },
   /** `null` sous `coach start` (pas d'appli de bureau : l'endpoint répond 404). */
   lan: async (): Promise<LanView | null> => {
+    if (READONLY) return null;
     try {
       return await get<LanView>("/lan");
     } catch (e) {
@@ -549,7 +556,10 @@ export const api = {
   nextCycle: (body?: NextCycleInput) => post<Cycle>("/cycle/next", body),
   generate: () => post<{ summary: string; weeks: number }>("/cycle/generate"),
   accept: () => post<{ status: string }>("/cycle/accept"),
-  plan: () => get<Plan>("/plan"),
+  plan: async (): Promise<Plan> => {
+    if (READONLY) return (await import("./turso")).plan();
+    return get<Plan>("/plan");
+  },
   racePlan: (goalId: number) => get<RaceView>(`/goals/${goalId}/race-plan`),
   saveRacePlan: (goalId: number, settings: RaceSettings) => put<RaceView>(`/goals/${goalId}/race-plan`, settings),
   refreshRacePlan: (goalId: number) => post<RaceView>(`/goals/${goalId}/race-plan/refresh`),
@@ -561,8 +571,14 @@ export const api = {
   moveSession: (id: number, date: string) => post<{ warnings: string[] }>(`/sessions/${id}/move`, { date }),
   unschedule: (id: number) => post<{ status: string }>(`/sessions/${id}/unschedule`),
   retry: (id: number) => post<{ status: string }>(`/sessions/${id}/retry`),
-  activities: (week: number) => get<Activity[]>(`/activities?week=${week}`),
-  zones: () => get<Zones | null>("/zones"),
+  activities: async (week: number): Promise<Activity[]> => {
+    if (READONLY) return (await import("./turso")).activities(week);
+    return get<Activity[]>(`/activities?week=${week}`);
+  },
+  zones: async (): Promise<Zones | null> => {
+    if (READONLY) return (await import("./turso")).zones();
+    return get<Zones | null>("/zones");
+  },
   comparison: (sessionId: number) => get<Comparison>(`/sessions/${sessionId}/comparison`),
   freeActivities: (days: number, sport: "run" | "bike" = "run") =>
     get<Activity[]>(`/activities/free?days=${days}&sport=${sport}`),
@@ -572,15 +588,44 @@ export const api = {
   pendingProposal: () => get<Proposal | null>("/proposals/pending"),
   acceptProposal: (id: number) => post<{ sync_error_ids: number[] }>(`/proposals/${id}/accept`),
   rejectProposal: (id: number) => post<{ status: string }>(`/proposals/${id}/reject`),
-  statsActivities: () => get<{ activities: StatActivity[] }>("/stats/activities"),
-  statsRecords: () => get<{ records: PersonalRecord[] }>("/stats/records"),
+  statsActivities: async (): Promise<{ activities: StatActivity[] }> => {
+    if (READONLY) return (await import("./turso")).statsActivities();
+    return get<{ activities: StatActivity[] }>("/stats/activities");
+  },
+  statsRecords: async (): Promise<{ records: PersonalRecord[] }> => {
+    if (READONLY) return (await import("./turso")).statsRecords();
+    return get<{ records: PersonalRecord[] }>("/stats/records");
+  },
   saveRace: (activityId: number, race: Partial<RaceInfo>) => request<StatActivity>("PUT", `/races/${activityId}`, race),
   removeRace: (activityId: number) => del<{ status: string }>(`/races/${activityId}`),
   createEvent: (body: EventInput) => post<EventResult>("/cycle/events", body),
   requestAdjustment: () => post<{ proposal_id: number }>("/cycle/adjust"),
   /** Imprévus du cycle actif ; liste vide sans plan en cours. */
-  events: () => get<CoachEvent[]>("/cycle/events"),
+  events: async (): Promise<CoachEvent[]> => {
+    if (READONLY) return (await import("./turso")).events();
+    return get<CoachEvent[]>("/cycle/events");
+  },
   deleteEvent: (id: number) => del<{ status: string }>(`/events/${id}`),
   resumeInjury: (id: number, date: string) => post<EventResult>(`/events/${id}/resume`, { date }),
   importHistory: () => post<{ status: string }>("/history/import"),
 };
+
+/** Lectures servies par Turso et lectures sans objet (null) : tout le reste est refusé en lecture seule. */
+const READONLY_OK = new Set<string>([
+  "status", "plan", "events", "activities", "zones", "statsActivities", "statsRecords",
+  "setupStatus", "update", "lan",
+]);
+
+function guarded<T extends object>(target: T): T {
+  return new Proxy(target, {
+    get(obj, key, recv) {
+      const v = Reflect.get(obj, key, recv);
+      if (typeof key !== "string" || typeof v !== "function" || READONLY_OK.has(key)) return v;
+      return async () => {
+        throw new ApiError("readonly", "Action indisponible en lecture seule");
+      };
+    },
+  });
+}
+
+export const api: typeof rawApi = READONLY ? guarded(rawApi) : rawApi;

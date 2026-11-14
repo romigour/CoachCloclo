@@ -3,10 +3,16 @@ const sw = self as unknown as {
   addEventListener: (type: string, cb: (e: any) => void) => void;
   skipWaiting: () => void;
   clients: { claim: () => Promise<void> };
+  registration: { scope: string };
 };
 
 const CACHE = "coach-shell-v1";
-const SHELL = ["/", "/manifest.webmanifest", "/icon-192.png", "/icon-512.png", "/logo.svg"];
+// chemins résolus contre la portée du service worker (« / » sur le bureau, « /CoachCloclo/app/ » en mobile)
+const SCOPE = sw.registration.scope;
+const abs = (p: string) => new URL(p, SCOPE).href;
+const SHELL_URL = abs("./");
+const SHELL = [SHELL_URL, abs("manifest.webmanifest"), abs("icon-192.png"), abs("icon-512.png"), abs("logo.svg")];
+const API_PATH = new URL("api", SCOPE).pathname;
 
 sw.addEventListener("install", (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)));
@@ -17,7 +23,7 @@ sw.addEventListener("activate", (e) => {
   e.waitUntil(
     caches
       .keys()
-      .then((keys) => Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k))))
+      .then((keys) => Promise.all(keys.filter((k) => k.startsWith("coach-shell-") && k !== CACHE).map((k) => caches.delete(k))))
       .then(() => sw.clients.claim()),
   );
 });
@@ -25,7 +31,7 @@ sw.addEventListener("activate", (e) => {
 sw.addEventListener("fetch", (e) => {
   const req: Request = e.request;
   const url = new URL(req.url);
-  if (req.method !== "GET" || url.origin !== location.origin || url.pathname.startsWith("/api")) return;
+  if (req.method !== "GET" || url.origin !== location.origin || url.pathname.startsWith(API_PATH)) return;
   // réseau d'abord (fichiers hachés, index à jour), cache en secours hors ligne
   e.respondWith(
     fetch(req)
@@ -36,6 +42,6 @@ sw.addEventListener("fetch", (e) => {
         }
         return res;
       })
-      .catch(async () => (await caches.match(req)) ?? (await caches.match("/")) ?? Response.error()),
+      .catch(async () => (await caches.match(req)) ?? (await caches.match(SHELL_URL)) ?? Response.error()),
   );
 });

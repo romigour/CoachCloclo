@@ -2,6 +2,7 @@
   import { api, type CoachEvent } from "../lib/api";
   import { todayIso } from "../lib/dates";
   import ErrorBanner from "./ErrorBanner.svelte";
+  import { READONLY } from "../lib/mode";
 
   let {
     injury,
@@ -67,15 +68,15 @@
     <p class="hint" role="alert">{failure}</p>
     {#if busy}<p class="meta" role="status">Claude ajuste ton plan… (cela peut prendre une minute)</p>{/if}
     <ErrorBanner {error} />
-    <div class="row"><button class="primary" onclick={retry} disabled={busy}>Réessayer</button></div>
+    {#if !READONLY}<div class="row"><button class="primary" onclick={retry} disabled={busy}>Réessayer</button></div>{/if}
   </div>
 {:else if injury}
   <div class="card stack">
     <div class="row spread">
       <span>Arrêt depuis le {dm(injury.start_date)}</span>
-      {#if !choosing}<button onclick={open}>Signaler la reprise</button>{/if}
+      {#if !READONLY && !choosing}<button onclick={open}>Signaler la reprise</button>{/if}
     </div>
-    {#if choosing}
+    {#if !READONLY && choosing}
       <label>
         Date de reprise
         <input type="date" bind:value={date} />

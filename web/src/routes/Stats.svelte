@@ -24,6 +24,7 @@
   import RunningProgress from "../components/stats/RunningProgress.svelte";
   import Records from "../components/stats/Records.svelte";
   import Races from "../components/stats/Races.svelte";
+  import { READONLY } from "../lib/mode";
 
   let { history, onimport, version = 0 }: { history: HistoryState | null; onimport: () => void; version?: number } =
     $props();
@@ -167,7 +168,7 @@
   {:else if history?.status === "error"}
     <div class="banner warning import-error" role="alert">
       <span>Import de l'historique interrompu : {history.error ?? "erreur inconnue"}</span>
-      <button type="button" class="small" onclick={onimport}>Reprendre</button>
+      {#if !READONLY}<button type="button" class="small" onclick={onimport}>Reprendre</button>{/if}
     </div>
   {/if}
 
@@ -178,8 +179,12 @@
   {:else if activities.length === 0 && history?.status === "idle"}
     <section class="card lg stack first-import">
       <h2>Aucune activité pour l'instant</h2>
-      <p class="meta">Importe ton historique Garmin pour voir tes statistiques.</p>
-      <div class="row"><button type="button" class="primary" onclick={onimport}>Importer mon historique Garmin</button></div>
+      {#if READONLY}
+        <p class="meta">Importe ton historique Garmin depuis l'ordinateur pour voir tes statistiques.</p>
+      {:else}
+        <p class="meta">Importe ton historique Garmin pour voir tes statistiques.</p>
+        <div class="row"><button type="button" class="primary" onclick={onimport}>Importer mon historique Garmin</button></div>
+      {/if}
     </section>
   {:else}
     <Filters {choice} {sport} {options} {years} {period} onchange={change} onreset={reset} />

@@ -10,6 +10,7 @@
   import Icon from "../components/Icon.svelte";
   import EventDialog from "../components/EventDialog.svelte";
   import InjuryBanner from "../components/InjuryBanner.svelte";
+  import { READONLY } from "../lib/mode";
 
   let {
     version = 0,
@@ -78,7 +79,7 @@
     </p>
     <h1>Aujourd'hui</h1>
   </div>
-  {#if plan?.cycle?.plan_accepted}
+  {#if !READONLY && plan?.cycle?.plan_accepted}
     <button onclick={() => (declaring = true)}>Signaler un imprévu</button>
   {/if}
   {#if goal}
@@ -88,7 +89,7 @@
 
 <ErrorBanner {error} onpin={load} />
 
-{#if declaring && plan?.cycle}
+{#if !READONLY && declaring && plan?.cycle}
   <EventDialog
     cycle={plan.cycle}
     weeks={plan.weeks}
@@ -104,14 +105,20 @@
 
 {#if plan}
   {#if !plan.cycle}
-    <p class="card">Aucun objectif pour l'instant. <a href="#/goal">Créer un objectif</a></p>
+    <p class="card">
+      Aucun objectif pour l'instant.
+      {#if READONLY}À faire depuis l'ordinateur.{:else}<a href="#/goal">Créer un objectif</a>{/if}
+    </p>
   {:else if !plan.cycle.plan_accepted && !stale}
-    <p class="card">Ton plan n'est pas encore validé. <a href="#/goal">Relire le brouillon</a></p>
+    <p class="card">
+      Ton plan n'est pas encore validé.
+      {#if READONLY}À faire depuis l'ordinateur.{:else}<a href="#/goal">Relire le brouillon</a>{/if}
+    </p>
   {:else}
     {#if stale}
       <section class="card row spread" aria-label="Plan à recalculer">
         <p>Le plan doit être recalculé pour tenir compte de tes objectifs. En attendant, voici le plan précédent.</p>
-        <a class="more" href="#/plan">Recalculer le plan</a>
+        {#if READONLY}<span class="more">À faire depuis l'ordinateur</span>{:else}<a class="more" href="#/plan">Recalculer le plan</a>{/if}
       </section>
     {/if}
     <InjuryBanner injury={plan.open_injury ?? null} {today} onproposal={goProposal} onresumed={load} />
@@ -164,11 +171,15 @@
 
       <div class="col-side">
         {#if status?.pending_proposal_id != null}
+          {#if READONLY}
+            <p class="proposal-card">Une proposition d'ajustement t'attend sur l'ordinateur</p>
+          {:else}
           <a class="proposal-card" href="#/proposal">
             <span class="k row"><Icon name="chat" size={16} /> PROPOSITION DE CLAUDE</span>
             <strong>Claude propose des changements à ton plan</strong>
             <span class="go">Examiner la proposition →</span>
           </a>
+          {/if}
         {/if}
 
         <section class="card stack">

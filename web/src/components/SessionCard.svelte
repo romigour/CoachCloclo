@@ -9,6 +9,7 @@
   import { formatSteps } from "../lib/steps";
   import { currentZones } from "../lib/zones.svelte";
   import Icon from "./Icon.svelte";
+  import { READONLY } from "../lib/mode";
   import ExportDialog from "./ExportDialog.svelte";
   import IntensityProfile from "./IntensityProfile.svelte";
 
@@ -133,7 +134,7 @@
       <span class="chip">{TYPE_LABEL[session.type] ?? session.type}</span>
       {#if session.sport === "bike"}<span class="chip"><Icon name="bike" size={14} /> Vélo</span>{/if}
     </span>
-    {#if !readonly}
+    {#if READONLY || !readonly}
       <span class="pill {session.status}">{STATUS_LABEL[session.status]}</span>
     {/if}
   </div>
@@ -163,7 +164,14 @@
 
   {#if session.chaining_note}<p class="tip">{session.chaining_note}</p>{/if}
 
-  {#if !readonly}
+  {#if READONLY && (matched || session.status === "done")}
+    <p class="matched">
+      <span class="meta">Activité :</span>
+      {matched ? formatActivity(matched) : "rattachée"}
+    </p>
+  {/if}
+
+  {#if !READONLY && !readonly}
     <div class="row spread">
       {#if matched || session.status === "done"}
         <span class="matched">
@@ -242,7 +250,7 @@
 
   {#if session.sync_error}<p class="banner error">{session.sync_error}</p>{/if}
 
-  {#if !readonly && session.status !== "done" && session.status !== "missed"}
+  {#if !READONLY && !readonly && session.status !== "done" && session.status !== "missed"}
     <div class="actions">
       {#if session.status === "todo"}
         <button class="primary" onclick={() => (dialog = "export")} disabled={busy}>Envoyer sur la montre</button>
@@ -260,6 +268,6 @@
   {/if}
 </article>
 
-{#if dialog}
+{#if !READONLY && dialog}
   <ExportDialog {session} {weekMonday} mode={dialog} onclose={() => (dialog = null)} ondone={done} {onerror} />
 {/if}

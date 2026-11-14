@@ -8,6 +8,7 @@
   import Icon from "../components/Icon.svelte";
   import EventDialog from "../components/EventDialog.svelte";
   import InjuryBanner from "../components/InjuryBanner.svelte";
+  import { READONLY } from "../lib/mode";
   import EventList from "../components/EventList.svelte";
   import PriorityBadge from "../components/PriorityBadge.svelte";
   import { goalLabel } from "../lib/goals";
@@ -101,14 +102,14 @@
     {/if}
     <h1>Programme</h1>
   </div>
-  {#if plan?.cycle?.plan_accepted}
+  {#if !READONLY && plan?.cycle?.plan_accepted}
     <button onclick={() => (declaring = true)}>Signaler un imprévu</button>
   {/if}
 </header>
 
 <ErrorBanner {error} onpin={load} />
 
-{#if declaring && plan?.cycle}
+{#if !READONLY && declaring && plan?.cycle}
   <EventDialog
     cycle={plan.cycle}
     weeks={plan.weeks}
@@ -124,14 +125,20 @@
 
 {#if plan}
   {#if !plan.cycle}
-    <p class="card">Aucun objectif. <a href="#/goal">Créer un objectif</a></p>
+    <p class="card">
+      Aucun objectif.
+      {#if READONLY}À faire depuis l'ordinateur.{:else}<a href="#/goal">Créer un objectif</a>{/if}
+    </p>
   {:else if !plan.cycle.plan_accepted && !stale}
-    <p class="card">Le plan n'est pas encore validé. <a href="#/goal">Relire le brouillon</a></p>
+    <p class="card">
+      Le plan n'est pas encore validé.
+      {#if READONLY}À faire depuis l'ordinateur.{:else}<a href="#/goal">Relire le brouillon</a>{/if}
+    </p>
   {:else}
     {#if stale}
       <section class="card row spread" aria-label="Plan à recalculer">
         <p>Le plan doit être recalculé pour tenir compte de tes objectifs. En attendant, voici le plan précédent.</p>
-        <button class="primary" onclick={generate} disabled={generating}>Générer</button>
+        {#if !READONLY}<button class="primary" onclick={generate} disabled={generating}>Générer</button>{/if}
       </section>
       {#if generating}<p class="card busy" role="status">Claude construit ton plan… (cela peut prendre une minute)</p>{/if}
     {/if}

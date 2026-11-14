@@ -20,11 +20,18 @@
     }
   });
 
-  function fail(e: unknown) {
+  // Après un échec, le serveur a pu changer d'état (ex. retour en local avant un effacement raté) : on relit.
+  async function fail(e: unknown) {
     error = e instanceof Error ? e.message : "Opération impossible";
+    try {
+      view = await api.storage();
+    } catch {
+      // on garde l'affichage actuel
+    }
   }
 
   async function enable() {
+    if (busy) return;
     busy = true;
     error = "";
     try {
@@ -37,7 +44,7 @@
       }
       token = "";
     } catch (e) {
-      fail(e);
+      await fail(e);
     } finally {
       busy = false;
     }
@@ -49,7 +56,7 @@
     try {
       view = await api.disableCloud();
     } catch (e) {
-      fail(e);
+      await fail(e);
     } finally {
       busy = false;
     }
@@ -62,7 +69,7 @@
     try {
       view = await api.wipeCloud();
     } catch (e) {
-      fail(e);
+      await fail(e);
     } finally {
       busy = false;
     }

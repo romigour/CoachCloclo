@@ -109,7 +109,7 @@ test("affiche le message d'erreur cloud_unreachable", async () => {
   await fill();
   await fireEvent.click(screen.getByRole("button", { name: "Stocker mes données dans le cloud" }));
   expect((await screen.findByRole("alert")).textContent).toContain("Base cloud injoignable");
-  expect(screen.getByRole("button", { name: "Stocker mes données dans le cloud" })).toBeTruthy();
+  expect(await screen.findByRole("button", { name: "Stocker mes données dans le cloud" })).toBeTruthy();
 });
 
 test("revenir au local : DELETE puis mode local", async () => {
@@ -151,4 +151,26 @@ test("sans route (404) : bloc masqué", async () => {
   const { container } = render(StorageSettings);
   await new Promise((r) => setTimeout(r, 20));
   expect(container.querySelector("section")).toBeNull();
+});
+
+test("effacement raté après retour en local : relit l'état et garde l'erreur", async () => {
+  storage = { ...cloud };
+  responses = [
+    { status: 503, body: { code: "cloud_unreachable", detail: "Ce PC est revenu en local, mais la base cloud n'a pas pu être vidée" } },
+  ];
+  render(StorageSettings);
+  const button = await screen.findByRole("button", { name: "Effacer mes données du cloud" });
+  storage = { ...local }; // le serveur est revenu en local avant l'échec
+  await fireEvent.click(button);
+  expect(await screen.findByLabelText("URL de la base")).toBeTruthy();
+  expect((screen.getByRole("alert")).textContent).toContain("Ce PC est revenu en local");
+});
+
+test("retour au local raté en mode cloud : l'erreur s'affiche", async () => {
+  storage = { ...cloud };
+  responses = [{ status: 503, body: { code: "cloud_unreachable", detail: "Base cloud injoignable" } }];
+  render(StorageSettings);
+  await fireEvent.click(await screen.findByRole("button", { name: "Revenir au stockage local" }));
+  expect((await screen.findByRole("alert")).textContent).toContain("Base cloud injoignable");
+  expect(screen.getByRole("button", { name: "Revenir au stockage local" })).toBeTruthy();
 });

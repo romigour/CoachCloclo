@@ -2,6 +2,7 @@
   import { onMount } from "svelte";
   import { api, ApiError, claudeSkipped, setupDone, type SetupStatus, type Status } from "./lib/api";
   import { loadZones } from "./lib/zones.svelte";
+  import { READONLY } from "./lib/mode";
   import ErrorBanner from "./components/ErrorBanner.svelte";
   import UpdateBanner from "./components/UpdateBanner.svelte";
   import Sidebar from "./components/Sidebar.svelte";
@@ -14,8 +15,11 @@
   import Race from "./routes/Race.svelte";
   import Stats from "./routes/Stats.svelte";
 
-  const ROUTES = ["today", "plan", "race", "stats", "goal", "setup", "proposal", "welcome"] as const;
-  type Route = (typeof ROUTES)[number];
+  type Route = "today" | "plan" | "race" | "stats" | "goal" | "setup" | "proposal" | "welcome" | "connection";
+  // En lecture seule (PWA mobile) : seules les pages de consultation et la connexion existent.
+  const ROUTES: readonly Route[] = READONLY
+    ? ["today", "plan", "stats", "connection"]
+    : ["today", "plan", "race", "stats", "goal", "setup", "proposal", "welcome"];
 
   let route = $state<Route | null>(parse());
   let raceGoalId = $state<number | null>(parseGoalId()); // #/race/{id} : objectif choisi depuis la page Objectifs
@@ -47,6 +51,7 @@
   /** Page d'accueil : le plan en cours d'abord, sinon le cycle suivant à préparer, sinon les statistiques,
    * sinon l'objectif à fixer. */
   function home(): string {
+    if (READONLY) return status?.cycle?.plan_accepted ? "#/today" : "#/stats";
     if (status?.garmin === "auth_required") return "#/setup";
     if (status?.cycle?.plan_accepted) return "#/today";
     if (toPrepare) return "#/goal";
@@ -77,10 +82,20 @@
   }
 
   async function start() {
+    if (READONLY) {
+      // Import dynamique : libsql ne doit pas entrer dans le bundle bureau.
+      const { loadCredentials } = await import("./lib/turso");
+      if (!loadCredentials()) {
+        location.hash = "#/connection";
+        route = parse();
+        ready = true;
+        return;
+      }
+    }
     const [setup] = await Promise.all([readSetup(), refresh()]);
     setupAvailable = setup !== null;
     ready = true;
-    if (!autoSyncStarted && !error && !storageError && status?.garmin === "ok") {
+    if (!READONLY && !autoSyncStarted && !error && !storageError && status?.garmin === "ok") {
       autoSyncStarted = true;
       sync();
     }
@@ -176,7 +191,7 @@
   <Sidebar {route} {status} {syncing} {lastSync} onsync={sync} />
 
   <main class="content">
-    <UpdateBanner />
+    {#if !READONLY}<UpdateBanner />{/if}
     <ErrorBanner {error} onpin={start} {setupAvailable} />
 
     {#if syncing}
@@ -186,15 +201,22 @@
     {/if}
 
     {#if ready && !(error && (error as { code?: string }).code === "pin_required")}
-      {#if storageError && route !== "setup" && route !== "welcome"}
+      {#if storageError && route !== "setup" && route !== "welcome" && route !== "connection"}
         <section class="card stack" role="alert">
           <h2>Données indisponibles</h2>
           <p>{storageError.detail}</p>
           <div class="row">
             <button type="button" class="primary" onclick={retryStorage}>Réessayer</button>
-            <a href="#/setup">Ouvrir les Réglages</a>
+            {#if READONLY}
+              <a href="#/connection">Modifier la connexion</a>
+            {:else}
+              <a href="#/setup">Ouvrir les Réglages</a>
+            {/if}
           </div>
         </section>
+      {:else if route === "connection"}
+        <!-- Placeholder : l'écran de connexion est fourni par la tâche 8. -->
+        <section class="card"></section>
       {:else if route === "welcome"}
         <Welcome onconnected={garminConnected} />
       {:else if route === "setup"}
@@ -204,7 +226,7 @@
       {:else if (route === "today" || route === "plan") && toPrepare}
         <p class="card">
           Ton cycle est terminé et une course t'attend encore.
-          <a href="#/goal">Préparer le cycle suivant</a>
+          {#if !READONLY}<a href="#/goal">Préparer le cycle suivant</a>{/if}
         </p>
       {:else if route === "today"}
         <Today {version} {status} onerror={failed} />

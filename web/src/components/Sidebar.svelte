@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { Status } from "../lib/api";
   import Icon from "./Icon.svelte";
+  import { READONLY } from "../lib/mode";
 
   let {
     route,
@@ -38,7 +39,7 @@
     <a href="#/plan" class:active={route === "plan"} aria-current={route === "plan" ? "page" : undefined}>
       <Icon name="calendar" /> Programme
     </a>
-    {#if status?.next_goal}
+    {#if !READONLY && status?.next_goal}
       <a href="#/race" class:active={route === "race"} aria-current={route === "race" ? "page" : undefined}>
         <Icon name="race" /> Jour J
       </a>
@@ -46,21 +47,27 @@
     <a href="#/stats" class:active={route === "stats"} aria-current={route === "stats" ? "page" : undefined}>
       <Icon name="chart" /> Statistiques
     </a>
-    <a href="#/proposal" class:active={route === "proposal"} aria-current={route === "proposal" ? "page" : undefined}>
-      <Icon name="chat" /> Propositions
-      {#if status?.pending_proposal_id != null}
-        <span class="count" aria-label="1 proposition en attente">1</span>
-      {/if}
-    </a>
-    <a href="#/goal" class:active={route === "goal"} aria-current={route === "goal" ? "page" : undefined}>
-      <Icon name="flag" /> Objectifs
-    </a>
-    <a href="#/setup" class:active={route === "setup"} aria-current={route === "setup" ? "page" : undefined}>
-      <Icon name="settings" /> Réglages
-    </a>
+    {#if READONLY}
+      <a href="#/connection" class:active={route === "connection"} aria-current={route === "connection" ? "page" : undefined}>
+        <Icon name="settings" /> Connexion
+      </a>
+    {:else}
+      <a href="#/proposal" class:active={route === "proposal"} aria-current={route === "proposal" ? "page" : undefined}>
+        <Icon name="chat" /> Propositions
+        {#if status?.pending_proposal_id != null}
+          <span class="count" aria-label="1 proposition en attente">1</span>
+        {/if}
+      </a>
+      <a href="#/goal" class:active={route === "goal"} aria-current={route === "goal" ? "page" : undefined}>
+        <Icon name="flag" /> Objectifs
+      </a>
+      <a href="#/setup" class:active={route === "setup"} aria-current={route === "setup" ? "page" : undefined}>
+        <Icon name="settings" /> Réglages
+      </a>
+    {/if}
   </nav>
 
-  {#if status}
+  {#if status && !READONLY}
     <div class="garmin-box">
       <span class="state">
         <span class="dot" class:ok={status.garmin === "ok"} class:ko={status.garmin !== "ok"}></span>

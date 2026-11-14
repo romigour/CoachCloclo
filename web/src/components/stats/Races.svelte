@@ -1,5 +1,6 @@
 <script lang="ts">
   import EChart from "./EChart.svelte";
+  import { READONLY } from "../../lib/mode";
   import RaceEditDialog from "./RaceEditDialog.svelte";
   import type { StatActivity } from "../../lib/api";
   import { raceCandidates, type DistanceCategory, type RaceRow } from "../../lib/stats/races";
@@ -101,9 +102,11 @@
 
 <svelte:window onkeydown={pickerKey} />
 
-<div class="head">
-  <button type="button" class="small" onclick={() => (picking = true)}>Ajouter une compétition</button>
-</div>
+{#if !READONLY}
+  <div class="head">
+    <button type="button" class="small" onclick={() => (picking = true)}>Ajouter une compétition</button>
+  </div>
+{/if}
 
 {#if rows.length === 0}
   <p class="empty">Aucune compétition sur cette période</p>
@@ -115,7 +118,7 @@
         <div class="top">
           <span class="date">{fmtDay(r.activity.date)}</span>
           <strong class="name">{raceName(r.activity)}</strong>
-          <button type="button" class="small" onclick={() => (editing = r.activity)} aria-label="Modifier {raceName(r.activity)}">Modifier</button>
+          {#if !READONLY}<button type="button" class="small" onclick={() => (editing = r.activity)} aria-label="Modifier {raceName(r.activity)}">Modifier</button>{/if}
         </div>
         <div class="facts">
           {#if r.timeS !== null}
@@ -161,7 +164,7 @@
   <p class="hint">Plus haut = plus rapide. Distances comparées à ±3 % ; le trail n'est pas comparé.</p>
 {/if}
 
-{#if picking}
+{#if !READONLY && picking}
   <div class="modal-backdrop">
     <div class="modal card picker" role="dialog" aria-modal="true" aria-label="Ajouter une compétition">
       <h3>Ajouter une compétition</h3>
@@ -195,7 +198,7 @@
   </div>
 {/if}
 
-{#if editing}
+{#if !READONLY && editing}
   <RaceEditDialog activity={editing} onsaved={saved} onclose={() => (editing = null)} />
 {/if}
 

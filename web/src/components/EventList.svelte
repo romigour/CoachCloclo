@@ -2,6 +2,7 @@
   import { api, type CoachEvent, type EventKind } from "../lib/api";
   import { todayIso } from "../lib/dates";
   import ErrorBanner from "./ErrorBanner.svelte";
+  import { READONLY } from "../lib/mode";
 
   let {
     today = todayIso(),
@@ -87,12 +88,12 @@
         {#each current as e (e.id)}
           <li class="row spread">
             <span>{LABEL[e.kind]} · {range(e)}{#if e.note} · <span class="meta">{e.note}</span>{/if}</span>
-            <button onclick={() => remove(e)} disabled={busy}>Supprimer</button>
+            {#if !READONLY}<button onclick={() => remove(e)} disabled={busy}>Supprimer</button>{/if}
           </li>
         {/each}
       </ul>
     {/if}
-    {#if recompute}
+    {#if !READONLY && recompute}
       <div class="row">
         <span>Recalculer le plan ?</span>
         <button class="primary" onclick={adjust} disabled={busy}>Oui</button>

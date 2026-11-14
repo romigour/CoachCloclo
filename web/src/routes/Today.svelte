@@ -10,6 +10,7 @@
   import Icon from "../components/Icon.svelte";
   import EventDialog from "../components/EventDialog.svelte";
   import InjuryBanner from "../components/InjuryBanner.svelte";
+  import { READONLY } from "../lib/mode";
 
   let {
     version = 0,
@@ -78,7 +79,7 @@
     </p>
     <h1>Aujourd'hui</h1>
   </div>
-  {#if plan?.cycle?.plan_accepted}
+  {#if !READONLY && plan?.cycle?.plan_accepted}
     <button onclick={() => (declaring = true)}>Signaler un imprévu</button>
   {/if}
   {#if goal}
@@ -88,7 +89,7 @@
 
 <ErrorBanner {error} onpin={load} />
 
-{#if declaring && plan?.cycle}
+{#if !READONLY && declaring && plan?.cycle}
   <EventDialog
     cycle={plan.cycle}
     weeks={plan.weeks}
@@ -164,11 +165,15 @@
 
       <div class="col-side">
         {#if status?.pending_proposal_id != null}
+          {#if READONLY}
+            <p class="proposal-card">Une proposition d'ajustement t'attend sur l'ordinateur</p>
+          {:else}
           <a class="proposal-card" href="#/proposal">
             <span class="k row"><Icon name="chat" size={16} /> PROPOSITION DE CLAUDE</span>
             <strong>Claude propose des changements à ton plan</strong>
             <span class="go">Examiner la proposition →</span>
           </a>
+          {/if}
         {/if}
 
         <section class="card stack">

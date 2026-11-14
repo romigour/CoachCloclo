@@ -1,0 +1,877 @@
+{
+  "active": {
+    "activities": {
+      "1": [
+        {
+          "avg_hr": 140.0,
+          "d_plus_m": 50.0,
+          "date": "2026-03-03",
+          "distance_m": 9000.0,
+          "duration_s": 2700.0,
+          "id": 1,
+          "match_source": "auto",
+          "session_id": 1,
+          "type_key": "running"
+        },
+        {
+          "avg_hr": 120.0,
+          "d_plus_m": null,
+          "date": "2026-03-04",
+          "distance_m": 25000.0,
+          "duration_s": 3600.0,
+          "id": 2,
+          "match_source": null,
+          "session_id": null,
+          "type_key": "cycling"
+        }
+      ],
+      "2": [
+        {
+          "avg_hr": null,
+          "d_plus_m": null,
+          "date": "2026-03-09",
+          "distance_m": 9000.0,
+          "duration_s": 2700.0,
+          "id": 3,
+          "match_source": null,
+          "session_id": null,
+          "type_key": "running"
+        },
+        {
+          "avg_hr": null,
+          "d_plus_m": null,
+          "date": "2026-03-10",
+          "distance_m": 9000.0,
+          "duration_s": 2700.0,
+          "id": 4,
+          "match_source": null,
+          "session_id": null,
+          "type_key": "running"
+        },
+        {
+          "avg_hr": null,
+          "d_plus_m": null,
+          "date": "2026-03-12",
+          "distance_m": 9000.0,
+          "duration_s": 2700.0,
+          "id": 5,
+          "match_source": null,
+          "session_id": null,
+          "type_key": "running"
+        },
+        {
+          "avg_hr": 170.0,
+          "d_plus_m": 300.0,
+          "date": "2026-03-15",
+          "distance_m": 21100.0,
+          "duration_s": 6500.0,
+          "id": 6,
+          "match_source": null,
+          "session_id": null,
+          "type_key": "running"
+        }
+      ],
+      "3": [
+        {
+          "avg_hr": null,
+          "d_plus_m": null,
+          "date": "2026-03-16",
+          "distance_m": 9000.0,
+          "duration_s": 2700.0,
+          "id": 7,
+          "match_source": null,
+          "session_id": null,
+          "type_key": "running"
+        },
+        {
+          "avg_hr": null,
+          "d_plus_m": null,
+          "date": "2026-03-17",
+          "distance_m": 0.0,
+          "duration_s": 0.0,
+          "id": 8,
+          "match_source": null,
+          "session_id": null,
+          "type_key": "running"
+        },
+        {
+          "avg_hr": null,
+          "d_plus_m": null,
+          "date": "2026-03-18",
+          "distance_m": 9000.0,
+          "duration_s": 2700.0,
+          "id": 9,
+          "match_source": null,
+          "session_id": null,
+          "type_key": "running"
+        },
+        {
+          "avg_hr": null,
+          "d_plus_m": null,
+          "date": "2026-03-19",
+          "distance_m": 9000.0,
+          "duration_s": 2700.0,
+          "id": 10,
+          "match_source": null,
+          "session_id": null,
+          "type_key": "running"
+        }
+      ]
+    },
+    "events": [
+      {
+        "days": [
+          "mardi",
+          "dimanche"
+        ],
+        "end_date": "2026-03-22",
+        "id": 2,
+        "kind": "light_week",
+        "max_sessions": 2,
+        "note": "Déplacement",
+        "session_id": null,
+        "start_date": "2026-03-16"
+      },
+      {
+        "days": null,
+        "end_date": null,
+        "id": 1,
+        "kind": "injury",
+        "max_sessions": null,
+        "note": "Tendinite",
+        "session_id": null,
+        "start_date": "2026-03-10"
+      },
+      {
+        "days": null,
+        "end_date": "2026-03-05",
+        "id": 3,
+        "kind": "fatigue",
+        "max_sessions": null,
+        "note": null,
+        "session_id": 2,
+        "start_date": "2026-03-05"
+      }
+    ],
+    "plan": {
+      "cycle": {
+        "available_days": [
+          "lundi",
+          "mardi",
+          "mercredi",
+          "jeudi",
+          "vendredi",
+          "samedi",
+          "dimanche"
+        ],
+        "end_date": "2026-03-22",
+        "id": 1,
+        "include_bike": true,
+        "long_run_day": "dimanche",
+        "needs_generation": false,
+        "plan_accepted": true,
+        "plan_start": "2026-03-02",
+        "sessions_per_week": 3,
+        "status": "active"
+      },
+      "goals": [
+        {
+          "d_plus_m": 300,
+          "distance_km": 21.1,
+          "gpx_summary": {
+            "d_plus_m": 300,
+            "distance_km": 21.1
+          },
+          "id": 1,
+          "priority": "principal",
+          "race_date": "2026-03-15",
+          "status": "active",
+          "target_source": "user",
+          "target_time_s": 6600,
+          "type": "route"
+        },
+        {
+          "d_plus_m": 2000,
+          "distance_km": 42.0,
+          "gpx_summary": null,
+          "id": 2,
+          "priority": "secondaire",
+          "race_date": "2026-03-22",
+          "status": "active",
+          "target_source": "claude",
+          "target_time_s": null,
+          "type": "trail"
+        }
+      ],
+      "horizon": [
+        {
+          "d_plus_m": 5000,
+          "distance_km": 80.0,
+          "gpx_summary": null,
+          "id": 3,
+          "priority": "principal",
+          "race_date": "2026-09-06",
+          "status": "active",
+          "target_source": null,
+          "target_time_s": null,
+          "type": "trail"
+        }
+      ],
+      "open_injury": {
+        "days": null,
+        "end_date": null,
+        "id": 1,
+        "kind": "injury",
+        "max_sessions": null,
+        "note": "Tendinite",
+        "session_id": null,
+        "start_date": "2026-03-10"
+      },
+      "weeks": [
+        {
+          "sessions": [
+            {
+              "chaining_note": null,
+              "description": "Description de la séance 1.",
+              "id": 1,
+              "order": 1,
+              "scheduled_date": null,
+              "sport": "run",
+              "status": "done",
+              "steps": [
+                {
+                  "duration_s": 600,
+                  "kind": "warmup",
+                  "zone": "Z2"
+                }
+              ],
+              "suggested_day": "mardi",
+              "sync_error": null,
+              "target_kind": "hr",
+              "title": "EF mardi",
+              "type": "EF"
+            },
+            {
+              "chaining_note": "Après le vélo",
+              "description": "Description de la séance 2.",
+              "id": 2,
+              "order": 2,
+              "scheduled_date": null,
+              "sport": "run",
+              "status": "missed",
+              "steps": [
+                {
+                  "duration_s": 600,
+                  "kind": "warmup",
+                  "zone": "EF"
+                },
+                {
+                  "repeat": 5,
+                  "steps": [
+                    {
+                      "distance_m": 1000,
+                      "kind": "active",
+                      "zone": "seuil"
+                    },
+                    {
+                      "duration_s": 90,
+                      "kind": "recovery",
+                      "zone": "récup"
+                    }
+                  ]
+                },
+                {
+                  "duration_s": 300,
+                  "kind": "cooldown",
+                  "zone": "EF"
+                }
+              ],
+              "suggested_day": "jeudi",
+              "sync_error": null,
+              "target_kind": "pace",
+              "title": "Seuil jeudi",
+              "type": "seuil"
+            },
+            {
+              "chaining_note": null,
+              "description": "Description de la séance 3.",
+              "id": 3,
+              "order": 3,
+              "scheduled_date": "2026-03-08",
+              "sport": "run",
+              "status": "exported",
+              "steps": [
+                {
+                  "duration_s": 600,
+                  "kind": "warmup",
+                  "zone": "Z2"
+                }
+              ],
+              "suggested_day": "dimanche",
+              "sync_error": null,
+              "target_kind": "hr",
+              "title": "Sortie longue",
+              "type": "sortie longue"
+            }
+          ],
+          "week_index": 1,
+          "week_monday": "2026-03-02"
+        },
+        {
+          "sessions": [
+            {
+              "chaining_note": null,
+              "description": "Description de la séance 4.",
+              "id": 4,
+              "order": 1,
+              "scheduled_date": null,
+              "sport": "run",
+              "status": "sync_error",
+              "steps": [
+                {
+                  "duration_s": 600,
+                  "kind": "warmup",
+                  "zone": "Z2"
+                }
+              ],
+              "suggested_day": "mardi",
+              "sync_error": "Garmin indisponible",
+              "target_kind": "hr",
+              "title": "Séance en erreur",
+              "type": "EF"
+            },
+            {
+              "chaining_note": null,
+              "description": "Description de la séance 5.",
+              "id": 5,
+              "order": 2,
+              "scheduled_date": null,
+              "sport": "bike",
+              "status": "todo",
+              "steps": [
+                {
+                  "duration_s": 2400,
+                  "kind": "active",
+                  "zone": "Z1"
+                }
+              ],
+              "suggested_day": "mercredi",
+              "sync_error": null,
+              "target_kind": "hr",
+              "title": "Vélo récup",
+              "type": "EF"
+            },
+            {
+              "chaining_note": null,
+              "description": "Description de la séance 6.",
+              "id": 6,
+              "order": 3,
+              "scheduled_date": null,
+              "sport": "run",
+              "status": "todo",
+              "steps": [
+                {
+                  "duration_s": 600,
+                  "kind": "warmup",
+                  "zone": "Z2"
+                }
+              ],
+              "suggested_day": "samedi",
+              "sync_error": null,
+              "target_kind": "hr",
+              "title": "Fartlek",
+              "type": "EF"
+            }
+          ],
+          "week_index": 2,
+          "week_monday": "2026-03-09"
+        },
+        {
+          "sessions": [
+            {
+              "chaining_note": null,
+              "description": "Description de la séance 7.",
+              "id": 7,
+              "order": 1,
+              "scheduled_date": null,
+              "sport": "run",
+              "status": "todo",
+              "steps": [
+                {
+                  "duration_s": 600,
+                  "kind": "warmup",
+                  "zone": "Z2"
+                }
+              ],
+              "suggested_day": "mardi",
+              "sync_error": null,
+              "target_kind": "hr",
+              "title": "Dernier footing",
+              "type": "EF"
+            },
+            {
+              "chaining_note": null,
+              "description": "Description de la séance 8.",
+              "id": 8,
+              "order": 2,
+              "scheduled_date": null,
+              "sport": "run",
+              "status": "todo",
+              "steps": [
+                {
+                  "distance_m": 21100,
+                  "kind": "active",
+                  "zone": "marathon"
+                }
+              ],
+              "suggested_day": "dimanche",
+              "sync_error": null,
+              "target_kind": "pace",
+              "title": "Course objectif",
+              "type": "course"
+            }
+          ],
+          "week_index": 3,
+          "week_monday": "2026-03-16"
+        }
+      ]
+    },
+    "stats_activities": {
+      "activities": [
+        {
+          "avg_hr": 140.0,
+          "d_plus_m": 50.0,
+          "date": "2026-03-03",
+          "distance_m": 9000.0,
+          "duration_s": 2700.0,
+          "family": "run",
+          "garmin_id": 9001,
+          "hr_zones_s": null,
+          "id": 1,
+          "max_hr": 165,
+          "name": "Footing",
+          "race": null,
+          "start": "2026-03-03 07:00:00",
+          "type_key": "running",
+          "vo2max": null
+        },
+        {
+          "avg_hr": 120.0,
+          "d_plus_m": null,
+          "date": "2026-03-04",
+          "distance_m": 25000.0,
+          "duration_s": 3600.0,
+          "family": "bike",
+          "garmin_id": 9002,
+          "hr_zones_s": null,
+          "id": 2,
+          "max_hr": null,
+          "name": "Vélo libre",
+          "race": null,
+          "start": null,
+          "type_key": "cycling",
+          "vo2max": null
+        },
+        {
+          "avg_hr": null,
+          "d_plus_m": null,
+          "date": "2026-03-09",
+          "distance_m": 9000.0,
+          "duration_s": 2700.0,
+          "family": "run",
+          "garmin_id": 9003,
+          "hr_zones_s": null,
+          "id": 3,
+          "max_hr": null,
+          "name": null,
+          "race": null,
+          "start": null,
+          "type_key": "running",
+          "vo2max": null
+        },
+        {
+          "avg_hr": null,
+          "d_plus_m": null,
+          "date": "2026-03-10",
+          "distance_m": 9000.0,
+          "duration_s": 2700.0,
+          "family": "run",
+          "garmin_id": 9004,
+          "hr_zones_s": null,
+          "id": 4,
+          "max_hr": null,
+          "name": null,
+          "race": null,
+          "start": null,
+          "type_key": "running",
+          "vo2max": null
+        },
+        {
+          "avg_hr": null,
+          "d_plus_m": null,
+          "date": "2026-03-12",
+          "distance_m": 9000.0,
+          "duration_s": 2700.0,
+          "family": "run",
+          "garmin_id": 9005,
+          "hr_zones_s": null,
+          "id": 5,
+          "max_hr": null,
+          "name": null,
+          "race": {
+            "category": null,
+            "category_rank": null,
+            "category_total": null,
+            "name": null,
+            "official_time_s": null,
+            "overall_rank": null,
+            "overall_total": null
+          },
+          "start": null,
+          "type_key": "running",
+          "vo2max": null
+        },
+        {
+          "avg_hr": 170.0,
+          "d_plus_m": 300.0,
+          "date": "2026-03-15",
+          "distance_m": 21100.0,
+          "duration_s": 6500.0,
+          "family": "run",
+          "garmin_id": 9006,
+          "hr_zones_s": null,
+          "id": 6,
+          "max_hr": null,
+          "name": "Semi",
+          "race": {
+            "category": "V1H",
+            "category_rank": 15,
+            "category_total": 100,
+            "name": "Semi de test",
+            "official_time_s": 6480,
+            "overall_rank": 120,
+            "overall_total": 900
+          },
+          "start": null,
+          "type_key": "running",
+          "vo2max": null
+        },
+        {
+          "avg_hr": null,
+          "d_plus_m": null,
+          "date": "2026-03-16",
+          "distance_m": 9000.0,
+          "duration_s": 2700.0,
+          "family": "run",
+          "garmin_id": 9007,
+          "hr_zones_s": null,
+          "id": 7,
+          "max_hr": null,
+          "name": null,
+          "race": null,
+          "start": null,
+          "type_key": "running",
+          "vo2max": null
+        },
+        {
+          "avg_hr": null,
+          "d_plus_m": null,
+          "date": "2026-03-17",
+          "distance_m": null,
+          "duration_s": null,
+          "family": "run",
+          "garmin_id": 9008,
+          "hr_zones_s": null,
+          "id": 8,
+          "max_hr": null,
+          "name": null,
+          "race": null,
+          "start": null,
+          "type_key": "running",
+          "vo2max": null
+        },
+        {
+          "avg_hr": null,
+          "d_plus_m": null,
+          "date": "2026-03-18",
+          "distance_m": 9000.0,
+          "duration_s": 2700.0,
+          "family": "run",
+          "garmin_id": 9009,
+          "hr_zones_s": [
+            100.0,
+            200.0,
+            300.0,
+            400.0,
+            500.0
+          ],
+          "id": 9,
+          "max_hr": null,
+          "name": null,
+          "race": null,
+          "start": null,
+          "type_key": "running",
+          "vo2max": null
+        },
+        {
+          "avg_hr": null,
+          "d_plus_m": null,
+          "date": "2026-03-19",
+          "distance_m": 9000.0,
+          "duration_s": 2700.0,
+          "family": "run",
+          "garmin_id": 9010,
+          "hr_zones_s": null,
+          "id": 10,
+          "max_hr": null,
+          "name": null,
+          "race": null,
+          "start": null,
+          "type_key": "running",
+          "vo2max": null
+        }
+      ]
+    },
+    "stats_records": {
+      "records": [
+        {
+          "date": "2026-03-03",
+          "garmin_activity_id": 9001,
+          "kind": "5k",
+          "value": 1350.0
+        },
+        {
+          "date": null,
+          "garmin_activity_id": null,
+          "kind": "longest_run",
+          "value": 21100.0
+        }
+      ]
+    },
+    "status": {
+      "cycle": {
+        "available_days": [
+          "lundi",
+          "mardi",
+          "mercredi",
+          "jeudi",
+          "vendredi",
+          "samedi",
+          "dimanche"
+        ],
+        "end_date": "2026-03-22",
+        "id": 1,
+        "include_bike": true,
+        "long_run_day": "dimanche",
+        "needs_generation": false,
+        "plan_accepted": true,
+        "plan_start": "2026-03-02",
+        "sessions_per_week": 3,
+        "status": "active"
+      },
+      "goals": [
+        {
+          "d_plus_m": 300,
+          "distance_km": 21.1,
+          "gpx_summary": {
+            "d_plus_m": 300,
+            "distance_km": 21.1
+          },
+          "id": 1,
+          "priority": "principal",
+          "race_date": "2026-03-15",
+          "status": "active",
+          "target_source": "user",
+          "target_time_s": 6600,
+          "type": "route"
+        },
+        {
+          "d_plus_m": 2000,
+          "distance_km": 42.0,
+          "gpx_summary": null,
+          "id": 2,
+          "priority": "secondaire",
+          "race_date": "2026-03-22",
+          "status": "active",
+          "target_source": "claude",
+          "target_time_s": null,
+          "type": "trail"
+        },
+        {
+          "d_plus_m": 5000,
+          "distance_km": 80.0,
+          "gpx_summary": null,
+          "id": 3,
+          "priority": "principal",
+          "race_date": "2026-09-06",
+          "status": "active",
+          "target_source": null,
+          "target_time_s": null,
+          "type": "trail"
+        }
+      ],
+      "has_activities": true,
+      "history": {
+        "error": null,
+        "imported": 42,
+        "status": "done"
+      },
+      "last_cycle": null,
+      "next_goal": {
+        "d_plus_m": 300,
+        "distance_km": 21.1,
+        "gpx_summary": {
+          "d_plus_m": 300,
+          "distance_km": 21.1
+        },
+        "id": 1,
+        "priority": "principal",
+        "race_date": "2026-03-15",
+        "status": "active",
+        "target_source": "user",
+        "target_time_s": 6600,
+        "type": "route"
+      },
+      "past_goals": [
+        {
+          "d_plus_m": 0,
+          "distance_km": 10.0,
+          "gpx_summary": null,
+          "id": 4,
+          "priority": "plaisir",
+          "race_date": "2025-11-02",
+          "status": "done",
+          "target_source": "user",
+          "target_time_s": 2700,
+          "type": "route"
+        }
+      ],
+      "pending_proposal_id": 1
+    },
+    "zones": {
+      "hr": {
+        "Z1": [
+          120,
+          134
+        ],
+        "Z2": [
+          134,
+          148
+        ],
+        "Z3": [
+          148,
+          162
+        ],
+        "Z4": [
+          162,
+          176
+        ],
+        "Z5": [
+          176,
+          190
+        ]
+      },
+      "pace": {
+        "EF": [
+          360,
+          396
+        ],
+        "VMA": [
+          264,
+          279
+        ],
+        "marathon": [
+          318,
+          336
+        ],
+        "récup": [
+          390,
+          435
+        ],
+        "seuil": [
+          294,
+          309
+        ]
+      },
+      "source": [
+        "lactate_threshold",
+        "karvonen"
+      ]
+    }
+  },
+  "between": {
+    "activities": {},
+    "events": [],
+    "plan": {
+      "cycle": null,
+      "goals": [],
+      "horizon": [],
+      "open_injury": null,
+      "weeks": []
+    },
+    "stats_activities": {
+      "activities": []
+    },
+    "stats_records": {
+      "records": []
+    },
+    "status": {
+      "cycle": null,
+      "goals": [
+        {
+          "d_plus_m": 1000,
+          "distance_km": 50.0,
+          "gpx_summary": null,
+          "id": 1,
+          "priority": "principal",
+          "race_date": "2099-06-01",
+          "status": "active",
+          "target_source": null,
+          "target_time_s": null,
+          "type": "trail"
+        }
+      ],
+      "has_activities": false,
+      "history": {
+        "error": null,
+        "imported": 0,
+        "status": "idle"
+      },
+      "last_cycle": {
+        "available_days": [
+          "lundi",
+          "mardi",
+          "mercredi",
+          "jeudi",
+          "vendredi",
+          "samedi",
+          "dimanche"
+        ],
+        "end_date": "2020-03-01",
+        "id": 1,
+        "include_bike": false,
+        "long_run_day": "samedi",
+        "needs_generation": false,
+        "plan_accepted": true,
+        "plan_start": "2020-01-06",
+        "sessions_per_week": 4,
+        "status": "done"
+      },
+      "next_goal": {
+        "d_plus_m": 1000,
+        "distance_km": 50.0,
+        "gpx_summary": null,
+        "id": 1,
+        "priority": "principal",
+        "race_date": "2099-06-01",
+        "status": "active",
+        "target_source": null,
+        "target_time_s": null,
+        "type": "trail"
+      },
+      "past_goals": [],
+      "pending_proposal_id": null
+    },
+    "zones": null
+  }
+}

@@ -2,6 +2,7 @@
 
 Les deux moteurs sont déjà préparés (schéma présent, même version). La destination
 peut être libSQL : aucune dépendance aux types d'exception du driver.
+Hypothèse : `dst` n'a pas de colonne NOT NULL absente du modèle (schéma préparé par l'app).
 """
 
 import datetime as dt
@@ -24,6 +25,11 @@ class CopyMismatch(Exception):
     def __init__(self, table: str):
         super().__init__(f"Copie incomplète : table {table}")
         self.table = table
+
+
+def _not_marker(table: Table) -> tuple:
+    """Le marqueur de fin n'est ni copié ni compté : il n'appartient qu'à la destination."""
+    return (_STATE.c.key != COMPLETE_KEY,) if table is _STATE else ()
 
 
 def _count(conn, table: Table, *where) -> int:
@@ -57,7 +63,7 @@ def copy_all(src: Engine, dst: Engine) -> None:
         for table in reversed(tables):
             dconn.execute(delete(table))
         for table in tables:
-            result = sconn.execute(select(table))
+            result = sconn.execute(select(table).where(*_not_marker(table)))
             while batch := result.mappings().fetchmany(BATCH):
                 _insert_rows(dconn, table, [dict(r) for r in batch])
 
@@ -66,7 +72,8 @@ def verify_copy(src: Engine, dst: Engine) -> None:
     """Compare les nombres de lignes par table, puis écrit le marqueur de fin dans `dst`."""
     with src.connect() as sconn, dst.connect() as dconn:
         for table in SQLModel.metadata.sorted_tables:
-            if _count(sconn, table) != _count(dconn, table):
+            where = _not_marker(table)
+            if _count(sconn, table, *where) != _count(dconn, table, *where):
                 raise CopyMismatch(table.name)
     marker = json.dumps({"at": dt.datetime.now(dt.timezone.utc).isoformat()})
     with dst.begin() as conn:

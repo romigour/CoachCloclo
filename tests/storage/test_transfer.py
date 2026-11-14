@@ -111,3 +111,22 @@ def test_copy_to_libsql_file(src, tmp_path):
     assert not is_empty(dst)
     assert Repo(dst).gpx(1) == b"\x00\x01<gpx>\xff</gpx>"
     assert Repo(dst).get_state("history") == {"n": 3}
+
+
+def test_source_marker_not_copied_and_failed_verify_stays_empty(src, dst):
+    Repo(src).set_state("copy_complete", {"at": "old"})
+    copy_all(src, dst)
+    assert is_empty(dst)
+    with Repo(src).transaction() as db:
+        db.add(make_goal(distance_km=5))
+    with pytest.raises(CopyMismatch):
+        verify_copy(src, dst)
+    assert is_empty(dst)
+
+
+def test_parent_child_ids_preserved(src, dst):
+    copy_all(src, dst)
+    with src.connect() as s, dst.connect() as d:
+        for model in (Cycle, Session):
+            t = model.__table__
+            assert s.execute(select(t).order_by(t.c.id)).all() == d.execute(select(t).order_by(t.c.id)).all()

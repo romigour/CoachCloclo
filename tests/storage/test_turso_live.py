@@ -155,3 +155,62 @@ def test_turso_copy_roundtrip(tmp_path):
         wipe(cloud)
         cloud.dispose()
         local.dispose()
+
+
+def test_turso_copy_roundtrip_realistic(tmp_path):
+    """Volume réaliste : ~2000 activités avec leurs tours et un GPX de ~3 Mo.
+
+    Mesure copie + vérification vers Turso (une seule transaction distante, INSERT par lots de
+    `transfer.BATCH` lignes). ATTENTION : vide la base de TEST distante."""
+    import json
+
+    from coach.plan.models import ActivityLaps
+    from coach.plan.repo import make_engine
+    from coach.storage import transfer
+    from coach.storage.source import LocalSource, TursoSource
+    from coach.storage.switch import disable_cloud
+    from coach.storage.transfer import copy_all, is_empty, verify_copy, wipe
+    from tests.plan.factories import make_cycle, make_db_session
+
+    n = 2000
+    laps = json.dumps([{"index": i, "duration_s": 300, "distance_m": 1000, "avg_hr": 150} for i in range(10)])
+    point = '<trkpt lat="45.000000" lon="6.000000"><ele>1000.0</ele></trkpt>\n'
+    gpx = ("<gpx><trk><trkseg>\n" + point * (3_000_000 // len(point)) + "</trkseg></trk></gpx>").encode()
+    local = make_engine(tmp_path / "coach.db")
+    repo = Repo(local)
+    with repo.transaction() as db:
+        cycle = make_cycle()
+        db.add(cycle)
+        goal = make_goal()
+        db.add(goal)
+        db.flush()
+        db.add(make_db_session(cycle.id))
+        activities = [
+            make_activity(garmin_activity_id=_BASE_ID + i, date=date(2020, 1, 1) + timedelta(days=i))
+            for i in range(n)
+        ]
+        db.add_all(activities)
+        db.flush()
+        db.add_all(ActivityLaps(activity_id=a.id, laps_json=laps) for a in activities)
+        repo.save_gpx(db, goal.id, gpx)
+    cloud = TursoSource(URL, TOKEN).engine()
+    try:
+        wipe(cloud)
+        start = time.perf_counter()
+        copy_all(local, cloud)
+        verify_copy(local, cloud)
+        elapsed = time.perf_counter() - start
+        print(f"copie + vérification de {n} activités (tours, GPX {len(gpx) / 1e6:.1f} Mo, lots de {transfer.BATCH}) : {elapsed:.2f} s")
+        assert not is_empty(cloud)
+        assert Repo(cloud).gpx(goal.id) == gpx
+        (tmp_path / "back").mkdir()
+        start = time.perf_counter()
+        back = disable_cloud(cloud, LocalSource(tmp_path / "back" / "coach.db"))
+        print(f"retour en local : {time.perf_counter() - start:.2f} s")
+        assert len(Repo(back).all_activities()) == n
+        assert Repo(back).gpx(goal.id) == gpx
+        back.dispose()
+    finally:
+        wipe(cloud)
+        cloud.dispose()
+        local.dispose()

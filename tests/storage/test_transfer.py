@@ -8,7 +8,7 @@ from sqlmodel import SQLModel
 
 import coach.storage.libsql_dialect  # noqa: F401  (enregistre le dialecte)
 from coach.plan import repo as repo_mod
-from coach.plan.models import Activity, Cycle, Goal, Session
+from coach.plan.models import Activity, Cycle, GarminLock, Goal, Session
 from coach.plan.repo import Repo, make_engine, prepare_engine
 from coach.storage import transfer
 from coach.storage.transfer import CopyMismatch, copy_all, is_empty, verify_copy, wipe
@@ -130,3 +130,18 @@ def test_parent_child_ids_preserved(src, dst):
         for model in (Cycle, Session):
             t = model.__table__
             assert s.execute(select(t).order_by(t.c.id)).all() == d.execute(select(t).order_by(t.c.id)).all()
+
+
+def test_garmin_lock_neither_copied_nor_counted(src, dst):
+    now = dt.datetime.now(dt.timezone.utc)
+    with Repo(src).transaction() as db:
+        db.add(GarminLock(holder="pc-source", expires_at=now))
+    with Repo(dst).transaction() as db:
+        db.add(GarminLock(holder="pc-destination", expires_at=now))
+    copy_all(src, dst)
+    verify_copy(src, dst)  # 1 verrou de chaque côté, mais pas comparés
+    with dst.connect() as c:
+        assert c.execute(select(GarminLock.__table__.c.holder)).scalars().all() == ["pc-destination"]
+    with dst.begin() as c:
+        c.execute(delete(GarminLock.__table__))
+    verify_copy(src, dst)  # nombre de verrous différent : pas une copie incomplète

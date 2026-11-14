@@ -11,12 +11,13 @@ import json
 from sqlalchemy import Engine, Table, delete, func, insert, select
 from sqlmodel import SQLModel
 
-from coach.plan.models import AppState
+from coach.plan.models import AppState, GarminLock
 
-BATCH = 500
+BATCH = 500  # lignes par INSERT : borne la taille de chaque requête vers la base distante
 COMPLETE_KEY = "copy_complete"
 _TECHNICAL_KEYS = ("schema_version", COMPLETE_KEY)
 _STATE = AppState.__table__
+_LOCK = GarminLock.__table__  # verrou entre PC : propre à chaque base, jamais copié ni compté
 
 
 class CopyMismatch(Exception):
@@ -32,6 +33,10 @@ def _not_marker(table: Table) -> tuple:
     return (_STATE.c.key != COMPLETE_KEY,) if table is _STATE else ()
 
 
+def _data_tables() -> list[Table]:
+    return [t for t in SQLModel.metadata.sorted_tables if t is not _LOCK]
+
+
 def _count(conn, table: Table, *where) -> int:
     return conn.execute(select(func.count()).select_from(table).where(*where)).scalar() or 0
 
@@ -42,7 +47,7 @@ def is_empty(engine: Engine) -> bool:
         marker = conn.execute(select(_STATE.c.key).where(_STATE.c.key == COMPLETE_KEY)).first()
         if marker is None:
             return True
-        for table in SQLModel.metadata.sorted_tables:
+        for table in _data_tables():
             where = (_STATE.c.key.not_in(_TECHNICAL_KEYS),) if table is _STATE else ()
             if _count(conn, table, *where):
                 return False
@@ -54,11 +59,11 @@ def _insert_rows(conn, table: Table, rows: list[dict]) -> None:
 
 
 def copy_all(src: Engine, dst: Engine) -> None:
-    """Vide `dst` puis y copie toutes les tables, en une transaction."""
+    """Vide `dst` puis y copie toutes les tables (sauf le verrou Garmin), en une transaction."""
     # Marqueur effacé et validé d'abord : une copie interrompue n'est jamais « complète ».
     with dst.begin() as conn:
         conn.execute(delete(_STATE).where(_STATE.c.key == COMPLETE_KEY))
-    tables = SQLModel.metadata.sorted_tables
+    tables = _data_tables()
     with src.connect() as sconn, dst.begin() as dconn:
         for table in reversed(tables):
             dconn.execute(delete(table))
@@ -71,7 +76,7 @@ def copy_all(src: Engine, dst: Engine) -> None:
 def verify_copy(src: Engine, dst: Engine) -> None:
     """Compare les nombres de lignes par table, puis écrit le marqueur de fin dans `dst`."""
     with src.connect() as sconn, dst.connect() as dconn:
-        for table in SQLModel.metadata.sorted_tables:
+        for table in _data_tables():
             where = _not_marker(table)
             if _count(sconn, table, *where) != _count(dconn, table, *where):
                 raise CopyMismatch(table.name)

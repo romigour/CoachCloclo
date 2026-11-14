@@ -1,8 +1,6 @@
 """Import de tout l'historique Garmin en arrière-plan, avec état persistant."""
 
 import logging
-import os
-import tempfile
 import threading
 import time
 from collections.abc import Callable
@@ -11,7 +9,6 @@ from typing import Literal
 
 from pydantic import BaseModel
 
-from coach.config import data_dir
 from coach.garmin.port import (
     GarminAuthRequired,
     GarminPort,
@@ -36,41 +33,30 @@ class HistoryState(BaseModel):
     finished_at: datetime | None = None
 
 
-def _state_path():
-    # Fichier dédié : la synchro réécrit settings.json en entier et l'écraserait.
-    return data_dir() / "history.json"
+STATE_KEY = "history"
 
 
-def load_state() -> HistoryState:
+def load_state(repo: Repo) -> HistoryState:
+    raw = repo.get_state(STATE_KEY)
+    if raw is None:
+        return HistoryState()
     try:
-        return HistoryState.model_validate_json(_state_path().read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+        return HistoryState.model_validate(raw)
+    except ValueError:
         return HistoryState()
 
 
-def save_state(s: HistoryState) -> None:
-    """Écriture atomique : fichier temporaire voisin puis remplacement, pour ne jamais lire un JSON tronqué."""
-    path = _state_path()
-    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix="history-", suffix=".tmp")
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            f.write(s.model_dump_json())
-        os.replace(tmp, path)
-    except BaseException:
-        try:
-            os.unlink(tmp)
-        except OSError:
-            pass
-        raise
+def save_state(repo: Repo, s: HistoryState) -> None:
+    repo.set_state(STATE_KEY, s.model_dump(mode="json"))
 
 
-def recover_orphan() -> None:
+def recover_orphan(repo: Repo) -> None:
     """Un import « en cours » trouvé au démarrage a été interrompu : on le marque en erreur."""
-    state = load_state()
+    state = load_state(repo)
     if state.status == "running":
         state.status = "error"
         state.error = "Import interrompu"
-        save_state(state)
+        save_state(repo, state)
 
 
 def refresh_records(repo: Repo, garmin: GarminPort) -> bool:
@@ -101,7 +87,7 @@ def import_history(
     importé est conservé et l'état passe à `error` avant de relever l'exception.
     """
     state = HistoryState(status="running")
-    save_state(state)
+    save_state(repo, state)
     total = 0
     try:
         offset = 0
@@ -109,7 +95,7 @@ def import_history(
             page = garmin.activities_page(offset, PAGE_SIZE)
             total += store_summaries(repo, page)
             state.imported = total
-            save_state(state)
+            save_state(repo, state)
             # Fin d'historique sur page vide seulement : une page incomplète peut
             # venir d'activités illisibles écartées par le client.
             if not page:
@@ -120,11 +106,11 @@ def import_history(
     except Exception as exc:
         state.status = "error"
         state.error = _error_message(exc)
-        save_state(state)
+        save_state(repo, state)
         raise
     state.status = "done"
     state.finished_at = datetime.now(timezone.utc)
-    save_state(state)
+    save_state(repo, state)
     return total
 
 
@@ -157,7 +143,7 @@ class HistoryRunner:
             try:
                 garmin = self._factory()
             except Exception as exc:
-                save_state(HistoryState(status="error", error=_error_message(exc)))
+                save_state(self._repo, HistoryState(status="error", error=_error_message(exc)))
                 return
             try:
                 import_history(self._repo, garmin)

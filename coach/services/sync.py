@@ -6,7 +6,6 @@ from pydantic import BaseModel
 
 from coach.analysis.compliance import mark_missed, match_activities
 from coach.analysis.zones import Zones
-from coach.config import load_settings, save_settings
 from coach.garmin.port import GarminPort
 from coach.llm.provider import LLMProvider
 from coach.plan.models import Activity, Cycle, Session
@@ -23,6 +22,28 @@ FIRST_SYNC_DAYS = 56
 OVERLAP_DAYS = 2
 
 
+SYNC_KEY = "sync"
+
+
+class SyncState(BaseModel):
+    last_sync_at: datetime | None = None
+    proposal_due: bool = False
+
+
+def load_sync_state(repo: Repo) -> SyncState:
+    raw = repo.get_state(SYNC_KEY)
+    if raw is None:
+        return SyncState()
+    try:
+        return SyncState.model_validate(raw)
+    except ValueError:
+        return SyncState()
+
+
+def save_sync_state(repo: Repo, s: SyncState) -> None:
+    repo.set_state(SYNC_KEY, s.model_dump(mode="json"))
+
+
 class SyncResult(BaseModel):
     new_activities: int
     matched: int
@@ -34,7 +55,7 @@ def sync(repo: Repo, garmin: GarminPort, llm: LLMProvider, *, now: datetime) -> 
     """Importe, rattache, marque les séances manquées, clôt objectifs et cycle passés, puis propose un ajustement."""
     _, zones = refresh_snapshot(repo, garmin)
     today = garmin.today()
-    settings = load_settings()
+    settings = load_sync_state(repo)
     if settings.last_sync_at is not None:
         since = settings.last_sync_at.date() - timedelta(days=OVERLAP_DAYS)
     else:
@@ -74,7 +95,7 @@ def sync(repo: Repo, garmin: GarminPort, llm: LLMProvider, *, now: datetime) -> 
 
     settings.last_sync_at = now
     settings.proposal_due = cycle is not None and (settings.proposal_due or bool(pairs or missed_ids))
-    save_settings(settings)
+    save_sync_state(repo, settings)
 
     proposal_id = None
     # arrêt en cours : pas de proposition ; `proposal_due` reste vrai jusqu'à la reprise ou la suppression
@@ -86,7 +107,7 @@ def sync(repo: Repo, garmin: GarminPort, llm: LLMProvider, *, now: datetime) -> 
     ):
         proposal_id = _propose(repo, garmin, llm, cycle, zones, pairs, missed_ids, today)
         settings.proposal_due = False
-        save_settings(settings)
+        save_sync_state(repo, settings)
     return SyncResult(
         new_activities=new_activities,
         matched=len(pairs),

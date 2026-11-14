@@ -34,6 +34,7 @@ class Settings(BaseModel):
     anthropic_api_key: str | None = None
     anthropic_model: str = "claude-sonnet-5-5"
     pin_hash: str | None = None
+    # hérités : lus une fois par `import_legacy_files`, jamais réécrits (l'état est en base)
     last_sync_at: datetime | None = None
     proposal_due: bool = False
     lan_enabled: bool = False

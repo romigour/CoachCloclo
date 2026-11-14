@@ -164,8 +164,8 @@ def test_race_in_past_rejected(repo, fake_garmin):
 def test_gpx_dplus_used_when_not_given(repo, coach_home, fake_garmin):
     g = first_goal(repo, fake_garmin, d_plus_m=0, gpx=FIXTURES / "climb.gpx")
     assert g.d_plus_m == pytest.approx(600, abs=30)
-    assert (coach_home / "gpx" / f"{g.id}.gpx").exists()
-    assert g.gpx_summary_json and g.gpx_path
+    assert g.gpx_summary_json
+    assert repo.gpx(g.id) == (FIXTURES / "climb.gpx").read_bytes()
 
 
 def test_given_dplus_kept_with_gpx(repo, coach_home, fake_garmin):
@@ -183,14 +183,20 @@ def test_gpx_error_creates_no_goal(repo, fake_garmin):
     assert _goals(repo) == [] and repo.active_cycle() is None
 
 
+def test_goal_gpx_stored_in_db(repo, coach_home, fake_garmin):
+    g = first_goal(repo, fake_garmin, gpx=FIXTURES / "climb.gpx")
+    assert repo.gpx(g.id) == (FIXTURES / "climb.gpx").read_bytes()
+    assert not (coach_home / "gpx").exists()
+
+
 def test_gpx_write_failure_saves_nothing(repo, coach_home, fake_garmin, monkeypatch):
     old = first_goal(repo, fake_garmin)
     cycle = repo.active_cycle()
 
-    def boom(self, data):
-        raise OSError("disque plein")
+    def boom(self, db, goal_id, data):
+        raise OSError("base pleine")
 
-    monkeypatch.setattr(Path, "write_bytes", boom)
+    monkeypatch.setattr(type(repo), "save_gpx", boom)
     with pytest.raises(OSError):
         add_goal(
             repo, fake_garmin, FakeLLMProvider([]),
@@ -198,7 +204,6 @@ def test_gpx_write_failure_saves_nothing(repo, coach_home, fake_garmin, monkeypa
         )
     assert [g.id for g in _goals(repo)] == [old.id]
     assert repo.active_cycle().model_dump() == cycle.model_dump()
-    assert not list((coach_home / "gpx").glob("*.gpx"))
 
 
 def test_parse_target_time():

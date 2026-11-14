@@ -23,7 +23,7 @@ from coach.analysis.compliance import activity_types_for
 from coach.analysis.gpx import GpxError
 from coach.api.desktop_routes import desktop_router
 from coach.api.deps import get_garmin, get_llm, is_loopback, verify_pin
-from coach.config import Settings, db_path, load_settings, save_settings, tokenstore_dir
+from coach.config import Settings, data_dir, db_path, load_settings, save_settings, tokenstore_dir
 from coach.desktop.context import Desktop
 from coach.garmin.client import GarminClient
 from coach.garmin.port import (
@@ -60,6 +60,7 @@ from coach.analysis.race_plan import RaceSettings
 from coach.services import race_strategy
 from coach.services.adjust import request_adjustment
 from coach.services.events import EventInput, EventResult, create_event, delete_event, resume_injury
+from coach.storage.legacy import import_legacy_files
 from coach.services.history import HistoryRunner, load_state, recover_orphan
 from coach.services.laps import fetch_laps, latest_zones, session_comparison
 from coach.services.sync import sync
@@ -306,13 +307,15 @@ def create_app(
     app.state.garmin_factory = garmin_factory
     app.state.llm_factory = llm_factory
     app.state.repo = repo or Repo(make_engine(db_path()))
+    if repo is None:  # reprise des fichiers d'une installation existante (idempotente)
+        import_legacy_files(app.state.repo, data_dir())
     app.state.mfa = {}  # login_id -> (état MFA, expiration) ; jamais renvoyé au client
     app.state.lan = lan
     app.state.sessions = set()
     app.state.pin_failures = 0
     app.state.pin_locked_until = 0.0
     pin_lock = threading.Lock()
-    recover_orphan()  # un import resté « en cours » a été interrompu par l'arrêt précédent
+    recover_orphan(app.state.repo)  # un import resté « en cours » a été interrompu par l'arrêt précédent
     app.state.history = HistoryRunner(app.state.repo, garmin_factory)
     _register_errors(app)
 
@@ -367,7 +370,7 @@ def create_app(
         cycle = repo.active_cycle()
         goals = repo.upcoming_goals()
         proposal = repo.pending_proposal()
-        history = load_state()
+        history = load_state(repo)
         # le thread peut ne pas avoir encore écrit son état : le runner fait foi
         history_status = "running" if app.state.history.running else history.status
         return {
@@ -707,7 +710,7 @@ def create_app(
     @api.post("/sync")
     def post_sync(repo: RepoDep, garmin: GarminDep, llm: LLMDep):
         result = sync(repo, garmin, llm, now=datetime.now(timezone.utc))
-        if load_state().status == "idle":  # premier lancement : import de l'historique complet
+        if load_state(repo).status == "idle":  # premier lancement : import de l'historique complet
             app.state.history.start()
         return result
 

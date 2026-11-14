@@ -68,9 +68,9 @@ def _home(coach_home):
 
 
 @pytest.fixture(autouse=True)
-def _history_done(_home):
+def _history_done(_home, repo):
     """Historique déjà importé : POST /api/sync ne lance pas d'import en arrière-plan."""
-    save_state(HistoryState(status="done"))
+    save_state(repo, HistoryState(status="done"))
 
 
 @pytest.fixture
@@ -910,27 +910,27 @@ def test_status_has_activities_and_history(make_client, repo):
     assert body["has_activities"] is False
     assert body["history"] == {"status": "done", "imported": 0, "error": None}
     _add_activity(repo, 1, "2026-01-01")
-    save_state(HistoryState(status="error", imported=5, error="boum"))
+    save_state(repo, HistoryState(status="error", imported=5, error="boum"))
     body = client.get("/api/status").json()
     assert body["has_activities"] is True
     assert body["history"] == {"status": "error", "imported": 5, "error": "boum"}
 
 
-def test_status_reports_running_when_runner_running(make_client):
+def test_status_reports_running_when_runner_running(make_client, repo):
     client = make_client()
-    save_state(HistoryState(status="idle"))
+    save_state(repo, HistoryState(status="idle"))
     client.app.state.history = FakeRunner(running=True)
     assert client.get("/api/status").json()["history"]["status"] == "running"
 
 
-def test_sync_starts_history_import_once(make_client):
-    save_state(HistoryState())  # idle
+def test_sync_starts_history_import_once(make_client, repo):
+    save_state(repo, HistoryState())  # idle
     client = make_client()
     runner = FakeRunner()
     client.app.state.history = runner
     assert client.post("/api/sync").status_code == 200
     assert runner.calls == 1
-    save_state(HistoryState(status="done"))
+    save_state(repo, HistoryState(status="done"))
     client.post("/api/sync")
     assert runner.calls == 1
 

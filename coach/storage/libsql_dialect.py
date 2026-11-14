@@ -21,6 +21,9 @@ class SQLiteDialect_libsql(SQLiteDialect_pysqlite):
     def import_dbapi(cls):
         import libsql
 
+        if not hasattr(libsql, "Binary"):
+            # SQLAlchemy l'exige pour lier les colonnes LargeBinary (GPX) ; bytes suffit.
+            libsql.Binary = bytes
         return libsql
 
     def on_connect(self):

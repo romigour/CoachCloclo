@@ -9,6 +9,7 @@ from pathlib import Path
 from pydantic import TypeAdapter
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
+from sqlalchemy.exc import OperationalError
 from sqlmodel import Session as DbSession
 from sqlmodel import SQLModel, create_engine, delete, select
 
@@ -17,9 +18,11 @@ from coach.plan.models import (
     ALL_DAYS_JSON,
     Activity,
     ActivityLaps,
+    AppState,
     AthleteSnapshot,
     Cycle,
     Event,
+    GpxFile,
     Goal,
     PersonalRecord,
     Proposal,
@@ -31,12 +34,37 @@ from coach.plan.models import (
 
 _LAPS = TypeAdapter(list[LapSummary])
 
+# Chaque changement de schéma futur doit incrémenter SCHEMA_VERSION.
+SCHEMA_VERSION = 1
+
+
+class SchemaTooNew(Exception):
+    """La base a un schéma plus récent que cette version de l'app."""
+
+
+def _check_schema_version(engine: Engine) -> None:
+    """Refuse une base plus récente (avant toute migration) ; sinon inscrit SCHEMA_VERSION.
+
+    Fonctionne sur tout moteur (fichier local ou base distante).
+    """
+    with DbSession(engine) as db:
+        try:
+            row = db.get(AppState, "schema_version")
+        except OperationalError:  # table absente : base neuve
+            row = None
+        if row is not None and json.loads(row.value_json)["v"] > SCHEMA_VERSION:
+            raise SchemaTooNew(f"schéma {json.loads(row.value_json)['v']} > {SCHEMA_VERSION}")
+    SQLModel.metadata.create_all(engine)
+    _migrate(engine)
+    with DbSession(engine) as db:
+        db.merge(AppState(key="schema_version", value_json=json.dumps({"v": SCHEMA_VERSION})))
+        db.commit()
+
 
 def make_engine(path: Path) -> Engine:
     """Moteur SQLite sur `path` ; crée les tables si besoin."""
     engine = create_engine(f"sqlite:///{path}")
-    SQLModel.metadata.create_all(engine)
-    _migrate(engine)
+    _check_schema_version(engine)
     return engine
 
 
@@ -127,6 +155,25 @@ class Repo:
             except BaseException:
                 db.rollback()
                 raise
+
+    def get_state(self, key: str) -> dict | None:
+        with self._open() as db:
+            row = db.get(AppState, key)
+            return json.loads(row.value_json) if row else None
+
+    def set_state(self, key: str, value: dict) -> None:
+        with self._open() as db:
+            db.merge(AppState(key=key, value_json=json.dumps(value)))
+            db.commit()
+
+    def gpx(self, goal_id: int) -> bytes | None:
+        with self._open() as db:
+            row = db.get(GpxFile, goal_id)
+            return row.data if row else None
+
+    def save_gpx(self, db: DbSession, goal_id: int, data: bytes) -> None:
+        """À appeler dans la transaction de l'objectif."""
+        db.merge(GpxFile(goal_id=goal_id, data=data))
 
     def add(self, obj):
         with self._open() as db:

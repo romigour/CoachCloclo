@@ -470,3 +470,40 @@ def test_migration_adds_proposal_estimates(tmp_path):
     Repo(make_engine(path))
     repo = Repo(make_engine(path))
     assert repo.pending_proposal().estimates_json == "[]"
+
+
+def test_state_roundtrip(repo):
+    repo.set_state("sync", {"a": 1})
+    assert repo.get_state("sync") == {"a": 1}
+    assert repo.get_state("x") is None
+
+
+def test_gpx_roundtrip(repo):
+    assert repo.gpx(1) is None
+    with repo.transaction() as db:
+        repo.save_gpx(db, 1, b"<gpx/>")
+    assert repo.gpx(1) == b"<gpx/>"
+
+
+def test_make_engine_writes_schema_version(tmp_path):
+    from coach.plan.repo import SCHEMA_VERSION
+
+    repo = Repo(make_engine(tmp_path / "v.db"))
+    assert repo.get_state("schema_version") == {"v": SCHEMA_VERSION}
+
+
+def test_make_engine_refuses_newer_schema(tmp_path):
+    from coach.plan.repo import SCHEMA_VERSION, SchemaTooNew
+
+    path = tmp_path / "new.db"
+    repo = Repo(make_engine(path))
+    repo.set_state("schema_version", {"v": SCHEMA_VERSION + 1})
+    with pytest.raises(SchemaTooNew):
+        make_engine(path)
+    assert Repo(make_engine_raw(path)).get_state("schema_version") == {"v": SCHEMA_VERSION + 1}
+
+
+def make_engine_raw(path):
+    from sqlmodel import create_engine
+
+    return create_engine(f"sqlite:///{path}")

@@ -323,3 +323,29 @@ test("cycle terminé : Aujourd'hui et Plan invitent à préparer le cycle suivan
     unmount();
   }
 });
+
+test("unavailable storage shows a dedicated page, without auto-sync nor goal form, then retries", async () => {
+  statusBody = {
+    ...statusBody, ...noGoal,
+    storage: { code: "cloud_unreachable", detail: "Base cloud injoignable : vérifie ta connexion" },
+  };
+  render(App);
+  const page = await screen.findByText("Données indisponibles");
+  expect(page.closest("section")!.textContent).toContain("Base cloud injoignable : vérifie ta connexion");
+  expect((screen.getByRole("link", { name: "Ouvrir les Réglages" }) as HTMLAnchorElement).getAttribute("href")).toBe("#/setup");
+  expect(location.hash).toBe("");
+  expect(syncs()).toBe(0);
+
+  statusBody = { ...statusBody, storage: null };
+  await fireEvent.click(screen.getByRole("button", { name: "Réessayer" }));
+  await waitFor(() => expect(location.hash).toBe("#/goal"));
+  expect(screen.queryByText("Données indisponibles")).toBeNull();
+});
+
+test("unavailable storage still lets the settings page open", async () => {
+  statusBody = { ...statusBody, storage: { code: "schema_too_new", detail: "Mets à jour CoachCloclo sur ce PC" } };
+  location.hash = "#/setup";
+  render(App);
+  await screen.findByText("Réglages", { selector: "h1" });
+  expect(screen.queryByText("Données indisponibles")).toBeNull();
+});

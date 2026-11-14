@@ -38,6 +38,9 @@
     return m ? Number(m[1]) : null;
   }
 
+  // base indisponible (cloud injoignable, schéma trop récent) : page dédiée plutôt que les pages vides
+  const storageError = $derived(status?.storage ?? null);
+
   // cycle terminé et objectifs encore à venir : le cycle suivant est à préparer (page Objectifs)
   const toPrepare = $derived(!!status && status.cycle === null && status.goals.length > 0);
 
@@ -77,15 +80,21 @@
     const [setup] = await Promise.all([readSetup(), refresh()]);
     setupAvailable = setup !== null;
     ready = true;
-    if (!autoSyncStarted && !error && status?.garmin === "ok") {
+    if (!autoSyncStarted && !error && !storageError && status?.garmin === "ok") {
       autoSyncStarted = true;
       sync();
     }
     if (!route) {
       // Configuration incomplète : l'écran d'accueil, même si /api/status a échoué.
       if (setup && !setupDone(setup, claudeSkipped())) location.hash = "#/welcome";
-      else if (!error) location.hash = home();
+      else if (!error && !storageError) location.hash = home();
     }
+  }
+
+  /** « Réessayer » sur la page de base indisponible : relit l'état, puis oriente si la base est revenue. */
+  async function retryStorage() {
+    await refresh();
+    if (!storageError && !error && !route) location.hash = home();
   }
 
   // Zones au démarrage puis après chaque synchro ou fin d'import (nouvel instantané possible).
@@ -177,7 +186,16 @@
     {/if}
 
     {#if ready && !(error && (error as { code?: string }).code === "pin_required")}
-      {#if route === "welcome"}
+      {#if storageError && route !== "setup" && route !== "welcome"}
+        <section class="card stack" role="alert">
+          <h2>Données indisponibles</h2>
+          <p>{storageError.detail}</p>
+          <div class="row">
+            <button type="button" class="primary" onclick={retryStorage}>Réessayer</button>
+            <a href="#/setup">Ouvrir les Réglages</a>
+          </div>
+        </section>
+      {:else if route === "welcome"}
         <Welcome onconnected={garminConnected} />
       {:else if route === "setup"}
         <Setup onchanged={refresh} onconnected={garminConnected} />

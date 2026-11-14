@@ -267,7 +267,11 @@ export type Status = {
   last_cycle: Cycle | null;
   has_activities: boolean;
   history: HistoryState;
+  /** Base de données indisponible (cloud injoignable, schéma trop récent) : message à afficher ; nul sinon. */
+  storage?: StorageError | null;
 };
+
+export type StorageError = { code: string; detail: string };
 
 /** État de la mise à jour (GET /api/update, présent seulement dans l'appli de bureau). */
 export type UpdateView = {

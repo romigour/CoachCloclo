@@ -7,9 +7,8 @@ from datetime import date
 from pathlib import Path
 
 from pydantic import TypeAdapter
-from sqlalchemy import text
+from sqlalchemy import inspect, text
 from sqlalchemy.engine import Engine
-from sqlalchemy.exc import OperationalError
 from sqlmodel import Session as DbSession
 from sqlmodel import SQLModel, create_engine, delete, select
 
@@ -22,8 +21,8 @@ from coach.plan.models import (
     AthleteSnapshot,
     Cycle,
     Event,
-    GpxFile,
     Goal,
+    GpxFile,
     PersonalRecord,
     Proposal,
     Race,
@@ -47,13 +46,13 @@ def _check_schema_version(engine: Engine) -> None:
 
     Fonctionne sur tout moteur (fichier local ou base distante).
     """
-    with DbSession(engine) as db:
-        try:
+    # has_table plutôt qu'un except : le type d'erreur « table absente » varie selon le driver (libsql : ValueError)
+    if inspect(engine).has_table(AppState.__tablename__):
+        with DbSession(engine) as db:
             row = db.get(AppState, "schema_version")
-        except OperationalError:  # table absente : base neuve
-            row = None
-        if row is not None and json.loads(row.value_json)["v"] > SCHEMA_VERSION:
-            raise SchemaTooNew(f"schéma {json.loads(row.value_json)['v']} > {SCHEMA_VERSION}")
+        found = json.loads(row.value_json)["v"] if row is not None else None
+        if found is not None and found > SCHEMA_VERSION:
+            raise SchemaTooNew(f"schéma {found} > {SCHEMA_VERSION}")
     SQLModel.metadata.create_all(engine)
     _migrate(engine)
     with DbSession(engine) as db:

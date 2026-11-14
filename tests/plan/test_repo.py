@@ -492,6 +492,12 @@ def test_make_engine_writes_schema_version(tmp_path):
     assert repo.get_state("schema_version") == {"v": SCHEMA_VERSION}
 
 
+def make_engine_raw(path):
+    from sqlmodel import create_engine
+
+    return create_engine(f"sqlite:///{path}")
+
+
 def test_make_engine_refuses_newer_schema(tmp_path):
     from coach.plan.repo import SCHEMA_VERSION, SchemaTooNew
 
@@ -503,7 +509,17 @@ def test_make_engine_refuses_newer_schema(tmp_path):
     assert Repo(make_engine_raw(path)).get_state("schema_version") == {"v": SCHEMA_VERSION + 1}
 
 
-def make_engine_raw(path):
+def test_check_schema_version_on_libsql_engine(tmp_path):
+    import coach.storage.libsql_dialect  # noqa: F401  (enregistre le dialecte)
     from sqlmodel import create_engine
 
-    return create_engine(f"sqlite:///{path}")
+    from coach.plan.repo import SCHEMA_VERSION, SchemaTooNew, _check_schema_version
+
+    engine = create_engine(f"sqlite+libsql:///{tmp_path / 'l.db'}")
+    _check_schema_version(engine)  # base neuve : version écrite
+    repo = Repo(engine)
+    assert repo.get_state("schema_version") == {"v": SCHEMA_VERSION}
+    repo.set_state("schema_version", {"v": SCHEMA_VERSION + 1})
+    with pytest.raises(SchemaTooNew):
+        _check_schema_version(engine)
+    assert repo.get_state("schema_version") == {"v": SCHEMA_VERSION + 1}

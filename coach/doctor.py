@@ -14,6 +14,8 @@ from coach.garmin.client import GarminClient
 from coach.garmin.port import GarminAuthRequired, GarminRateLimited, GarminUnavailable
 from coach.llm.provider import LLMError, LLMUnavailable, LLMUsageLimit, provider_from_settings
 from coach.proc import find_claude
+from coach.storage.source import source_from_settings
+from coach.storage.switch import probe
 
 DEFAULT_PORT = 8765
 OFFLINE_DETAIL = "non vérifié (hors ligne)"
@@ -116,6 +118,15 @@ def _check_data_dir() -> Check:
     return Check(name="data_dir", ok=True, detail=str(path))
 
 
+def _check_cloud_db() -> Check:
+    try:
+        probe(source_from_settings(load_settings())).dispose()
+    except Exception as e:  # noqa: BLE001 - tout échec d'accès à la base cloud est à afficher
+        return Check(name="cloud_db", ok=False, detail=f"base cloud inaccessible : {e}",
+                     fix_hint="Vérifie ta connexion, l'URL et le jeton Turso dans Réglages → Stockage des données")
+    return Check(name="cloud_db", ok=True, detail="base cloud accessible")
+
+
 def _check_port(port: int) -> Check:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         try:
@@ -129,7 +140,7 @@ def _check_port(port: int) -> Check:
 def run_checks(*, live: bool = True, offline: bool = False, which=shutil.which,
                runner=subprocess.run, garmin_factory=_default_garmin,
                llm_factory=_default_llm, port: int = DEFAULT_PORT) -> list[Check]:
-    """Vérifications dans l'ordre. `offline` saute claude_cli, claude_auth et garmin_tokens ;
+    """Vérifications dans l'ordre. `offline` saute claude_cli, claude_auth, garmin_tokens et cloud_db ;
     `live=False` ne fait pas les appels réels de claude_auth et garmin_tokens."""
     def skipped(name: str, detail: str) -> Check:
         return Check(name=name, ok=True, detail=detail)
@@ -148,6 +159,8 @@ def run_checks(*, live: bool = True, offline: bool = False, which=shutil.which,
         checks.append(_check_garmin_tokens(garmin_factory) if live
                       else skipped("garmin_tokens", no_live))
     checks.append(_check_data_dir())
+    if load_settings().storage_mode == "turso":
+        checks.append(skipped("cloud_db", OFFLINE_DETAIL) if offline else _check_cloud_db())
     checks.append(_check_port(port))
     return checks
 

@@ -10,11 +10,13 @@ from coach.storage import switch
 from coach.storage.cloud_errors import CloudUnreachable, is_cloud_failure
 from coach.storage.source import LocalSource
 from coach.storage.switch import (
+    Adopted,
     NeedsConfirmation,
     delete_local_files,
     disable_cloud,
     enable_cloud,
     probe,
+    sessions_on_watch,
     wipe_cloud,
 )
 from coach.storage.transfer import is_empty
@@ -121,7 +123,8 @@ def test_enable_on_nonempty_cloud_needs_confirmation(local, tmp_path):
     source = FakeSource(tmp_path / "other.db")
     assert isinstance(enable_cloud(local, source, replace_local=False), NeedsConfirmation)
     adopted = enable_cloud(local, source, replace_local=True)
-    assert _count(adopted, Activity) == 5  # les données du cloud, jamais celles de ce PC
+    assert isinstance(adopted, Adopted)
+    assert _count(adopted.engine, Activity) == 5  # les données du cloud, jamais celles de ce PC
 
 
 def test_enable_copy_failure_propagates(local, tmp_path, monkeypatch):
@@ -240,3 +243,34 @@ def test_same_cloud_url_normalises():
     assert same_turso_url("base-org.turso.io", "libsql://base-org.turso.io")
     assert not same_turso_url("libsql://a.turso.io", "libsql://b.turso.io")
     assert not same_turso_url(None, "libsql://b.turso.io")
+
+
+def test_delete_local_files_keeps_backup(tmp_path):
+    engine = make_engine(tmp_path / "coach.db")
+    engine.dispose()
+    (tmp_path / "coach.db.bak").write_text("ancienne sauvegarde")
+    (tmp_path / "gpx").mkdir()
+    (tmp_path / "history.json").write_text("{}")
+    delete_local_files(tmp_path, keep_backup=True)
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["coach.db.bak"]
+    assert (tmp_path / "coach.db.bak").read_bytes().startswith(b"SQLite format 3")  # remplace l'ancienne
+    delete_local_files(tmp_path)  # jamais supprimé
+    assert (tmp_path / "coach.db.bak").exists()
+
+
+def test_sessions_on_watch(local):
+    assert sessions_on_watch(local) == 0
+    rows = [
+        {"status": "exported", "garmin_workout_id": 1, "garmin_schedule_id": 2},
+        {"status": "sync_error", "garmin_schedule_id": 3},
+        {"status": "done", "garmin_workout_id": 4},  # terminée : ignorée
+        {"status": "sync_error"},  # jamais arrivée sur la montre
+    ]
+    with Repo(local).transaction() as db:
+        cycle_id = db.exec(select(Session.cycle_id)).scalar()
+        for fields in rows:
+            session = make_db_session(cycle_id)
+            for k, v in fields.items():
+                setattr(session, k, v)
+            db.add(session)
+    assert sessions_on_watch(local) == 2

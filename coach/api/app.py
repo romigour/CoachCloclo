@@ -47,7 +47,7 @@ from coach.llm.provider import (
 )
 from coach.plan import calendar
 from coach.plan.models import Activity, Cycle, Event, Goal, Proposal, Session
-from coach.plan.repo import Repo, SchemaTooNew
+from coach.plan.repo import SCHEMA_VERSION, Repo, SchemaTooNew
 from coach.services import CoachError
 from coach.services import garmin_export as export
 from coach.services.goals import (
@@ -70,6 +70,7 @@ from coach.storage.lock import SYNC_TTL, GarminLocked, LockedGarmin, garmin_lock
 from coach.storage.cloud_errors import UNREACHABLE_MSG, CloudUnreachable, is_cloud_failure
 from coach.storage.source import DataSource, LocalSource, same_turso_url, source_from_settings
 from coach.storage.switch import (
+    Adopted,
     CloudStatus,
     NeedsConfirmation,
     OpenedSource,
@@ -77,6 +78,7 @@ from coach.storage.switch import (
     disable_cloud,
     enable_cloud,
     probe,
+    sessions_on_watch,
     wipe_cloud,
 )
 from coach.services.history import HistoryRunner, load_state, recover_orphan
@@ -95,6 +97,8 @@ SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
 WEB_DIST = Path(__file__).resolve().parent.parent / "web_dist"
 SCHEMA_TOO_NEW_MSG = "Mets à jour CoachCloclo sur ce PC"
 STORAGE_RETRY_S = 10  # délai entre deux essais de réouverture d'une base cloud indisponible
+SCHEMA_CHECK_S = 60  # en mode cloud, relecture de la version du schéma (un autre PC a pu mettre à jour)
+STORAGE_BUSY_MSG = "Une opération est en cours, réessaie dans un instant."
 # routes utiles sans base de données : réglages du stockage, statut, PIN, réglages, connexion Garmin, bureau
 NO_DB_PATHS = (
     "/api/storage",
@@ -107,6 +111,8 @@ NO_DB_PATHS = (
     "/api/update",
     "/api/lan",
 )
+# routes qui ne lisent jamais la base : seules les autres comptent comme requêtes en cours (bascule)
+DB_FREE_PATHS = tuple(p for p in NO_DB_PATHS if p != "/api/status")
 
 log = logging.getLogger(__name__)
 
@@ -371,7 +377,12 @@ def create_app(
     app.state.history = None
     app.state.storage_error = None  # (statut HTTP, code, message) tant que la base est indisponible
     app.state.storage_retry_at = 0.0
+    app.state.schema_check_at = 0.0
     storage_lock = threading.Lock()  # une seule bascule ou réouverture de base à la fois
+    # requêtes en cours sur la base, et bascule en cours : une bascule attend que la base soit au repos,
+    # et aucune requête ne démarre sur l'ancienne base pendant la bascule
+    activity_lock = threading.Lock()
+    activity = {"in_flight": 0, "switching": False}
 
     def install_repo(new: Repo, cloud: bool) -> None:
         """Branche l'app sur `new` ; l'import d'historique suit la base courante."""
@@ -379,6 +390,7 @@ def create_app(
         app.state.cloud = cloud
         app.state.history = HistoryRunner(new, app.state.garmin_factory, holder)
         app.state.storage_error = None
+        app.state.schema_check_at = clock() + SCHEMA_CHECK_S  # version contrôlée à l'ouverture
         # un import « en cours » dans la nouvelle base a été interrompu (sauf s'il tourne sur un autre PC)
         recover_orphan(new, holder)
 
@@ -415,11 +427,51 @@ def create_app(
         finally:
             storage_lock.release()
 
+    def drop_repo_if_schema_too_new() -> bool:
+        """Mode cloud : un autre PC a pu mettre la base à jour. Relu au plus une fois par SCHEMA_CHECK_S.
+
+        Vrai si la base est désormais refusée (schéma plus récent) : l'app passe « indisponible »."""
+        current: Repo | None = app.state.repo
+        if current is None or not app.state.cloud or clock() < app.state.schema_check_at:
+            return False
+        if not storage_lock.acquire(blocking=False):  # bascule ou réouverture en cours
+            return False
+        try:
+            if app.state.repo is not current:
+                return False
+            app.state.schema_check_at = clock() + SCHEMA_CHECK_S
+            try:
+                row = current.get_state("schema_version")
+            except Exception as exc:
+                if not is_cloud_failure(exc):
+                    raise
+                return False  # panne réseau : la requête elle-même répondra 503
+            if row is None or row.get("v", 0) <= SCHEMA_VERSION:
+                return False
+            log.warning("Base cloud mise à jour par un autre PC (schéma %s)", row.get("v"))
+            app.state.repo = None
+            app.state.storage_error = (409, "schema_too_new", SCHEMA_TOO_NEW_MSG)
+            app.state.storage_retry_at = clock() + STORAGE_RETRY_S
+            current.engine.dispose()
+            return True
+        finally:
+            storage_lock.release()
+
+    def clean_leftover_files() -> None:
+        """Mode cloud ouvert : fichiers locaux restés d'une bascule (suppression ratée). Jamais `coach.db.bak`."""
+        try:
+            delete_local_files(data_dir())
+        except OSError:
+            log.warning("Fichiers locaux restants non supprimés", exc_info=True)
+
     if repo is not None:
         install_repo(repo, cloud=False)
-    elif open_storage() and not app.state.cloud:
-        import_legacy_files(app.state.repo, data_dir())  # reprise des fichiers d'une installation existante (idempotente)
-        recover_orphan(app.state.repo, holder)  # history.json repris peut être resté « en cours »
+    elif open_storage():
+        if app.state.cloud:
+            clean_leftover_files()
+        else:
+            import_legacy_files(app.state.repo, data_dir())  # reprise des fichiers d'une installation existante (idempotente)
+            recover_orphan(app.state.repo, holder)  # history.json repris peut être resté « en cours »
     app.state.mfa = {}  # login_id -> (état MFA, expiration) ; jamais renvoyé au client
     app.state.lan = lan
     app.state.sessions = set()
@@ -441,11 +493,24 @@ def create_app(
         path = request.url.path
         if path.startswith("/api/storage") and not is_loopback(request):
             return _local_only()
-        if app.state.repo is None and path.startswith("/api") and not path.startswith(NO_DB_PATHS):
-            await run_in_threadpool(retry_storage)
-            if app.state.repo is None:
-                return _error(*app.state.storage_error)
-        return await call_next(request)
+        if not path.startswith("/api") or path.startswith(DB_FREE_PATHS):
+            return await call_next(request)
+        with activity_lock:
+            if activity["switching"]:  # l'ancienne base est en train d'être quittée
+                return _error(409, "storage_busy", STORAGE_BUSY_MSG)
+            activity["in_flight"] += 1
+        try:
+            if not path.startswith(NO_DB_PATHS):
+                if await run_in_threadpool(drop_repo_if_schema_too_new):
+                    return _error(*app.state.storage_error)
+                if app.state.repo is None:
+                    await run_in_threadpool(retry_storage)
+                    if app.state.repo is None:
+                        return _error(*app.state.storage_error)
+            return await call_next(request)
+        finally:
+            with activity_lock:
+                activity["in_flight"] -= 1
 
     @app.middleware("http")
     async def require_pin(request: Request, call_next):
@@ -965,18 +1030,43 @@ def create_app(
         return None
 
     def exclusive(route: Callable[..., object]) -> Callable[..., object]:
-        """Une seule bascule de stockage à la fois."""
+        """Une seule bascule de stockage à la fois, base au repos (aucune requête ni import en cours)."""
 
         @functools.wraps(route)
         def wrapped(*args, **kwargs):
             if not storage_lock.acquire(blocking=False):
                 return _error(409, "storage_busy", "Changement de stockage déjà en cours")
             try:
-                return switch_refused() or route(*args, **kwargs)
+                with activity_lock:
+                    if activity["in_flight"] > 0:
+                        return _error(409, "storage_busy", STORAGE_BUSY_MSG)
+                    refused = switch_refused()
+                    if refused is not None:
+                        return refused
+                    activity["switching"] = True
+                try:
+                    return route(*args, **kwargs)
+                finally:
+                    with activity_lock:
+                        activity["switching"] = False
             finally:
                 storage_lock.release()
 
         return wrapped
+
+    def save_storage_settings(update: dict) -> None:
+        """Réglages relus juste avant l'écriture : seuls les champs du stockage changent."""
+        save_settings(load_settings().model_copy(update=update))
+
+    def adoption_warning(current: Repo) -> str:
+        detail = "Les données de ce PC seront remplacées par celles du cloud"
+        on_watch = sessions_on_watch(current.engine)
+        if on_watch:
+            detail += (
+                f". Attention : {on_watch} séance(s) de ce PC sont sur ta montre ; elles n'y seront pas retirées."
+                " Retire d'abord ce plan de la montre si besoin."
+            )
+        return detail
 
     def enable(body: CloudBody):
         settings = load_settings()
@@ -984,15 +1074,15 @@ def create_app(
         if not was_local and not same_turso_url(settings.turso_url, body.url):
             # une autre base adoptée sans copie ni marqueur pourrait être écrasée plus tard par un autre PC
             return _error(409, "cloud_url_change", "Reviens d'abord au stockage local pour changer de base cloud.")
-        target = settings.model_copy(
-            update={"storage_mode": "turso", "turso_url": body.url, "turso_token": body.token}
-        )
+        storage = {"storage_mode": "turso", "turso_url": body.url, "turso_token": body.token}
+        target = settings.model_copy(update=storage)
         source = source_for(target)
         try:
             engine = probe(source)  # 1. SchemaTooNew -> 409 (gestionnaire global)
         except CloudUnreachable as exc:
             return _error(422, "cloud_unreachable", str(exc))
         current: Repo | None = app.state.repo
+        adopted = False
         if was_local and current is not None:
             try:
                 result = enable_cloud(current.engine, OpenedSource(source.kind, engine), replace_local=body.replace_local)
@@ -1002,17 +1092,20 @@ def create_app(
                 return _error(422, "cloud_copy_failed", "Le transfert vers le cloud a échoué : tes données locales sont intactes.")
             if isinstance(result, NeedsConfirmation):
                 engine.dispose()
-                return _error(409, "needs_confirmation", "Les données de ce PC seront remplacées par celles du cloud")
+                return _error(409, "needs_confirmation", adoption_warning(current))
+            if isinstance(result, Adopted):
+                adopted, result = True, result.engine
         else:
             # déjà en mode cloud, même base (nouveau jeton, base indisponible) : jamais de copie
             result = engine
-        save_settings(target)  # 3.
+        save_storage_settings(storage)  # 3.
         install_repo(Repo(result), cloud=True)  # 4.
         if current is not None:
             current.engine.dispose()  # libère coach.db avant sa suppression (Windows)
         if was_local:
             try:
-                delete_local_files(data_dir())  # 5.
+                # adoption : les données de ce PC ne sont pas dans le cloud, coach.db est gardé en coach.db.bak
+                delete_local_files(data_dir(), keep_backup=adopted)  # 5.
             except OSError:
                 log.warning("Fichiers locaux non supprimés (encore ouverts ?)", exc_info=True)
         return storage_view()
@@ -1022,8 +1115,8 @@ def create_app(
         current: Repo | None = app.state.repo
         if current is None:
             return _error(503, "cloud_unreachable", UNREACHABLE_MSG)
-        target = load_settings().model_copy(update={"storage_mode": "local", "turso_url": None, "turso_token": None})
-        local = source_for(target)
+        storage = {"storage_mode": "local", "turso_url": None, "turso_token": None}
+        local = source_for(load_settings().model_copy(update=storage))
         if not isinstance(local, LocalSource):
             raise TypeError("source locale attendue")
         try:
@@ -1033,7 +1126,7 @@ def create_app(
                 raise
             log.exception("Retour en local échoué")
             return _error(422, "local_copy_failed", "Le retour en local a échoué : tes données restent dans le cloud.")
-        save_settings(target)  # 2.
+        save_storage_settings(storage)  # 2.
         install_repo(Repo(engine), cloud=False)  # 3.
         return current.engine
 

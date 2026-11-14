@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Literal
 
 from platformdirs import user_data_dir
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 def data_dir() -> Path:
@@ -31,7 +31,7 @@ def _settings_path() -> Path:
 
 class Settings(BaseModel):
     llm_mode: Literal["cli", "api"] = "cli"
-    anthropic_api_key: str | None = None
+    anthropic_api_key: str | None = Field(default=None, repr=False)
     anthropic_model: str = "claude-sonnet-5-5"
     pin_hash: str | None = None
     # hérités : lus une fois par `import_legacy_files`, jamais réécrits (l'état est en base)
@@ -41,7 +41,7 @@ class Settings(BaseModel):
     # stockage : toujours local, jamais en base
     storage_mode: Literal["local", "turso"] = "local"
     turso_url: str | None = None
-    turso_token: str | None = None
+    turso_token: str | None = Field(default=None, repr=False)
 
 
 def load_settings() -> Settings:

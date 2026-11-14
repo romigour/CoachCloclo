@@ -1715,3 +1715,261 @@ def test_switch_recovers_orphan_import(storage_client, _home):
     from coach.services.history import load_state
 
     assert load_state(client.app.state.repo).status == "error"
+
+
+# --- bascule et requêtes en cours -------------------------------------------------------------
+
+
+def _in_thread(fn) -> tuple[threading.Thread, list]:
+    out: list = []
+    t = threading.Thread(target=lambda: out.append(fn()), daemon=True)
+    t.start()
+    return t, out
+
+
+def test_switch_refused_while_request_in_flight(storage_client, cloud, fake_garmin):
+    entered, release = threading.Event(), threading.Event()
+    real = fake_garmin.activities
+
+    def slow_activities(start, end):
+        entered.set()
+        assert release.wait(10)
+        return real(start, end)
+
+    fake_garmin.activities = slow_activities
+    client = storage_client()
+    sync_thread, sync_out = _in_thread(lambda: client.post("/api/sync"))
+    assert entered.wait(10)
+    r = _enable(client)
+    assert r.status_code == 409
+    assert r.json() == {"code": "storage_busy", "detail": "Une opération est en cours, réessaie dans un instant."}
+    release.set()
+    sync_thread.join(10)
+    assert sync_out[0].status_code == 200
+    assert load_settings().storage_mode == "local"
+    assert not cloud.opened and not cloud.path.exists()  # rien n'a été écrit dans le cloud
+    assert _enable(client).status_code == 200  # base au repos : la bascule passe
+
+
+def test_request_during_switch_is_busy(storage_client, cloud, monkeypatch):
+    from coach.api import app as app_mod
+
+    entered, release = threading.Event(), threading.Event()
+    real = app_mod.enable_cloud
+
+    def slow_enable(*args, **kwargs):
+        entered.set()
+        assert release.wait(10)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(app_mod, "enable_cloud", slow_enable)
+    client = storage_client()
+    switch_thread, switch_out = _in_thread(lambda: _enable(client))
+    assert entered.wait(10)
+    for r in (client.get("/api/plan"), client.post("/api/sync"), client.get("/api/status")):
+        assert r.status_code == 409 and r.json()["code"] == "storage_busy"
+    assert client.get("/api/settings").status_code == 200  # sans base : toujours servie
+    release.set()
+    switch_thread.join(10)
+    assert switch_out[0].status_code == 200
+    assert client.get("/api/plan").status_code == 200
+
+
+# --- adoption d'un cloud non vide ---------------------------------------------------------------
+
+
+def _fill_other_pc_cloud(home: Path, cloud) -> None:
+    other = home / "autre-pc"
+    other.mkdir()
+    _seed_local(other, n=5)
+    remote = make_engine(cloud.path)
+    switch_mod.enable_cloud(make_engine(other / "coach.db"), switch_mod.OpenedSource("turso", remote), replace_local=False)
+
+
+def test_adoption_warns_about_sessions_on_watch(storage_client, _home, cloud):
+    from coach.plan.models import Session
+
+    _fill_other_pc_cloud(_home, cloud)
+    client = storage_client()
+    with client.app.state.repo.transaction() as db:
+        session = db.exec(sa_select(Session)).scalars().first()
+        session.status, session.garmin_workout_id, session.garmin_schedule_id = "exported", 11, 12
+        db.add(session)
+    r = _enable(client)
+    assert r.status_code == 409
+    assert r.json() == {
+        "code": "needs_confirmation",
+        "detail": "Les données de ce PC seront remplacées par celles du cloud. Attention : 1 séance(s) de ce PC "
+        "sont sur ta montre ; elles n'y seront pas retirées. Retire d'abord ce plan de la montre si besoin.",
+    }
+
+
+def test_adoption_keeps_local_db_as_backup(storage_client, _home, cloud):
+    _fill_other_pc_cloud(_home, cloud)
+    (_home / "coach.db.bak").write_text("ancienne sauvegarde")
+    client = storage_client()
+    assert _enable(client, replace_local=True).status_code == 200
+    assert not (_home / "coach.db").exists()
+    assert not (_home / "gpx").exists() and not (_home / "history.json").exists()
+    backup = make_engine(_home / "coach.db.bak")  # la base de ce PC, à la place de l'ancienne sauvegarde
+    assert _activity_count(backup) == 2
+    backup.dispose()
+
+
+def test_copy_to_empty_cloud_leaves_no_backup(storage_client, _home):
+    assert _enable(storage_client()).status_code == 200
+    assert not (_home / "coach.db").exists() and not (_home / "coach.db.bak").exists()
+
+
+# --- version du schéma relue en mode cloud ------------------------------------------------------
+
+
+def test_cloud_schema_upgraded_elsewhere_is_detected(storage_client, cloud):
+    import json
+
+    from coach.plan.models import AppState
+
+    client = storage_client()
+    assert _enable(client).status_code == 200
+    old_engine = client.app.state.repo.engine
+    with Repo(make_engine(cloud.path)).transaction() as db:  # un autre PC, plus récent, a migré la base
+        db.merge(AppState(key="schema_version", value_json=json.dumps({"v": 99})))
+    client.now[0] += 30
+    assert client.get("/api/plan").status_code == 200  # relu au plus une fois par minute
+    client.now[0] += 31
+    r = client.get("/api/plan")
+    assert r.status_code == 409
+    assert r.json() == {"code": "schema_too_new", "detail": "Mets à jour CoachCloclo sur ce PC"}
+    assert client.app.state.repo is None
+    assert old_engine.pool.checkedout() == 0
+    assert client.get("/api/status").json()["storage"] == {
+        "code": "schema_too_new",
+        "detail": "Mets à jour CoachCloclo sur ce PC",
+    }
+    client.now[0] += 60
+    assert client.get("/api/plan").status_code == 409  # la réouverture refuse toujours la base
+
+
+def test_local_mode_never_rechecks_schema(storage_client, monkeypatch):
+    client = storage_client()
+    calls = []
+    real = Repo.get_state
+    monkeypatch.setattr(Repo, "get_state", lambda self, key: calls.append(key) or real(self, key))
+    client.now[0] += 120
+    client.get("/api/plan")
+    assert "schema_version" not in calls
+
+
+# --- réglages relus avant écriture --------------------------------------------------------------
+
+
+def test_switch_keeps_settings_changed_meanwhile(storage_client, monkeypatch):
+    from coach.api import app as app_mod
+
+    real_enable, real_disable = app_mod.enable_cloud, app_mod.disable_cloud
+
+    def enable_then_change(*a, **k):
+        result = real_enable(*a, **k)
+        # PUT /api/settings pendant la copie (route sans base, servie pendant la bascule)
+        save_settings(load_settings().model_copy(update={"llm_mode": "api", "anthropic_api_key": "cle"}))
+        return result
+
+    def disable_then_change(*a, **k):
+        result = real_disable(*a, **k)
+        save_settings(load_settings().model_copy(update={"anthropic_model": "autre-modele"}))
+        return result
+
+    monkeypatch.setattr(app_mod, "enable_cloud", enable_then_change)
+    monkeypatch.setattr(app_mod, "disable_cloud", disable_then_change)
+    client = storage_client()
+    assert _enable(client).status_code == 200
+    s = load_settings()
+    assert (s.storage_mode, s.llm_mode, s.anthropic_api_key) == ("turso", "api", "cle")
+    assert client.delete("/api/storage/cloud").status_code == 200
+    s = load_settings()
+    assert (s.storage_mode, s.turso_token, s.llm_mode, s.anthropic_model) == ("local", None, "api", "autre-modele")
+
+
+# --- fichiers locaux restants au démarrage en mode cloud ----------------------------------------
+
+
+def test_cloud_startup_removes_leftover_local_files(storage_client, _home, cloud):
+    (_home / "coach.db.bak").write_text("sauvegarde")
+    _start_in_cloud_mode(cloud, fail=None)  # coach.db, gpx/ et history.json restés d'une bascule
+    client = storage_client()
+    assert client.get("/api/plan").status_code == 200
+    assert not (_home / "coach.db").exists()
+    assert not (_home / "gpx").exists() and not (_home / "history.json").exists()
+    assert (_home / "coach.db.bak").read_text() == "sauvegarde"
+
+
+def test_cloud_startup_survives_undeletable_leftovers(storage_client, _home, cloud, monkeypatch):
+    from coach.api import app as app_mod
+
+    def locked(home):
+        raise PermissionError("coach.db ouvert")
+
+    monkeypatch.setattr(app_mod, "delete_local_files", locked)
+    _start_in_cloud_mode(cloud, fail=None)
+    assert storage_client().get("/api/plan").status_code == 200
+
+
+def test_unreachable_cloud_startup_keeps_local_files(storage_client, _home, cloud):
+    _start_in_cloud_mode(cloud, CloudUnreachable("Base cloud injoignable"))
+    storage_client()
+    assert (_home / "coach.db").exists() and (_home / "history.json").exists()
+
+
+# --- mise à jour d'une installation existante ---------------------------------------------------
+
+
+def test_upgrade_from_pre_cloud_install(_home, fake_garmin):
+    import json
+
+    from sqlalchemy import text
+
+    from coach.plan.models import AppState, GarminLock, GpxFile
+    from coach.services.sync import SYNC_KEY
+    from tests.plan.factories import make_goal
+
+    gpx = (FIXTURES / "climb.gpx").read_bytes()
+    (_home / "gpx").mkdir()
+    (_home / "gpx" / "1.gpx").write_bytes(gpx)
+    engine = make_engine(_home / "coach.db")
+    with Repo(engine).transaction() as db:
+        db.add(make_goal(gpx_path=str(_home / "gpx" / "1.gpx")))
+    with engine.begin() as c:  # schéma d'avant le stockage cloud : ni état, ni GPX, ni verrou en base
+        for model in (AppState, GpxFile, GarminLock):
+            c.execute(text(f"DROP TABLE {model.__tablename__}"))
+    engine.dispose()
+    (_home / "history.json").write_text(json.dumps({"status": "done", "imported": 42}), encoding="utf-8")
+    (_home / "settings.json").write_text(
+        json.dumps({"llm_mode": "cli", "last_sync_at": "2026-11-01T08:00:00+00:00", "proposal_due": True}),
+        encoding="utf-8",
+    )
+    app = create_app(
+        lan=False,
+        garmin_factory=lambda: fake_garmin,
+        llm_factory=lambda: FakeLLMProvider([adjustment_json()] * 3),
+        login_client=FakeLogin(False),
+        extra_hosts={"testserver"},
+    )
+    repo = app.state.repo
+    assert repo.gpx(1) == gpx
+    assert repo.get_state("history")["status"] == "done" and repo.get_state("history")["imported"] == 42
+    assert repo.get_state(SYNC_KEY)["proposal_due"] is True
+    assert repo.get_state(SYNC_KEY)["last_sync_at"].startswith("2026-11-01")
+    runner = FakeRunner()
+    app.state.history = runner
+    client = TestClient(app, headers={"X-Coach": "1"})
+    assert client.post("/api/sync").status_code == 200
+    assert runner.calls == 0  # historique déjà importé : pas de nouvel import
+    for name in ("coach.db", "history.json", "settings.json", "gpx/1.gpx"):
+        assert (_home / name).exists(), name
+
+
+def test_settings_repr_hides_secrets():
+    from coach.config import Settings
+
+    text = repr(Settings(anthropic_api_key="cle-secrete", turso_token="jeton-secret"))
+    assert "cle-secrete" not in text and "jeton-secret" not in text

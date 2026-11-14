@@ -282,6 +282,9 @@ export type UpdateView = {
 /** Mode LAN (GET/POST /api/lan, présent seulement dans l'appli de bureau). */
 export type LanView = { enabled: boolean; has_pin: boolean; addresses: string[]; local: boolean };
 
+/** Stockage des données (GET /api/storage) : jamais le jeton, seulement sa présence. */
+export type StorageView = { mode: "local" | "turso"; turso_url: string | null; has_turso_token: boolean };
+
 /** État de l'écran d'accueil (GET /api/setup/status, présent seulement dans l'appli de bureau). */
 export type SetupStatus = {
   claude_cli: boolean;
@@ -506,6 +509,11 @@ export const api = {
     }
   },
   setLan: (enabled: boolean, pin?: string) => post<LanView>("/lan", pin === undefined ? { enabled } : { enabled, pin }),
+  storage: () => get<StorageView>("/storage"),
+  enableCloud: (url: string, token: string, replaceLocal: boolean) =>
+    post<StorageView>("/storage/cloud", { url, token, replace_local: replaceLocal }),
+  disableCloud: () => del<StorageView>("/storage/cloud"),
+  wipeCloud: () => post<StorageView>("/storage/cloud/wipe"),
   checkUpdate: () => post<UpdateView>("/update/check"),
   installUpdate: () => post<{ status: string }>("/update/install"),
   version: () => get<{ version: string }>("/version"),

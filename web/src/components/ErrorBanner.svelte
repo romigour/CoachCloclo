@@ -1,5 +1,6 @@
 <script lang="ts">
   import { api, ApiError } from "../lib/api";
+  import { READONLY } from "../lib/mode";
 
   let { error, onpin, setupAvailable = false }: { error: unknown; onpin?: () => void; setupAvailable?: boolean } = $props();
 
@@ -28,9 +29,10 @@
     }
   });
 
-  // garmin_auth ouvre l'écran de configuration
+  // garmin_auth ouvre l'écran de configuration (en lecture seule : l'écran de connexion)
+  const settingsHash = READONLY ? "#/connection" : "#/setup";
   $effect(() => {
-    if (code === "garmin_auth" && location.hash !== "#/setup") location.hash = "#/setup";
+    if (code === "garmin_auth" && location.hash !== settingsHash) location.hash = settingsHash;
   });
 
   async function submitPin(e: Event) {
@@ -67,7 +69,7 @@
         <a href="#/welcome">Connecte Claude</a>
       {/if}
       {#if code === "schema_too_new" || code === "cloud_unreachable"}
-        <a href="#/setup">Ouvrir les Réglages</a>
+        <a href={settingsHash}>{READONLY ? "Modifier la connexion" : "Ouvrir les Réglages"}</a>
       {/if}
     </div>
   {/if}

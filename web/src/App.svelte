@@ -103,6 +103,8 @@
       // Configuration incomplète : l'écran d'accueil, même si /api/status a échoué.
       if (setup && !setupDone(setup, claudeSkipped())) location.hash = "#/welcome";
       else if (!error && !storageError) location.hash = home();
+      // Lecture seule : la lecture a échoué, la page de connexion évite une page blanche.
+      else if (READONLY && error) location.hash = "#/connection";
     }
   }
 

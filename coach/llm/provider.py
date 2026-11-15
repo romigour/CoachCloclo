@@ -3,9 +3,11 @@
 import json
 import shutil
 import subprocess
+import time
 from typing import Protocol
 
 from coach.config import Settings, data_dir
+from coach.llm.usage import CallUsage, api_cost_usd
 from coach.proc import NO_WINDOW, find_claude
 
 
@@ -35,6 +37,26 @@ class LLMInvalidResponse(LLMError):
 
 class LLMProvider(Protocol):
     def complete(self, system: str, prompt: str) -> str: ...
+
+
+def _n(value) -> int:
+    """Compteur de tokens : absent ou invalide → 0."""
+    return value if isinstance(value, int) else 0
+
+
+def _cli_usage(envelope: dict) -> CallUsage:
+    usage = envelope.get("usage") if isinstance(envelope.get("usage"), dict) else {}
+    models = envelope.get("modelUsage")
+    cost = envelope.get("total_cost_usd")
+    return CallUsage(
+        mode="cli",
+        model=next(iter(models), None) if isinstance(models, dict) else None,
+        input_tokens=_n(usage.get("input_tokens")) + _n(usage.get("cache_creation_input_tokens"))
+        + _n(usage.get("cache_read_input_tokens")),
+        output_tokens=_n(usage.get("output_tokens")),
+        cost_usd=float(cost) if isinstance(cost, (int, float)) else None,
+        duration_ms=_n(envelope.get("duration_ms")),
+    )
 
 
 _AUTH_WORDS = ("login", "authenticate", "not logged in", "unauthorized", "invalid api key")
@@ -73,8 +95,10 @@ class ClaudeCliProvider:
         self.runner = runner
         self.which = which
         self.cwd = cwd
+        self.last_usage: CallUsage | None = None
 
     def complete(self, system: str, prompt: str) -> str:
+        self.last_usage = None
         exe = find_claude(self.which)
         if exe is None:
             raise LLMUnavailable("CLI claude introuvable")
@@ -100,6 +124,7 @@ class ClaudeCliProvider:
                 raise LLMUnavailable(_NOT_LOGGED) from None
             detail = (stderr.strip() or stdout.strip())[:500]
             raise LLMError(f"Réponse illisible du CLI claude (code {proc.returncode}) : {detail}") from None
+        self.last_usage = _cli_usage(envelope)
         result = envelope.get("result")
         text = "" if result is None else str(result)
         if envelope.get("is_error"):
@@ -122,9 +147,12 @@ class AnthropicApiProvider:
         self._anthropic = anthropic
         self.model = model
         self.client = client if client is not None else anthropic.Anthropic(api_key=api_key, timeout=180)
+        self.last_usage: CallUsage | None = None
 
     def complete(self, system: str, prompt: str) -> str:
         a = self._anthropic
+        self.last_usage = None
+        started = time.monotonic()
         try:
             msg = self.client.messages.create(
                 model=self.model, max_tokens=32000, system=system,
@@ -138,18 +166,31 @@ class AnthropicApiProvider:
             raise LLMTimeout("Délai dépassé pour l'API Anthropic") from e
         except a.APIError as e:
             raise LLMError(f"Erreur de l'API Anthropic : {e}") from e
+        self.last_usage = self._usage(msg, int((time.monotonic() - started) * 1000))
         return "".join(b.text for b in msg.content if getattr(b, "type", None) == "text")
+
+
+    def _usage(self, msg, duration_ms: int) -> CallUsage:
+        u = getattr(msg, "usage", None)
+        fresh, out = _n(getattr(u, "input_tokens", None)), _n(getattr(u, "output_tokens", None))
+        write = _n(getattr(u, "cache_creation_input_tokens", None))
+        read = _n(getattr(u, "cache_read_input_tokens", None))
+        return CallUsage(mode="api", model=self.model, input_tokens=fresh + write + read, output_tokens=out,
+                         cost_usd=api_cost_usd(self.model, fresh, out, write, read), duration_ms=duration_ms)
 
 
 class FakeLLMProvider:
     """Fournisseur de test : renvoie les réponses dans l'ordre."""
 
-    def __init__(self, responses: list[str]):
+    def __init__(self, responses: list[str], usage: CallUsage | None = None):
         self._responses = list(responses)
         self.calls: list[str] = []
+        self.usage = usage
+        self.last_usage: CallUsage | None = None
 
     def complete(self, system: str, prompt: str) -> str:
         self.calls.append(prompt)
+        self.last_usage = self.usage
         if not self._responses:
             raise LLMError("FakeLLMProvider: plus de réponse prévue")
         return self._responses.pop(0)

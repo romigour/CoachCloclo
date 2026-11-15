@@ -74,3 +74,21 @@ def test_summary_empty(repo):
         "avg_generation_eur": None,
         "recent": [],
     }
+
+
+class BrokenRepo:
+    def add(self, obj):
+        raise ValueError("base injoignable")
+
+
+def test_tracked_write_failure_does_not_break_success():
+    with tracked(BrokenRepo(), "generation") as m:
+        m.add(U)
+    # aucune exception : le suivi est accessoire
+
+
+def test_tracked_write_failure_keeps_original_error():
+    with pytest.raises(LLMInvalidResponse):
+        with tracked(BrokenRepo(), "generation") as m:
+            m.add(U)
+            raise LLMInvalidResponse(["x"])

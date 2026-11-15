@@ -1,6 +1,7 @@
 """Suivi de la consommation Claude : enregistrement par action et résumé pour les Paramètres."""
 
 import datetime as dt
+import logging
 from collections.abc import Iterator
 from contextlib import contextmanager
 
@@ -10,12 +11,15 @@ from coach.plan.repo import Repo
 
 RECENT_COUNT = 10
 
+log = logging.getLogger(__name__)
+
 
 @contextmanager
 def tracked(repo: Repo, kind: str) -> Iterator[UsageMeter]:
     """Enregistre une ligne `LlmUsage` à la sortie, si au moins un appel a abouti.
 
     Statut `ok` en sortie normale, `failed` si une exception remonte (elle est relancée telle quelle).
+    L'écriture est accessoire : si elle échoue, elle est journalisée et ne change pas l'issue de l'action.
     """
     meter = UsageMeter()
     status = "failed"
@@ -24,9 +28,12 @@ def tracked(repo: Repo, kind: str) -> Iterator[UsageMeter]:
         status = "ok"
     finally:
         if meter.attempts:
-            repo.add(LlmUsage(kind=kind, mode=meter.mode, model=meter.model, attempts=meter.attempts,
-                              input_tokens=meter.input_tokens, output_tokens=meter.output_tokens,
-                              cost_usd=meter.cost_usd, duration_ms=meter.duration_ms, status=status))
+            try:
+                repo.add(LlmUsage(kind=kind, mode=meter.mode, model=meter.model, attempts=meter.attempts,
+                                  input_tokens=meter.input_tokens, output_tokens=meter.output_tokens,
+                                  cost_usd=meter.cost_usd, duration_ms=meter.duration_ms, status=status))
+            except Exception:
+                log.warning("Consommation Claude non enregistrée", exc_info=True)
 
 
 def _utc(value: dt.datetime) -> dt.datetime:

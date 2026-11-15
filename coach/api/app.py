@@ -60,6 +60,7 @@ from coach.services.goals import (
     update_goal,
 )
 from coach.services.cycles import NextCycleInput, prepare_next_cycle
+from coach.services.llm_usage import usage_summary
 from coach.services.plans import PlanSettingsUpdate, accept_plan, generate_plan, update_plan_settings
 from coach.analysis.race_plan import RaceSettings
 from coach.services import race_strategy
@@ -966,6 +967,10 @@ def create_app(
             s.anthropic_model = body.anthropic_model
         save_settings(s)
         return _settings_view(s)
+
+    @api.get("/llm-usage")
+    def get_llm_usage(repo: RepoDep):
+        return usage_summary(repo, datetime.now(timezone.utc))
 
     # --- statistiques -----------------------------------------------------------------------
 

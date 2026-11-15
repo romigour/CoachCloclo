@@ -17,7 +17,7 @@ from coach.config import db_path, load_settings, save_settings
 from coach.version import app_version
 from coach.garmin.port import FakeGarminClient, GarminAuthRequired, LapSummary, Metrics
 from coach.llm.provider import FakeLLMProvider, LLMError, LLMUsageLimit
-from coach.plan.models import Activity, AthleteSnapshot, Race
+from coach.plan.models import Activity, AthleteSnapshot, LlmUsage, Race
 from coach.services.history import HistoryState, save_state
 from tests.llm.factories import valid_plan_json
 from coach.plan.repo import Repo, SchemaTooNew, make_engine
@@ -2000,3 +2000,17 @@ def test_settings_repr_hides_secrets():
 
     text = repr(Settings(anthropic_api_key="cle-secrete", turso_token="jeton-secret"))
     assert "cle-secrete" not in text and "jeton-secret" not in text
+
+
+def test_llm_usage_empty(make_client):
+    body = make_client().get("/api/llm-usage").json()
+    assert body["recent"] == [] and body["avg_generation_eur"] is None
+
+
+def test_llm_usage_lists_rows_with_timezone(make_client, repo):
+    repo.add(LlmUsage(kind="generation", mode="cli", model="m", attempts=1, input_tokens=1,
+                      output_tokens=1, cost_usd=0.5, duration_ms=1, status="ok"))
+    body = make_client().get("/api/llm-usage").json()
+    assert body["recent"][0]["cost_eur"] == pytest.approx(0.46)
+    assert body["recent"][0]["created_at"].endswith("+00:00")
+    assert body["month"]["generations"] == 1

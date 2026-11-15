@@ -39,3 +39,45 @@ def api_cost_usd(model: str, input_tokens: int, output_tokens: int,
 
 def to_eur(usd: float | None) -> float | None:
     return None if usd is None else round(usd * USD_TO_EUR, 4)
+
+
+class UsageMeter:
+    """Cumule l'usage des essais d'une même action (génération ou ajustement)."""
+
+    def __init__(self) -> None:
+        self._calls: list[CallUsage] = []
+
+    def add(self, usage: CallUsage | None) -> None:
+        if usage is not None:
+            self._calls.append(usage)
+
+    @property
+    def attempts(self) -> int:
+        return len(self._calls)
+
+    @property
+    def input_tokens(self) -> int:
+        return sum(c.input_tokens for c in self._calls)
+
+    @property
+    def output_tokens(self) -> int:
+        return sum(c.output_tokens for c in self._calls)
+
+    @property
+    def duration_ms(self) -> int:
+        return sum(c.duration_ms for c in self._calls)
+
+    @property
+    def cost_usd(self) -> float | None:
+        """Somme des coûts ; None si aucun essai ou si un essai a un coût inconnu."""
+        if not self._calls or any(c.cost_usd is None for c in self._calls):
+            return None
+        return sum(c.cost_usd for c in self._calls)
+
+    @property
+    def mode(self) -> str | None:
+        return self._calls[-1].mode if self._calls else None
+
+    @property
+    def model(self) -> str | None:
+        return self._calls[-1].model if self._calls else None

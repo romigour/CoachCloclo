@@ -7,6 +7,7 @@ from typing import TypeVar
 from pydantic import BaseModel, ValidationError
 
 from coach.llm.provider import LLMInvalidResponse, LLMProvider
+from coach.llm.usage import UsageMeter
 
 T = TypeVar("T", bound=BaseModel)
 
@@ -66,15 +67,27 @@ def _attempt(text: str, model: type[T], validate: Callable[[T], list[str]]) -> t
     return (obj, []) if not errors else (None, list(errors))
 
 
+def _complete(provider: LLMProvider, system: str, prompt: str, meter: UsageMeter | None) -> str:
+    """Un appel au LLM ; son usage est compté même si l'appel lève une erreur."""
+    try:
+        return provider.complete(system, prompt)
+    finally:
+        if meter is not None:
+            meter.add(getattr(provider, "last_usage", None))
+
+
 def ask_structured(provider: LLMProvider, system: str, prompt: str, model: type[T],
-                   validate: Callable[[T], list[str]] = lambda _: []) -> T:
-    """Appelle le LLM, valide ; une seule nouvelle tentative en cas d'échec."""
-    obj, errors = _attempt(provider.complete(system, prompt), model, validate)
+                   validate: Callable[[T], list[str]] = lambda _: [], meter: UsageMeter | None = None) -> T:
+    """Appelle le LLM, valide ; une seule nouvelle tentative en cas d'échec.
+
+    `meter` (facultatif) cumule l'usage de chaque essai.
+    """
+    obj, errors = _attempt(_complete(provider, system, prompt, meter), model, validate)
     if obj is not None:
         return obj
     retry = (f"{prompt}\n\nTa réponse précédente est invalide : {' ; '.join(errors)}. "
              "Renvoie uniquement le JSON corrigé.")
-    obj, errors = _attempt(provider.complete(system, retry), model, validate)
+    obj, errors = _attempt(_complete(provider, system, retry, meter), model, validate)
     if obj is not None:
         return obj
     raise LLMInvalidResponse(errors)

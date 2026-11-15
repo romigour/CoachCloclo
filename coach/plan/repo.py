@@ -23,6 +23,7 @@ from coach.plan.models import (
     Event,
     Goal,
     GpxFile,
+    LlmUsage,
     PersonalRecord,
     Proposal,
     Race,
@@ -34,7 +35,7 @@ from coach.plan.models import (
 _LAPS = TypeAdapter(list[LapSummary])
 
 # Chaque changement de schéma futur doit incrémenter SCHEMA_VERSION.
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2  # 2 : table llmusage
 
 
 class SchemaTooNew(Exception):
@@ -350,6 +351,12 @@ class Repo:
     def exclude_race(self, activity_id: int) -> None:
         """Marque l'activité comme non-course, en conservant les autres champs."""
         self._save_race(activity_id, {"excluded": True})
+
+    def llm_usages(self) -> list[LlmUsage]:
+        """Consommation Claude, de la plus récente à la plus ancienne."""
+        with self._open() as db:
+            stmt = select(LlmUsage).order_by(LlmUsage.created_at.desc(), LlmUsage.id.desc())
+            return list(db.exec(stmt).all())
 
     def records(self) -> list[PersonalRecord]:
         with self._open() as db:

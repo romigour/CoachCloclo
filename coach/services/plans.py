@@ -28,6 +28,7 @@ from coach.services.goals import (
     normalize_days,
     stale_pending,
 )
+from coach.services.llm_usage import tracked
 
 
 def _active_cycle(repo: Repo) -> Cycle:
@@ -94,21 +95,23 @@ def generate_plan(repo: Repo, garmin: GarminPort, llm: LLMProvider) -> PlanRespo
     pace_available = zones.pace is not None
     # chaque objectif du cycle en mode `claude` est (ré)estimé, au-dessus de l'allure plancher
     estimate_min_s = estimate_floors(generation_estimates(goals), MIN_PACE_S_KM)
-    plan = ask_structured(
-        llm,
-        SYSTEM_PROMPT,
-        prompt,
-        PlanResponse,
-        validate=lambda p: validate_plan(
-            p, n_weeks=n, sessions_per_week=cycle.sessions_per_week,
-            pace_available=pace_available, estimate_min_s=estimate_min_s,
-            first_week=first_week, fixed_counts=fixed_counts,
+    with tracked(repo, "generation") as meter:
+        plan = ask_structured(
+            llm,
+            SYSTEM_PROMPT,
+            prompt,
+            PlanResponse,
+            validate=lambda p: validate_plan(
+                p, n_weeks=n, sessions_per_week=cycle.sessions_per_week,
+                pace_available=pace_available, estimate_min_s=estimate_min_s,
+                first_week=first_week, fixed_counts=fixed_counts,
+            )
+            # génération : aucune séance avant aujourd'hui (régénération ou départ en milieu de semaine)
+            + constraint_errors(
+                planned_from_plan(cycle, p), constraints, fixed_counts=fixed_counts, reject_past=True
+            ),
+            meter=meter,
         )
-        # génération : aucune séance avant aujourd'hui (régénération ou départ en milieu de semaine)
-        + constraint_errors(
-            planned_from_plan(cycle, p), constraints, fixed_counts=fixed_counts, reject_past=True
-        ),
-    )
     with repo.transaction() as db:
         todo = select(Session).where(
             Session.cycle_id == cycle.id, Session.status == "todo", Session.week_index >= first_week

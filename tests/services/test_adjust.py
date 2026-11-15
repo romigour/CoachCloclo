@@ -202,3 +202,14 @@ def test_add_goal_estimate_applied_on_accept(repo, coach_home, monday_garmin):
     with repo.transaction() as db:
         g = db.get(Goal, goal.id)
     assert (g.target_time_s, g.target_source) == (3000, "claude")
+
+
+def test_ask_adjustment_records_usage(repo, coach_home, fake_garmin, accepted_plan):
+    from coach.llm.usage import CallUsage
+
+    before = len(repo.llm_usages())
+    u = CallUsage(mode="api", model="m", input_tokens=1, output_tokens=1, cost_usd=0.1, duration_ms=1)
+    ask_adjustment(repo, fake_garmin, FakeLLMProvider([adjustment_json()], usage=u), accepted_plan, _zones(),
+                   repo.sessions(accepted_plan.id), TODAY)
+    rows = repo.llm_usages()
+    assert len(rows) == before + 1 and (rows[0].kind, rows[0].status, rows[0].mode) == ("adjustment", "ok", "api")

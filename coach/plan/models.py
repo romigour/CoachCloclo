@@ -247,3 +247,19 @@ class GarminLock(SQLModel, table=True):
     id: int = Field(default=1, primary_key=True)
     holder: str
     expires_at: dt.datetime
+
+
+class LlmUsage(SQLModel, table=True):
+    """Consommation d'une action Claude (génération de plan ou ajustement), essais cumulés."""
+
+    id: int | None = Field(default=None, primary_key=True)
+    created_at: dt.datetime = Field(default_factory=_now, index=True)
+    kind: str  # generation | adjustment
+    mode: str | None = None  # cli | api
+    model: str | None = None
+    attempts: int
+    input_tokens: int
+    output_tokens: int
+    cost_usd: float | None = None  # estimation équivalent API ; None si tarif inconnu
+    duration_ms: int
+    status: str  # ok | failed

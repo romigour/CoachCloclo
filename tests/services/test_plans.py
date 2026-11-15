@@ -355,3 +355,24 @@ def test_generate_rejects_session_after_cycle_end(repo, fake_garmin):
     llm = FakeLLMProvider([late.model_dump_json(), ok.model_dump_json()])
     generate_plan(repo, fake_garmin, llm)
     assert "semaine 14, séance 1 : tombe après la fin du cycle (03/02)" in llm.calls[1]
+
+
+def test_generate_plan_records_usage(repo, fake_garmin):
+    from coach.llm.usage import CallUsage
+
+    _goal(repo, fake_garmin)
+    u = CallUsage(mode="cli", model="m", input_tokens=1, output_tokens=1, cost_usd=0.3, duration_ms=1)
+    generate_plan(repo, fake_garmin, FakeLLMProvider([valid_plan_json(n_weeks=14, per_week=3)], usage=u))
+    [row] = repo.llm_usages()
+    assert (row.kind, row.status, row.cost_usd) == ("generation", "ok", 0.3)
+
+
+def test_generate_plan_failure_records_usage(repo, fake_garmin):
+    from coach.llm.usage import CallUsage
+
+    _goal(repo, fake_garmin)
+    u = CallUsage(mode="cli", model="m", input_tokens=1, output_tokens=1, cost_usd=0.3, duration_ms=1)
+    with pytest.raises(LLMInvalidResponse):
+        generate_plan(repo, fake_garmin, FakeLLMProvider(["{}", "{}"], usage=u))
+    [row] = repo.llm_usages()
+    assert (row.status, row.attempts) == ("failed", 2)

@@ -18,6 +18,7 @@ from coach.plan.models import Activity, Cycle, Goal, Proposal, Session
 from coach.plan.repo import Repo
 from coach.services.context import load_constraints, recent_history, refresh_snapshot
 from coach.services.laps import session_comparison
+from coach.services.llm_usage import tracked
 from coach.services.race_strategy import race_line_for_prompt
 
 
@@ -84,25 +85,27 @@ def ask_adjustment(
         change_note=change_note,
         constraints=constraints,
     )
-    adj = ask_structured(
-        llm,
-        SYSTEM_PROMPT,
-        prompt,
-        AdjustmentResponse,
-        validate=lambda a: validate_adjustment(
-            a,
-            editable_ids=editable,
-            current_week=current_week,
-            n_weeks=n_weeks(cycle.plan_start, cycle.end_date),
-            sessions_per_week=cycle.sessions_per_week,
-            counts_by_week=counts,
-            pace_available=zones.pace is not None,
-            week_of_session=week_of_session,
-            exported_ids={s.id for s in upcoming if s.status == "exported"},
-            estimate_min_s=estimate_min_s,
+    with tracked(repo, "adjustment") as meter:
+        adj = ask_structured(
+            llm,
+            SYSTEM_PROMPT,
+            prompt,
+            AdjustmentResponse,
+            validate=lambda a: validate_adjustment(
+                a,
+                editable_ids=editable,
+                current_week=current_week,
+                n_weeks=n_weeks(cycle.plan_start, cycle.end_date),
+                sessions_per_week=cycle.sessions_per_week,
+                counts_by_week=counts,
+                pace_available=zones.pace is not None,
+                week_of_session=week_of_session,
+                exported_ids={s.id for s in upcoming if s.status == "exported"},
+                estimate_min_s=estimate_min_s,
+            )
+            + constraint_errors(planned_after_adjustment(cycle, upcoming, a), constraints, fixed_counts=fixed_counts),
+            meter=meter,
         )
-        + constraint_errors(planned_after_adjustment(cycle, upcoming, a), constraints, fixed_counts=fixed_counts),
-    )
     adj.estimated_times = [e for e in adj.estimated_times if e.goal_id in estimate_min_s]
     return adj
 

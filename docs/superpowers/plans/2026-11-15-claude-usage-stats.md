@@ -384,8 +384,8 @@ Expected: FAIL (composant introuvable)
 
 - [ ] **Step 4: Lancer toute la suite front et le typage**
 
-Run: `cd web && npx vitest run && npm run check`
-Expected: PASS, 0 erreur de typage (si `npm run check` n'existe pas, utiliser le script de typage défini dans `web/package.json`)
+Run: `cd web && npm test && npm run build`
+Expected: tests PASS, build sans erreur
 
 - [ ] **Step 5: Commit**
 

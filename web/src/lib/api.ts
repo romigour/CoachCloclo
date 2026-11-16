@@ -326,6 +326,25 @@ export function setupDone(s: SetupStatus, claudeSkipped: boolean): boolean {
 
 export type SettingsView = { llm_mode: "cli" | "api"; anthropic_model: string | null; has_api_key: boolean };
 
+export type LlmUsageRow = {
+  created_at: string;
+  kind: "generation" | "adjustment";
+  status: "ok" | "failed";
+  attempts: number;
+  cost_eur: number | null;
+  input_tokens: number;
+  output_tokens: number;
+  duration_ms: number;
+  mode: "cli" | "api" | null;
+  model: string | null;
+};
+
+export type LlmUsageView = {
+  month: { generations: number; adjustments: number; cost_eur: number };
+  avg_generation_eur: number | null;
+  recent: LlmUsageRow[];
+};
+
 export type SessionSpec = {
   week_index: number;
   order: number;
@@ -533,6 +552,7 @@ const rawApi = {
   settings: () => get<SettingsView>("/settings"),
   saveSettings: (s: { llm_mode: "cli" | "api"; anthropic_api_key?: string; anthropic_model?: string }) =>
     request<SettingsView>("PUT", "/settings", s),
+  llmUsage: () => get<LlmUsageView>("/llm-usage"),
   createGoal: (g: GoalInput) => {
     const f = new FormData();
     f.set("type", g.type);

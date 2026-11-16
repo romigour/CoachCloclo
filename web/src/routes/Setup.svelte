@@ -7,6 +7,7 @@
   import StorageSettings from "../components/StorageSettings.svelte";
   import UpdateSettings from "../components/UpdateSettings.svelte";
   import ThemeSettings from "../components/ThemeSettings.svelte";
+  import ClaudeUsage from "../components/ClaudeUsage.svelte";
   import Icon from "../components/Icon.svelte";
 
   let { onchanged, onconnected }: { onchanged?: () => void; onconnected?: () => void } = $props();
@@ -171,4 +172,6 @@
     </div>
   </form>
 </section>
+
+<ClaudeUsage />
 </div>

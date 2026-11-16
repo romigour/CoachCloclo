@@ -36,7 +36,7 @@ CREATE TABLE appstate (
 	value_json VARCHAR NOT NULL, 
 	PRIMARY KEY ("key")
 );
-INSERT INTO "appstate" VALUES('schema_version','{"v": 1}');
+INSERT INTO "appstate" VALUES('schema_version','{"v": 2}');
 INSERT INTO "appstate" VALUES('history','{"status": "done", "imported": 42, "error": null}');
 CREATE TABLE athletesnapshot (
 	id INTEGER NOT NULL, 
@@ -119,6 +119,20 @@ CREATE TABLE gpxfile (
 	goal_id INTEGER NOT NULL, 
 	data BLOB NOT NULL, 
 	PRIMARY KEY (goal_id)
+);
+CREATE TABLE llmusage (
+	id INTEGER NOT NULL, 
+	created_at DATETIME NOT NULL, 
+	kind VARCHAR NOT NULL, 
+	mode VARCHAR, 
+	model VARCHAR, 
+	attempts INTEGER NOT NULL, 
+	input_tokens INTEGER NOT NULL, 
+	output_tokens INTEGER NOT NULL, 
+	cost_usd FLOAT, 
+	duration_ms INTEGER NOT NULL, 
+	status VARCHAR NOT NULL, 
+	PRIMARY KEY (id)
 );
 CREATE TABLE personalrecord (
 	id INTEGER NOT NULL, 
@@ -203,6 +217,7 @@ INSERT INTO "session" VALUES(7,1,3,1,'mardi',NULL,'EF','run','hr','Dernier footi
 INSERT INTO "session" VALUES(8,1,3,2,'dimanche',NULL,'course','run','pace','Course objectif','Description de la séance 8.','[{"kind": "active", "zone": "marathon", "distance_m": 21100}]',NULL,NULL,'todo',NULL,NULL,NULL,NULL,NULL,NULL,0);
 CREATE INDEX ix_activity_date ON activity (date);
 CREATE INDEX ix_event_cycle_id ON event (cycle_id);
+CREATE INDEX ix_llmusage_created_at ON llmusage (created_at);
 CREATE INDEX ix_session_cycle_id ON session (cycle_id);
 CREATE UNIQUE INDEX ix_activity_garmin_activity_id ON activity (garmin_activity_id);
 CREATE UNIQUE INDEX ix_activitylaps_activity_id ON activitylaps (activity_id);

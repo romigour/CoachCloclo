@@ -17,6 +17,7 @@ from coach.llm.provider import (
     provider_from_settings,
 )
 
+from coach.llm.usage import CallUsage
 from coach.proc import NO_WINDOW
 
 
@@ -105,7 +106,7 @@ class FakeClient:
         self.kwargs = kwargs
         if self.exc:
             raise self.exc
-        return SimpleNamespace(content=self.blocks)
+        return SimpleNamespace(content=self.blocks, usage=getattr(self, "usage", None))
 
 
 def test_api_provider_concatenates_text_blocks():
@@ -194,3 +195,61 @@ def test_cli_found_in_local_bin_when_not_on_path(tmp_path, monkeypatch):
     run = fake_run(stdout=OK_ENVELOPE)
     cli(run, which=lambda n: None).complete("s", "p")
     assert run.args[0] == str(exe)
+
+
+ENVELOPE = {
+    "type": "result", "is_error": False, "result": "{}", "duration_ms": 3132, "total_cost_usd": 0.0102,
+    "usage": {"input_tokens": 2, "cache_creation_input_tokens": 4864, "cache_read_input_tokens": 649,
+              "output_tokens": 77},
+    "modelUsage": {"claude-sonnet-5-5": {}},
+}
+
+
+def test_cli_records_usage(tmp_path):
+    p = cli(fake_run(stdout=json.dumps(ENVELOPE)), cwd=tmp_path)
+    p.complete("s", "p")
+    assert p.last_usage == CallUsage(mode="cli", model="claude-sonnet-5-5", input_tokens=5515,
+                                     output_tokens=77, cost_usd=0.0102, duration_ms=3132)
+
+
+def test_cli_usage_kept_when_envelope_is_error(tmp_path):
+    env = {**ENVELOPE, "is_error": True, "result": "usage limit reached"}
+    p = cli(fake_run(stdout=json.dumps(env)), cwd=tmp_path)
+    with pytest.raises(LLMUsageLimit):
+        p.complete("s", "p")
+    assert p.last_usage.cost_usd == 0.0102
+
+
+def test_cli_usage_tolerates_missing_fields(tmp_path):
+    p = cli(fake_run(stdout=json.dumps({"result": "{}"})), cwd=tmp_path)
+    p.complete("s", "p")
+    assert p.last_usage == CallUsage(mode="cli", model=None, input_tokens=0, output_tokens=0,
+                                     cost_usd=None, duration_ms=0)
+
+
+def test_cli_usage_reset_when_cli_missing(tmp_path):
+    p = cli(fake_run(stdout=json.dumps(ENVELOPE)), cwd=tmp_path)
+    p.complete("s", "p")
+    p.which = lambda name: None
+    with pytest.raises(LLMUnavailable):
+        p.complete("s", "p")
+    assert p.last_usage is None
+
+
+def test_api_records_usage():
+    client = FakeClient([SimpleNamespace(type="text", text="ok")])
+    client.usage = SimpleNamespace(input_tokens=1000, output_tokens=500,
+                                   cache_creation_input_tokens=None, cache_read_input_tokens=None)
+    p = AnthropicApiProvider("k", "claude-sonnet-5-5", client=client)
+    p.complete("s", "p")
+    u = p.last_usage
+    assert (u.mode, u.model, u.input_tokens, u.output_tokens) == ("api", "claude-sonnet-5-5", 1000, 500)
+    assert u.cost_usd == pytest.approx(0.007)
+    assert u.duration_ms >= 0
+
+
+def test_fake_provider_exposes_usage():
+    u = CallUsage(mode="cli", model="m", input_tokens=1, output_tokens=1, cost_usd=0.1, duration_ms=1)
+    p = FakeLLMProvider(["a"], usage=u)
+    p.complete("s", "p")
+    assert p.last_usage == u

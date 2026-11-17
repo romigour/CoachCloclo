@@ -157,7 +157,7 @@
     overflow: hidden;
     margin-top: 0.2rem;
   }
-  .bar span { display: block; height: 100%; background: var(--z4); border-radius: 3px; }
+  .bar span { display: block; height: 100%; background: var(--accent); border-radius: 3px; }
   .cal { width: 100%; min-width: 0; overflow-x: auto; overscroll-behavior-x: contain; }
   .scale {
     display: flex;

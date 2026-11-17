@@ -179,7 +179,7 @@ test("generating and accepting the draft go through the cycle", async () => {
   render(Goal, { onchanged });
   await fireEvent.click(await screen.findByRole("button", { name: "Régénérer" }));
   await fireEvent.click(await screen.findByRole("button", { name: "Valider le plan" }));
-  await waitFor(() => expect(location.hash).toBe("#/today"));
+  await waitFor(() => expect(location.hash).toBe("#/week"));
   const posts = fetchMock.mock.calls.filter(([, i]) => (i as RequestInit | undefined)?.method === "POST").map(([u]) => u);
   expect(posts).toEqual(["/api/cycle/generate", "/api/cycle/accept"]);
   expect(onchanged).toHaveBeenCalled();

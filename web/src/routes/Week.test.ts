@@ -1,0 +1,264 @@
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
+import { afterEach, expect, test, vi } from "vitest";
+import Week from "./Week.svelte";
+import type { CoachEvent, Cycle, Goal, Plan, Session, Status } from "../lib/api";
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+  location.hash = "";
+});
+
+const s = (id: number, title: string, suggested_day: Session["suggested_day"], status: Session["status"], type = "seuil"): Session => ({
+  id, order: id, type, title, description: "", target_kind: "pace", status, suggested_day,
+  sport: "run", scheduled_date: null, chaining_note: null, sync_error: null,
+  steps: [{ kind: "warmup", duration_s: 1200, zone: "EF" }, { kind: "active", duration_s: 1800, zone: "seuil" }],
+});
+
+const cycle: Cycle = {
+  id: 1, status: "active", plan_start: "2026-10-26", end_date: "2026-12-06", sessions_per_week: 3,
+  available_days: ["lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche"], long_run_day: null,
+  include_bike: false, plan_accepted: true, needs_generation: false,
+};
+const goal: Goal = {
+  id: 1, type: "route", distance_km: 21.1, d_plus_m: 0, race_date: "2026-12-06", priority: "principal", status: "active",
+  gpx_summary: null, target_time_s: null, target_source: null,
+};
+
+const plan: Plan = {
+  cycle,
+  goals: [goal],
+  horizon: [],
+  open_injury: null,
+  weeks: [
+    { week_index: 1, week_monday: "2026-10-26", sessions: [s(1, "Endurance 50 min", "lundi", "done", "EF"), s(2, "Seuil 3 × 10 min", "vendredi", "todo")] },
+    { week_index: 2, week_monday: "2026-11-02", sessions: [s(3, "VMA 6 × 1 min", "mardi", "todo", "VMA"), s(4, "Sortie longue 1 h 30", "dimanche", "todo", "sortie_longue")] },
+  ],
+};
+
+function mock(body: Plan = plan) {
+  vi.stubGlobal("fetch", vi.fn(async (url: string) =>
+    new Response(JSON.stringify(url.startsWith("/api/plan") ? body : []), { status: 200 })));
+}
+
+const focus = () => screen.getByRole("region", { name: "Séance sélectionnée" });
+
+// --- la séance mise en avant -----------------------------------------------------------------
+
+test("today's session is the focus, with its single main action", async () => {
+  mock();
+  render(Week, { today: "2026-10-30" });
+  expect(await screen.findByRole("heading", { name: "Ma semaine", level: 1 })).toBeVisible();
+  const card = await screen.findByRole("region", { name: "Séance sélectionnée" });
+  expect(within(card).getByRole("heading", { name: "Seuil 3 × 10 min" })).toBeVisible();
+  expect(within(card).getByText(/^Aujourd'hui · Vendredi 30 octobre/)).toBeVisible();
+  expect(within(card).getByRole("button", { name: "Envoyer sur la montre" })).toBeVisible();
+  expect(screen.getByText("J-37")).toBeVisible();
+  expect(screen.getAllByText("Repos")).toHaveLength(5);
+});
+
+test("on a rest day the next session of the week is shown", async () => {
+  mock();
+  render(Week, { today: "2026-10-28" });
+  expect(await within(await screen.findByRole("region", { name: "Séance sélectionnée" })).findByRole("heading", { name: "Seuil 3 × 10 min" })).toBeVisible();
+});
+
+test("once the week is over, it says so and offers the next week", async () => {
+  mock();
+  render(Week, { today: "2026-10-31" });
+  expect(await screen.findByRole("heading", { name: "Repos aujourd'hui" })).toBeVisible();
+  await fireEvent.click(screen.getByRole("button", { name: "Voir la semaine suivante" }));
+  expect(screen.getByRole("heading", { name: "Semaine prochaine" })).toBeVisible();
+  expect(within(focus()).getByRole("heading", { name: "VMA 6 × 1 min" })).toBeVisible();
+});
+
+test("clicking a day of the week puts its session in focus", async () => {
+  mock();
+  render(Week, { today: "2026-10-30" });
+  await fireEvent.click(await screen.findByRole("button", { name: /Endurance 50 min/ }));
+  expect(within(focus()).getByRole("heading", { name: "Endurance 50 min" })).toBeVisible();
+  expect(screen.getByRole("button", { name: /Endurance 50 min/ })).toHaveAttribute("aria-pressed", "true");
+});
+
+// --- navigation entre les semaines ------------------------------------------------------------
+
+test("the arrows and the timeline move through the weeks", async () => {
+  mock();
+  render(Week, { today: "2026-10-30" });
+  expect(await screen.findByRole("heading", { name: "Cette semaine" })).toBeVisible();
+  expect(screen.getByRole("button", { name: "Semaine précédente" })).toBeDisabled();
+  expect(screen.queryByRole("button", { name: "Revenir à cette semaine" })).toBeNull();
+
+  await fireEvent.click(screen.getByRole("button", { name: "Semaine suivante" }));
+  expect(screen.getByRole("heading", { name: "Semaine prochaine" })).toBeVisible();
+  expect(screen.getByText(/2 – 8 nov\./)).toBeVisible();
+  expect(screen.getByRole("button", { name: /VMA 6 × 1 min/ })).toBeVisible();
+  expect(screen.getByRole("button", { name: "Semaine suivante" })).toBeDisabled();
+  // autre semaine : sa première séance à faire est mise en avant
+  expect(within(focus()).getByRole("heading", { name: "VMA 6 × 1 min" })).toBeVisible();
+
+  await fireEvent.click(screen.getByRole("button", { name: "Revenir à cette semaine" }));
+  expect(screen.getByRole("heading", { name: "Cette semaine" })).toBeVisible();
+
+  const timeline = screen.getByRole("group", { name: "Aller à une semaine du plan" });
+  await fireEvent.click(within(timeline).getByRole("button", { name: "Semaine 2" }));
+  expect(within(timeline).getByRole("button", { name: "Semaine 2" })).toHaveAttribute("aria-current", "true");
+  expect(screen.getByRole("heading", { name: "Semaine prochaine" })).toBeVisible();
+});
+
+test("the week summary counts the sessions done", async () => {
+  mock();
+  render(Week, { today: "2026-10-30" });
+  const summary = await screen.findByRole("region", { name: "Bilan de la semaine" });
+  expect(summary).toHaveTextContent("Semaine 1 sur 2");
+  expect(summary).toHaveTextContent("1/2 séances faites");
+});
+
+// --- propositions et imprévus -----------------------------------------------------------------
+
+test("a pending proposal shows as a banner linking to it", async () => {
+  mock();
+  const status = { pending_proposal_id: 7 } as Status;
+  render(Week, { today: "2026-10-30", status });
+  const banner = await screen.findByRole("link", { name: /Claude propose des changements/ });
+  expect(banner).toHaveAttribute("href", "#/proposal");
+});
+
+test("without a pending proposal, no banner", async () => {
+  mock();
+  render(Week, { today: "2026-10-30", status: { pending_proposal_id: null } as Status });
+  await screen.findByRole("region", { name: "Séance sélectionnée" });
+  expect(screen.queryByRole("link", { name: /Claude propose/ })).toBeNull();
+});
+
+test("Signaler un imprévu opens the event dialog", async () => {
+  mock();
+  render(Week, { today: "2026-10-30" });
+  await fireEvent.click(await screen.findByRole("button", { name: "Signaler un imprévu" }));
+  expect(screen.getByRole("dialog", { name: "Signaler un imprévu" })).toBeVisible();
+});
+
+const injury: CoachEvent = {
+  id: 4, kind: "injury", start_date: "2026-11-01", end_date: null, max_sessions: null, days: null,
+  session_id: null, note: null,
+};
+
+/** `resumed` : après la reprise, le plan n'a plus d'arrêt ouvert et l'imprévu est clos. */
+function mockInjury(opts: { injury: boolean }) {
+  let resumed = false;
+  const f = vi.fn(async (url: string) => {
+    const json = (b: unknown) => new Response(JSON.stringify(b), { status: 200 });
+    if (url === "/api/plan") return json({ ...plan, open_injury: opts.injury && !resumed ? injury : null });
+    if (url === "/api/cycle/events")
+      return json(opts.injury ? [{ ...injury, end_date: resumed ? "2026-11-02" : null }] : []);
+    if (url === "/api/events/4/resume") {
+      resumed = true;
+      return json({ event_id: 4, proposal_id: 8, error: null });
+    }
+    return json([]);
+  });
+  vi.stubGlobal("fetch", f);
+  return f;
+}
+const planCalls = (f: ReturnType<typeof mockInjury>) => f.mock.calls.filter((c) => c[0] === "/api/plan").length;
+
+test("the injury banner shows for an open injury and not otherwise", async () => {
+  mockInjury({ injury: true });
+  const { unmount } = render(Week, { today: "2026-11-03" });
+  expect(await screen.findByText("Arrêt depuis le 01/11")).toBeVisible();
+  unmount();
+  mockInjury({ injury: false });
+  render(Week, { today: "2026-11-03" });
+  await screen.findByRole("heading", { name: "Ma semaine" });
+  await waitFor(() => expect(screen.queryByText(/Arrêt depuis/)).toBeNull());
+});
+
+test("resuming reloads the plan, clears the list and goes to the proposal", async () => {
+  const f = mockInjury({ injury: true });
+  render(Week, { today: "2026-11-03" });
+  await screen.findByText(/Blessure \/ maladie · depuis le 01\/11/);
+  const before = planCalls(f);
+  await fireEvent.click(await screen.findByRole("button", { name: "Signaler la reprise" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Confirmer la reprise" }));
+  await waitFor(() => expect(location.hash).toBe("#/proposal"));
+  await waitFor(() => expect(planCalls(f)).toBeGreaterThan(before));
+  await waitFor(() => expect(screen.queryByText(/Arrêt depuis/)).toBeNull());
+  await waitFor(() => expect(screen.queryByRole("button", { name: "Supprimer" })).toBeNull());
+});
+
+// --- états du cycle ---------------------------------------------------------------------------
+
+test("without a cycle, the page invites to create a goal", async () => {
+  mock({ cycle: null, goals: [], horizon: [], open_injury: null, weeks: [] });
+  render(Week, { today: "2026-11-03" });
+  expect(await screen.findByRole("link", { name: "Créer un objectif" })).toHaveAttribute("href", "#/goal");
+});
+
+test("a draft cycle sends back to the draft", async () => {
+  mock({ ...plan, cycle: { ...cycle, plan_accepted: false } });
+  render(Week, { today: "2026-11-03" });
+  expect(await screen.findByRole("link", { name: "Relire le brouillon" })).toBeVisible();
+});
+
+test("plan à recalculer : le plan précédent reste affiché, en lecture seule, avec Générer", async () => {
+  let generated = false;
+  const stale: Plan = { ...plan, cycle: { ...cycle, plan_accepted: false, needs_generation: true } };
+  const f = vi.fn(async (url: string, _init?: RequestInit) => {
+    const json = (b: unknown) => new Response(JSON.stringify(b), { status: 200 });
+    if (url === "/api/cycle/generate") {
+      generated = true;
+      return json({ summary: "ok", weeks: 6 });
+    }
+    if (url === "/api/plan") return json(generated ? { ...stale, cycle: { ...cycle, plan_accepted: false } } : stale);
+    return json([]);
+  });
+  vi.stubGlobal("fetch", f);
+  render(Week, { today: "2026-10-30" });
+  const banner = await screen.findByRole("region", { name: "Plan à recalculer" });
+  expect(banner).toHaveTextContent("Le plan doit être recalculé");
+  expect(screen.queryByRole("link", { name: "Relire le brouillon" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Signaler un imprévu" })).toBeNull();
+  expect(within(focus()).getByRole("heading", { name: "Seuil 3 × 10 min" })).toBeVisible();
+  expect(within(focus()).queryByRole("button", { name: "Envoyer sur la montre" })).toBeNull();
+  await fireEvent.click(within(banner).getByRole("button", { name: "Générer" }));
+  await waitFor(() => expect(f.mock.calls.some(([u, i]) => u === "/api/cycle/generate" && i?.method === "POST")).toBe(true));
+  expect(await screen.findByRole("link", { name: "Relire le brouillon" })).toBeVisible();
+});
+
+test("plan à recalculer sans séance : renvoie aux objectifs", async () => {
+  mock({ ...plan, cycle: { ...cycle, plan_accepted: false, needs_generation: true }, weeks: [{ week_index: 1, week_monday: "2026-10-26", sessions: [] }] });
+  render(Week, { today: "2026-11-03" });
+  expect(await screen.findByRole("link", { name: "Relire le brouillon" })).toBeVisible();
+  expect(screen.queryByRole("region", { name: "Plan à recalculer" })).toBeNull();
+});
+
+// --- courses ----------------------------------------------------------------------------------
+
+const secondary: Goal = { ...goal, id: 2, type: "trail", distance_km: 20, d_plus_m: 800, race_date: "2026-12-05", priority: "secondaire" };
+const later: Goal = { ...goal, id: 3, distance_km: 10, race_date: "2027-03-14", priority: "plaisir" };
+
+test("montre une carte Course le jour d'un objectif, et la semaine de course dans la frise", async () => {
+  mock({ ...plan, goals: [secondary, goal], weeks: [{ week_index: 6, week_monday: "2026-11-30", sessions: [] }] });
+  render(Week, { today: "2026-12-01" });
+  const races = await screen.findAllByRole("note", { name: /^Course/ });
+  expect(races).toHaveLength(2);
+  expect(races[0]).toHaveTextContent("Trail de 20 km");
+  expect(races[0]).toHaveTextContent("Secondaire");
+  expect(races[1]).toHaveTextContent("Course sur route de 21,1 km");
+  expect(screen.getByRole("button", { name: "Semaine 6 (course)" })).toBeVisible();
+});
+
+test("liste les objectifs de l'horizon sous le plan", async () => {
+  mock({ ...plan, horizon: [later] });
+  render(Week, { today: "2026-11-03" });
+  const next = await screen.findByRole("region", { name: "Ensuite" });
+  expect(next).toHaveTextContent("Course sur route de 10 km");
+  expect(next).toHaveTextContent("Plaisir");
+  expect(next).toHaveTextContent("14 mars 2027");
+});
+
+test("sans horizon, pas de liste Ensuite", async () => {
+  mock();
+  render(Week, { today: "2026-11-03" });
+  await screen.findByRole("heading", { name: "Ma semaine" });
+  expect(screen.queryByRole("region", { name: "Ensuite" })).toBeNull();
+});

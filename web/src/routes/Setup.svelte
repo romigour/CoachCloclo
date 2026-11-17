@@ -56,7 +56,7 @@
     // L'app synchronise et choisit la page ; sans elle, on retombe sur objectif / plan.
     if (onconnected) return onconnected();
     onchanged?.();
-    location.hash = status?.cycle ? "#/plan" : "#/goal";
+    location.hash = status?.cycle ? "#/week" : "#/goal";
   }
 
   async function reimport() {

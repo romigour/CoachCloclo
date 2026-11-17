@@ -253,3 +253,59 @@ def test_fake_provider_exposes_usage():
     p = FakeLLMProvider(["a"], usage=u)
     p.complete("s", "p")
     assert p.last_usage == u
+
+
+# --- journal de diagnostic --------------------------------------------------------------
+
+
+def claude_log(home):
+    return (home / "logs" / "claude.log").read_text(encoding="utf-8")
+
+
+def test_cli_traces_request_output_and_response(coach_home):
+    import re
+
+    from coach.config import save_settings
+
+    save_settings(Settings(trace_claude=True))
+    env = {"result": "ok", "usage": {"input_tokens": 1, "output_tokens": 2}, "duration_ms": 5}
+    cli(fake_run(stdout=json.dumps(env))).complete("SYS-PROMPT", "USER-PROMPT")
+    log = claude_log(coach_home)
+    assert log.index("requête") < log.index("sortie") < log.index("réponse")
+    assert "SYS-PROMPT" in log and "USER-PROMPT" in log and '"text": "ok"' in log
+    assert len(set(re.findall(r"\[([0-9a-f]{8})\]", log))) == 1
+
+
+def test_cli_timeout_traces_partial_output(coach_home):
+    from coach.config import save_settings
+
+    save_settings(Settings(trace_claude=True))
+    exc = subprocess.TimeoutExpired(["claude"], 180, output=b"partiel", stderr=None)
+    with pytest.raises(LLMTimeout):
+        cli(fake_run(raises=exc)).complete("s", "p")
+    log = claude_log(coach_home)
+    assert "requête" in log and "délai dépassé" in log and "partiel" in log
+
+
+def test_cli_error_traced_and_reraised(coach_home):
+    from coach.config import save_settings
+
+    save_settings(Settings(trace_claude=True))
+    with pytest.raises(LLMError):
+        cli(fake_run(stdout="pas du json", returncode=1)).complete("s", "p")
+    assert "erreur" in claude_log(coach_home)
+
+
+def test_api_traces_request_and_response_without_key(coach_home):
+    from coach.config import save_settings
+
+    save_settings(Settings(trace_claude=True, anthropic_api_key="sk-ant-SECRET"))
+    client = FakeClient([SimpleNamespace(type="text", text="ok")])
+    AnthropicApiProvider("sk-ant-SECRET", "m1", client=client).complete("SYS", "USR")
+    log = claude_log(coach_home)
+    assert '"model": "m1"' in log and '"text": "ok"' in log and "SECRET" not in log
+
+
+def test_no_trace_when_disabled(coach_home):
+    cli(fake_run(stdout=json.dumps({"result": "ok"}))).complete("s", "p")
+    assert not (coach_home / "logs" / "claude.log").exists()

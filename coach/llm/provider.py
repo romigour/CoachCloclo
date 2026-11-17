@@ -1,10 +1,15 @@
 """Fournisseurs LLM : CLI Claude Code (abonnement) ou API Anthropic."""
 
+import dataclasses
 import json
+import logging
 import shutil
 import subprocess
 import time
+from collections.abc import Callable
 from typing import Protocol
+
+from coach import trace
 
 from coach.config import Settings, data_dir
 from coach.llm.usage import CallUsage, api_cost_usd
@@ -63,6 +68,28 @@ _AUTH_WORDS = ("login", "authenticate", "not logged in", "unauthorized", "invali
 _NOT_LOGGED = "CLI claude non connecté : lance `claude` pour te connecter"
 
 
+def _text(v) -> str:
+    """Sortie partielle d'un sous-processus : bytes, texte ou rien."""
+    if v is None:
+        return ""
+    return v.decode("utf-8", errors="replace") if isinstance(v, bytes) else str(v)
+
+
+def _traced(provider, run: Callable[[str], str]) -> str:
+    """Exécute `run(call_id)` en consignant réponse ou erreur dans le journal Claude."""
+    call_id = trace.new_call_id()
+    try:
+        text = run(call_id)
+    except Exception as e:
+        trace.record("claude", call_id, "erreur", level=logging.ERROR,
+                     type=type(e).__name__, message=str(e))
+        raise
+    usage = provider.last_usage
+    trace.record("claude", call_id, "réponse", text=text,
+                 usage=dataclasses.asdict(usage) if usage is not None else None)
+    return text
+
+
 def _mentions_auth(*texts: str) -> bool:
     blob = " ".join(texts).lower()
     return any(w in blob for w in _AUTH_WORDS)
@@ -98,6 +125,9 @@ class ClaudeCliProvider:
         self.last_usage: CallUsage | None = None
 
     def complete(self, system: str, prompt: str) -> str:
+        return _traced(self, lambda cid: self._run(system, prompt, cid))
+
+    def _run(self, system: str, prompt: str, call_id: str) -> str:
         self.last_usage = None
         exe = find_claude(self.which)
         if exe is None:
@@ -107,14 +137,24 @@ class ClaudeCliProvider:
                 "--strict-mcp-config", "--disable-slash-commands"]
         cwd = self.cwd if self.cwd is not None else data_dir() / "claude-cwd"
         cwd.mkdir(parents=True, exist_ok=True)
+        shown = list(args)
+        shown[shown.index("--system-prompt") + 1] = "<prompt système ci-dessous>"
+        trace.record("claude", call_id, "requête", mode="cli", args=shown, timeout_s=self.timeout_s,
+                     system=system, prompt=prompt)
+        started = time.monotonic()
         try:
             proc = self.runner(args, input=prompt, encoding="utf-8", capture_output=True,
                                timeout=self.timeout_s, cwd=cwd, creationflags=NO_WINDOW)
         except FileNotFoundError as e:
             raise LLMUnavailable("CLI claude introuvable") from e
         except subprocess.TimeoutExpired as e:
+            trace.record("claude", call_id, "délai dépassé", level=logging.WARNING,
+                         duration_ms=int((time.monotonic() - started) * 1000),
+                         stdout=_text(e.stdout), stderr=_text(e.stderr))
             raise LLMTimeout(f"Claude n'a pas répondu en {self.timeout_s} s") from e
         stdout, stderr = proc.stdout or "", proc.stderr or ""
+        trace.record("claude", call_id, "sortie", returncode=proc.returncode, stdout=stdout, stderr=stderr,
+                     duration_ms=int((time.monotonic() - started) * 1000))
         try:
             envelope = json.loads(stdout)
             if not isinstance(envelope, dict):
@@ -138,6 +178,9 @@ class ClaudeCliProvider:
         return text
 
 
+MAX_TOKENS = 32000
+
+
 class AnthropicApiProvider:
     """Appelle l'API Anthropic (clé API de l'utilisateur)."""
 
@@ -150,12 +193,17 @@ class AnthropicApiProvider:
         self.last_usage: CallUsage | None = None
 
     def complete(self, system: str, prompt: str) -> str:
+        return _traced(self, lambda cid: self._run(system, prompt, cid))
+
+    def _run(self, system: str, prompt: str, call_id: str) -> str:
         a = self._anthropic
         self.last_usage = None
+        trace.record("claude", call_id, "requête", mode="api", model=self.model, max_tokens=MAX_TOKENS,
+                     system=system, prompt=prompt)
         started = time.monotonic()
         try:
             msg = self.client.messages.create(
-                model=self.model, max_tokens=32000, system=system,
+                model=self.model, max_tokens=MAX_TOKENS, system=system,
                 messages=[{"role": "user", "content": prompt}],
             )
         except a.RateLimitError as e:

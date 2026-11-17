@@ -28,6 +28,7 @@ from coach.analysis.compliance import activity_types_for
 from coach.analysis.gpx import GpxError
 from coach.api.desktop_routes import desktop_router
 from coach.api.deps import get_garmin, get_llm, is_loopback, verify_pin
+from coach import trace
 from coach.config import Settings, data_dir, load_settings, save_settings, tokenstore_dir
 from coach.desktop.context import Desktop
 from coach.garmin.client import GarminClient
@@ -107,6 +108,8 @@ NO_DB_PATHS = (
     "/api/version",
     "/api/auth/pin",
     "/api/settings",
+    "/api/diagnostics",
+    "/api/logs/",
     "/api/garmin/",
     "/api/setup/",
     "/api/update",
@@ -144,6 +147,11 @@ class SettingsBody(BaseModel):
     llm_mode: Literal["cli", "api"]
     anthropic_api_key: str | None = None
     anthropic_model: str | None = None
+
+
+class DiagnosticsBody(BaseModel):
+    trace_claude: bool | None = None
+    trace_garmin: bool | None = None
 
 
 class CloudBody(BaseModel):
@@ -967,6 +975,25 @@ def create_app(
             s.anthropic_model = body.anthropic_model
         save_settings(s)
         return _settings_view(s)
+
+    def _diagnostics_view(request: Request) -> dict:
+        s = load_settings()
+        return {
+            "trace_claude": s.trace_claude,
+            "trace_garmin": s.trace_garmin,
+            "logs_dir": str(trace.logs_dir()),
+            "can_open": desktop is not None and is_loopback(request),
+        }
+
+    @api.get("/diagnostics")
+    def get_diagnostics(request: Request):
+        return _diagnostics_view(request)
+
+    @api.put("/diagnostics")
+    def put_diagnostics(body: DiagnosticsBody, request: Request):
+        update = body.model_dump(exclude_none=True)
+        save_settings(load_settings().model_copy(update=update))
+        return _diagnostics_view(request)
 
     @api.get("/llm-usage")
     def get_llm_usage(repo: RepoDep):

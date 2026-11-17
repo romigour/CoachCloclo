@@ -1,12 +1,24 @@
 """Contexte de la version bureau : ce que le routeur desktop peut déclencher."""
 
 import ipaddress
+import os
 import socket
+import subprocess
+import sys
 from collections.abc import Callable
 from dataclasses import dataclass
+from pathlib import Path
 
 from coach.desktop.claude_setup import ClaudeSetup
 from coach.desktop.updater import Updater
+
+
+def open_folder(path: Path) -> None:
+    """Ouvre un dossier dans l'explorateur de fichiers du système."""
+    if sys.platform == "win32":
+        os.startfile(path)  # noqa: S606
+    else:
+        subprocess.Popen(["open" if sys.platform == "darwin" else "xdg-open", str(path)])
 
 
 @dataclass
@@ -16,6 +28,7 @@ class Desktop:
     set_lan: Callable[[bool], None]
     request_exit: Callable[[], None]
     lan_addresses: Callable[[], list[str]]
+    open_folder: Callable[[Path], None] = open_folder
 
 
 def _primary_ip() -> str | None:

@@ -2014,3 +2014,23 @@ def test_llm_usage_lists_rows_with_timezone(make_client, repo):
     assert body["recent"][0]["cost_eur"] == pytest.approx(0.46)
     assert body["recent"][0]["created_at"].endswith("+00:00")
     assert body["month"]["generations"] == 1
+
+
+# --- journaux de diagnostic -------------------------------------------------------------
+
+
+def test_diagnostics_default_off_and_toggle(make_client):
+    c = make_client()
+    v = c.get("/api/diagnostics").json()
+    assert v["trace_claude"] is False and v["trace_garmin"] is False
+    assert v["logs_dir"].endswith("logs") and v["can_open"] is False
+    v = c.put("/api/diagnostics", json={"trace_claude": True}).json()
+    assert v["trace_claude"] is True and v["trace_garmin"] is False
+    assert load_settings().trace_claude is True
+
+
+def test_settings_put_keeps_trace_flags(make_client):
+    c = make_client()
+    c.put("/api/diagnostics", json={"trace_garmin": True})
+    c.put("/api/settings", json={"llm_mode": "cli"})
+    assert load_settings().trace_garmin is True

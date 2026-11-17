@@ -8,7 +8,7 @@
   const label = $derived(goalLabel(goal));
 </script>
 
-<!-- jour de course d'un objectif du cycle, dans le calendrier du plan -->
+<!-- jour de course d'un objectif du cycle, dans la semaine du plan -->
 <div class="race-day" role="note" aria-label="Course : {label}">
   <span class="kind">Course</span>
   <span class="t">{label}</span>
@@ -19,8 +19,8 @@
 <style>
   .race-day {
     display: flex; flex-direction: column; align-items: flex-start; gap: 4px; padding: 8px; border-radius: 8px;
-    border: 2px solid var(--accent); background: var(--accent-soft); font-size: 13px;
+    border: 2px solid var(--hot); background: var(--hot-soft); font-size: 13px;
   }
-  .kind { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: var(--accent-strong); }
+  .kind { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: var(--hot-strong); }
   .t { font-weight: 600; }
 </style>

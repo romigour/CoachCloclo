@@ -9,17 +9,18 @@
   import Welcome from "./routes/Welcome.svelte";
   import Setup from "./routes/Setup.svelte";
   import Goal from "./routes/Goal.svelte";
-  import Today from "./routes/Today.svelte";
-  import Plan from "./routes/Plan.svelte";
+  import Week from "./routes/Week.svelte";
   import Proposal from "./routes/Proposal.svelte";
   import Race from "./routes/Race.svelte";
   import Stats from "./routes/Stats.svelte";
 
-  type Route = "today" | "plan" | "race" | "stats" | "goal" | "setup" | "proposal" | "welcome" | "connection";
+  type Route = "week" | "race" | "stats" | "goal" | "setup" | "proposal" | "welcome" | "connection";
   // En lecture seule (PWA mobile) : seules les pages de consultation et la connexion existent.
   const ROUTES: readonly Route[] = READONLY
-    ? ["today", "plan", "stats", "connection"]
-    : ["today", "plan", "race", "stats", "goal", "setup", "proposal", "welcome"];
+    ? ["week", "stats", "connection"]
+    : ["week", "race", "stats", "goal", "setup", "proposal", "welcome"];
+  // anciennes adresses (Aujourd'hui, Programme) : fusionnées dans « Ma semaine »
+  const ALIASES: Record<string, Route> = { today: "week", plan: "week" };
 
   let route = $state<Route | null>(parse());
   let raceGoalId = $state<number | null>(parseGoalId()); // #/race/{id} : objectif choisi depuis la page Objectifs
@@ -33,7 +34,8 @@
   let autoSyncStarted = false; // une seule synchro automatique par chargement de l'app
 
   function parse(): Route | null {
-    const name = location.hash.replace(/^#\//, "").replace(/^race\/\d+$/, "race");
+    const raw = location.hash.replace(/^#\//, "").replace(/^race\/\d+$/, "race");
+    const name = ALIASES[raw] ?? raw;
     return (ROUTES as readonly string[]).includes(name) ? (name as Route) : null;
   }
 
@@ -51,9 +53,9 @@
   /** Page d'accueil : le plan en cours d'abord, sinon le cycle suivant à préparer, sinon les statistiques,
    * sinon l'objectif à fixer. */
   function home(): string {
-    if (READONLY) return status?.cycle?.plan_accepted ? "#/today" : "#/stats";
+    if (READONLY) return status?.cycle?.plan_accepted ? "#/week" : "#/stats";
     if (status?.garmin === "auth_required") return "#/setup";
-    if (status?.cycle?.plan_accepted) return "#/today";
+    if (status?.cycle?.plan_accepted) return "#/week";
     if (toPrepare) return "#/goal";
     return status?.has_activities ? "#/stats" : "#/goal";
   }
@@ -257,15 +259,13 @@
         <Setup onchanged={refresh} onconnected={garminConnected} />
       {:else if route === "goal"}
         <Goal onchanged={refresh} />
-      {:else if (route === "today" || route === "plan") && toPrepare}
+      {:else if route === "week" && toPrepare}
         <p class="card">
           Ton cycle est terminé et une course t'attend encore.
           {#if !READONLY}<a href="#/goal">Préparer le cycle suivant</a>{/if}
         </p>
-      {:else if route === "today"}
-        <Today {version} {status} onerror={failed} />
-      {:else if route === "plan"}
-        <Plan {version} onerror={failed} />
+      {:else if route === "week"}
+        <Week {version} {status} onerror={failed} />
       {:else if route === "race"}
         {#if status?.next_goal}
           <Race

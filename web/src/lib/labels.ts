@@ -51,3 +51,23 @@ export const PRIORITY_LABELS: Record<Priority, string> = {
   secondaire: "Secondaire",
   plaisir: "Plaisir",
 };
+
+/** Famille visuelle d'un type de séance : froid pour le facile, chaud pour l'intense. */
+export type TypeFamily = "easy" | "recovery" | "long" | "quality";
+
+export function typeFamily(type: string): TypeFamily {
+  if (type === "sortie_longue") return "long";
+  if (type === "récup") return "recovery";
+  if (type === "seuil" || type === "VMA" || type === "côtes") return "quality";
+  return "easy";
+}
+
+/** Libellé court d'un type de séance (cartes de la semaine). */
+export const TYPE_SHORT: Record<string, string> = {
+  EF: "Endurance",
+  seuil: "Seuil",
+  VMA: "VMA",
+  "côtes": "Côtes",
+  sortie_longue: "Sortie longue",
+  "récup": "Récup",
+};

@@ -2,7 +2,7 @@
   import { api, type Activity, type Comparison, type Session } from "../lib/api";
   import { formatActivity } from "../lib/activity";
   import { formatDay } from "../lib/dates";
-  import { STATUS_LABEL, TYPE_LABEL } from "../lib/labels";
+  import { STATUS_LABEL, TYPE_LABEL, typeFamily } from "../lib/labels";
   import { formatDuration, peakLevel, stepLevel, totalSeconds } from "../lib/profile";
   import { doneLabel, paceText, repeatSummary, stepLabel, targetLabel, VERDICT_LABEL } from "../lib/comparison";
   import { fmtClock } from "../lib/stats/format";
@@ -131,7 +131,7 @@
 <article class="session stack">
   <div class="row spread">
     <span class="row tight">
-      <span class="chip">{TYPE_LABEL[session.type] ?? session.type}</span>
+      <span class="chip {typeFamily(session.type)}">{TYPE_LABEL[session.type] ?? session.type}</span>
       {#if session.sport === "bike"}<span class="chip"><Icon name="bike" size={14} /> Vélo</span>{/if}
     </span>
     {#if READONLY || !readonly}
@@ -143,10 +143,13 @@
     <h2 class="session-title" class:lg={large}>{session.title}</h2>
     <div class="stats">
       {#if total}<div class="stat"><strong>{formatDuration(total)}</strong><span>Durée</span></div>{/if}
-      <div class="stat">
-        <strong>{session.scheduled_date ? formatDay(session.scheduled_date) : session.suggested_day}</strong>
-        <span>{session.scheduled_date ? "Prévue le" : "Jour conseillé"}</span>
-      </div>
+      <!-- en grand, la date est déjà en tête de la carte -->
+      {#if !large}
+        <div class="stat">
+          <strong>{session.scheduled_date ? formatDay(session.scheduled_date) : session.suggested_day}</strong>
+          <span>{session.scheduled_date ? "Prévue le" : "Jour conseillé"}</span>
+        </div>
+      {/if}
     </div>
   </div>
 

@@ -32,8 +32,7 @@ vi.mock("./lib/turso", () => {
 });
 
 import App from "./App.svelte";
-import Today from "./routes/Today.svelte";
-import Plan from "./routes/Plan.svelte";
+import Week from "./routes/Week.svelte";
 import Stats from "./routes/Stats.svelte";
 import Sidebar from "./components/Sidebar.svelte";
 import InjuryBanner from "./components/InjuryBanner.svelte";
@@ -47,8 +46,8 @@ const f = fixtures.active as Record<string, any>;
 const TODAY = "2026-03-10";
 const ACTIONS = /imprévu|générer|montre|changer de jour|retirer|réessayer|supprimer|importer|reprendre|compétition|modifier|synchro|reprise/i;
 
-// Les boutons de jour (.day, .cal-session) portent le libellé de statut (« Erreur de synchro ») : ce sont des sélecteurs, pas des actions.
-const actions = () => screen.queryAllByRole("button", { name: ACTIONS }).filter((b) => !b.classList.contains("day") && !b.classList.contains("cal-session"));
+// Les séances de la semaine (.wsession) portent le libellé de statut (« Erreur de synchro ») : ce sont des sélecteurs, pas des actions.
+const actions = () => screen.queryAllByRole("button", { name: ACTIONS }).filter((b) => !b.classList.contains("wsession"));
 
 beforeEach(() => {
   // Les deux lectures simultanées de Stats contournent le mock du module turso (import dynamique concurrent) :
@@ -60,17 +59,12 @@ beforeEach(() => {
   location.hash = "";
 });
 
-test("Today : aucune action, proposition renvoyée vers l'ordinateur", async () => {
-  render(Today, { today: TODAY, status: f.status });
+test("Ma semaine : imprévus visibles, aucune action, proposition renvoyée vers l'ordinateur", async () => {
+  render(Week, { today: TODAY, status: f.status });
   expect(await screen.findByText("Une proposition d'ajustement t'attend sur l'ordinateur")).toBeInTheDocument();
-  expect(actions()).toEqual([]);
-  expect(document.querySelector('a[href="#/proposal"]')).toBeNull();
-});
-
-test("Plan : imprévus visibles, aucune action", async () => {
-  render(Plan, { today: TODAY });
   expect(await screen.findByText(/Tendinite/)).toBeInTheDocument();
   expect(actions()).toEqual([]);
+  expect(document.querySelector('a[href="#/proposal"]')).toBeNull();
 });
 
 test("Stats : aucune action d'import ni de compétition", async () => {
@@ -80,9 +74,9 @@ test("Stats : aucune action d'import ni de compétition", async () => {
 });
 
 test("Sidebar : liens de lecture seulement", () => {
-  render(Sidebar, { route: "today", status: f.status });
-  for (const h of ["today", "plan", "stats", "connection"]) expect(document.querySelector(`a[href="#/${h}"]`)).not.toBeNull();
-  for (const h of ["goal", "setup", "race", "proposal"]) expect(document.querySelector(`a[href="#/${h}"]`)).toBeNull();
+  render(Sidebar, { route: "week", status: f.status });
+  for (const h of ["week", "stats", "connection"]) expect(document.querySelector(`a[href="#/${h}"]`)).not.toBeNull();
+  for (const h of ["goal", "setup", "race", "proposal", "today", "plan"]) expect(document.querySelector(`a[href="#/${h}"]`)).toBeNull();
   expect(actions()).toEqual([]);
 });
 
@@ -108,9 +102,9 @@ test("Races : courses affichées, sans ajout ni modification", () => {
   expect(screen.queryByRole("button", { name: /Modifier/ })).toBeNull();
 });
 
-test("Plan : imprévu visible sans « Supprimer », « Générer » absent même plan à recalculer", async () => {
+test("Ma semaine : imprévu visible sans « Supprimer », « Générer » absent même plan à recalculer", async () => {
   over.plan = { ...f.plan, cycle: { ...f.plan.cycle, plan_accepted: false, needs_generation: true } };
-  render(Plan, { today: TODAY });
+  render(Week, { today: TODAY });
   expect(await screen.findByText(/Tendinite/)).toBeInTheDocument();
   expect(screen.getByLabelText("Plan à recalculer")).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: /Supprimer/ })).toBeNull();
@@ -123,9 +117,9 @@ test("InjuryBanner : bandeau visible, aucun bouton", () => {
   expect(screen.queryByRole("button", { name: /Réessayer|Signaler la reprise|Confirmer la reprise|Annuler/ })).toBeNull();
 });
 
-test("App : accueil today si plan accepté", async () => {
+test("App : accueil Ma semaine si plan accepté", async () => {
   render(App);
-  await waitFor(() => expect(location.hash).toBe("#/today"));
+  await waitFor(() => expect(location.hash).toBe("#/week"));
 });
 
 test("App : accueil stats si plan non accepté", async () => {
@@ -136,7 +130,7 @@ test("App : accueil stats si plan non accepté", async () => {
 
 test("App : base indisponible, lien vers la connexion", async () => {
   over.status = { ...f.status, storage: { code: "unreachable", detail: "Base injoignable" } };
-  location.hash = "#/today";
+  location.hash = "#/week";
   render(App);
   const link = await screen.findByRole("link", { name: "Modifier la connexion" });
   expect(link.getAttribute("href")).toBe("#/connection");
@@ -158,13 +152,9 @@ const noDesktopLink = () => {
 test.each([
   ["sans cycle", { cycle: null }],
   ["plan non validé", { cycle: { ...f.plan.cycle, plan_accepted: false } }],
-])("Today et Plan, %s : aucun lien vers une page de bureau", async (_n, patch) => {
+])("Ma semaine, %s : aucun lien vers une page de bureau", async (_n, patch) => {
   over.plan = { ...f.plan, ...patch };
-  const today = render(Today, { today: TODAY, status: { ...f.status, ...patch } });
-  expect((await screen.findAllByText(/À faire depuis l'ordinateur/)).length).toBeGreaterThan(0);
-  noDesktopLink();
-  today.unmount();
-  render(Plan, { today: TODAY });
+  render(Week, { today: TODAY, status: { ...f.status, ...patch } });
   expect((await screen.findAllByText(/À faire depuis l'ordinateur/)).length).toBeGreaterThan(0);
   noDesktopLink();
 });
@@ -172,9 +162,9 @@ test.each([
 test("App : un hash de page de bureau est renvoyé vers une route autorisée", async () => {
   location.hash = "#/goal";
   render(App);
-  await waitFor(() => expect(["#/today", "#/stats"]).toContain(location.hash));
+  await waitFor(() => expect(["#/week", "#/stats"]).toContain(location.hash));
   location.hash = "#/setup";
-  await waitFor(() => expect(["#/today", "#/stats"]).toContain(location.hash));
+  await waitFor(() => expect(["#/week", "#/stats"]).toContain(location.hash));
 });
 
 test("App : première connexion, les zones sont relues après l'enregistrement", async () => {
@@ -188,17 +178,17 @@ test("App : première connexion, les zones sont relues après l'enregistrement",
   await fireEvent.input(screen.getByLabelText("Jeton d'accès"), { target: { value: "tok" } });
   await fireEvent.click(screen.getByRole("button", { name: "Valider" }));
   await waitFor(() => expect(zones.mock.calls.length).toBeGreaterThan(before));
-  await waitFor(() => expect(["#/today", "#/stats"]).toContain(location.hash));
+  await waitFor(() => expect(["#/week", "#/stats"]).toContain(location.hash));
 });
 
-test("Connexion effacée : retour à la connexion, Aujourd'hui y renvoie", async () => {
+test("Connexion effacée : retour à la connexion, Ma semaine y renvoie", async () => {
   vi.spyOn(window, "confirm").mockReturnValue(true);
   location.hash = "#/connection";
   render(App);
   await fireEvent.click(await screen.findByRole("button", { name: "Effacer" }));
   await waitFor(() => expect(creds.value).toBeNull());
   expect(await screen.findByLabelText("URL de la base")).toBeInTheDocument();
-  location.hash = "#/today";
+  location.hash = "#/week";
   await waitFor(() => expect(location.hash).toBe("#/connection"));
   expect(screen.queryByRole("link", { name: "Modifier la connexion" })).toBeNull();
 });

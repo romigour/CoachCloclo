@@ -68,7 +68,7 @@ afterEach(() => {
 const syncs = () => calls.filter((c) => c.url === "/api/sync" && c.method === "POST").length;
 
 test("auto-sync runs once per load, shows the Claude message, and survives navigation", async () => {
-  location.hash = "#/plan";
+  location.hash = "#/week";
   render(App);
   expect(await screen.findAllByText("Analyse de ta séance par Claude…")).not.toHaveLength(0);
   await waitFor(() => expect(syncs()).toBe(1));
@@ -78,17 +78,17 @@ test("auto-sync runs once per load, shows the Claude message, and survives navig
   location.hash = "#/goal";
   window.dispatchEvent(new HashChangeEvent("hashchange"));
   await screen.findByText("Objectifs", { selector: "h1" });
-  location.hash = "#/plan";
+  location.hash = "#/week";
   window.dispatchEvent(new HashChangeEvent("hashchange"));
-  await screen.findByText("Programme", { selector: "h1" });
+  await screen.findByText("Ma semaine", { selector: "h1" });
   await new Promise((r) => setTimeout(r, 50));
   expect(syncs()).toBe(1);
 });
 
-test("default route is today when the plan is accepted, even with activities", async () => {
+test("default route is the week when the plan is accepted, even with activities", async () => {
   statusBody = { ...statusBody, has_activities: true };
   render(App);
-  await waitFor(() => expect(location.hash).toBe("#/today"));
+  await waitFor(() => expect(location.hash).toBe("#/week"));
   syncDone?.();
 });
 
@@ -237,7 +237,7 @@ test("redirige vers l'écran d'accueil si la configuration est incomplète", asy
 
 test("ne montre pas l'écran d'accueil sous coach start (404)", async () => {
   render(App);
-  await waitFor(() => expect(location.hash).toBe("#/today"));
+  await waitFor(() => expect(location.hash).toBe("#/week"));
 });
 
 test("pas de lien Connecte Claude sous coach start (404)", async () => {
@@ -247,7 +247,7 @@ test("pas de lien Connecte Claude sous coach start (404)", async () => {
     url === "/api/sync"
       ? new Response(JSON.stringify({ code: "llm_unavailable", detail: "Claude n'est pas connecté" }), { status: 503 })
       : real(url, init)));
-  location.hash = "#/plan";
+  location.hash = "#/week";
   render(App);
   await screen.findByText("Claude n'est pas connecté");
   expect(screen.queryByRole("link", { name: "Connecte Claude" })).toBeNull();
@@ -278,7 +278,7 @@ test("propose Connecte Claude quand la génération échoue faute de Claude", as
     url === "/api/sync"
       ? new Response(JSON.stringify({ code: "llm_unavailable", detail: "Claude n'est pas connecté" }), { status: 503 })
       : real(url, init)));
-  location.hash = "#/plan";
+  location.hash = "#/week";
   render(App);
   const link = await screen.findByRole("link", { name: "Connecte Claude" });
   expect(link.getAttribute("href")).toBe("#/welcome");
@@ -312,9 +312,9 @@ test("cycle terminé avec un objectif à venir : l'accueil ouvre les Objectifs",
   syncDone?.();
 });
 
-test("cycle terminé : Aujourd'hui et Plan invitent à préparer le cycle suivant", async () => {
+test("cycle terminé : Ma semaine (et ses anciennes adresses) invite à préparer le cycle suivant", async () => {
   statusBody = { ...statusBody, cycle: null };
-  for (const route of ["#/today", "#/plan"]) {
+  for (const route of ["#/week", "#/today", "#/plan"]) {
     location.hash = route;
     const { unmount } = render(App);
     const link = await screen.findByRole("link", { name: "Préparer le cycle suivant" });
@@ -322,6 +322,19 @@ test("cycle terminé : Aujourd'hui et Plan invitent à préparer le cycle suivan
     syncDone?.();
     unmount();
   }
+});
+
+test("les anciennes adresses Aujourd'hui et Programme ouvrent Ma semaine, sans menu Propositions", async () => {
+  syncInstant = true;
+  statusBody = { ...statusBody, pending_proposal_id: 3 };
+  location.hash = "#/plan";
+  render(App);
+  await screen.findByText("Ma semaine", { selector: "h1" });
+  const nav = screen.getByRole("navigation", { name: "Navigation principale" });
+  expect(nav.querySelector('a[href="#/week"]')).toHaveAttribute("aria-current", "page");
+  expect(nav.querySelector('a[href="#/proposal"]')).toBeNull();
+  expect(nav.querySelector('a[href="#/today"], a[href="#/plan"]')).toBeNull();
+  expect(screen.getByLabelText("1 proposition en attente")).toBeVisible();
 });
 
 test("unavailable storage shows a dedicated page, without auto-sync nor goal form, then retries", async () => {

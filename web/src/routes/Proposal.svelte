@@ -55,7 +55,7 @@
         await api.rejectProposal(proposal.id);
       }
       onchanged?.();
-      location.hash = "#/plan";
+      location.hash = "#/week";
     } catch (e) {
       error = e;
     } finally {
@@ -81,7 +81,7 @@
 <ErrorBanner {error} onpin={load} />
 
 {#if warning}
-  <p class="banner warning">{warning} <a href="#/plan">Voir le programme</a></p>
+  <p class="banner warning">{warning} <a href="#/week">Voir la semaine</a></p>
 {/if}
 
 {#if proposal}
@@ -136,5 +136,5 @@
     <button class="primary" onclick={() => decide(true)} disabled={busy}>Accepter les changements</button>
   </div>
 {:else if loaded && !warning}
-  <p class="card">Aucune proposition en attente. Claude en propose après l'analyse de tes séances. <a href="#/today">Retour à aujourd'hui</a></p>
+  <p class="card">Aucune proposition en attente. Claude en propose après l'analyse de tes séances. <a href="#/week">Retour à ma semaine</a></p>
 {/if}

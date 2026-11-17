@@ -162,7 +162,7 @@
     try {
       await api.accept();
       onchanged?.();
-      location.hash = "#/today";
+      location.hash = "#/week";
     } catch (err) {
       error = err;
     } finally {

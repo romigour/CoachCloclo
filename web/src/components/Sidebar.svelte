@@ -33,11 +33,11 @@
   </div>
 
   <nav class="nav" aria-label="Navigation principale">
-    <a href="#/today" class:active={route === "today"} aria-current={route === "today" ? "page" : undefined}>
-      <Icon name="today" /> Aujourd'hui
-    </a>
-    <a href="#/plan" class:active={route === "plan"} aria-current={route === "plan" ? "page" : undefined}>
-      <Icon name="calendar" /> Programme
+    <a href="#/week" class:active={route === "week" || route === "proposal"} aria-current={route === "week" ? "page" : undefined}>
+      <Icon name="calendar" /> Ma semaine
+      {#if status?.pending_proposal_id != null}
+        <span class="count" aria-label="1 proposition en attente">1</span>
+      {/if}
     </a>
     {#if !READONLY && status?.next_goal}
       <a href="#/race" class:active={route === "race"} aria-current={route === "race" ? "page" : undefined}>
@@ -52,12 +52,6 @@
         <Icon name="settings" /> Connexion
       </a>
     {:else}
-      <a href="#/proposal" class:active={route === "proposal"} aria-current={route === "proposal" ? "page" : undefined}>
-        <Icon name="chat" /> Propositions
-        {#if status?.pending_proposal_id != null}
-          <span class="count" aria-label="1 proposition en attente">1</span>
-        {/if}
-      </a>
       <a href="#/goal" class:active={route === "goal"} aria-current={route === "goal" ? "page" : undefined}>
         <Icon name="flag" /> Objectifs
       </a>

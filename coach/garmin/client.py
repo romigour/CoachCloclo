@@ -7,6 +7,8 @@ après 5 s sur un 429. Le parsing est défensif : une donnée absente vaut None.
 
 from __future__ import annotations
 
+import json
+import logging
 import math
 import time
 from collections.abc import Callable
@@ -14,6 +16,7 @@ from datetime import date
 from pathlib import Path
 from typing import Any, Literal
 
+from coach import trace
 from coach.certs import install_system_ca
 from coach.config import data_dir
 
@@ -153,6 +156,20 @@ def _summary(a: Any) -> ActivitySummary | None:
     )
 
 
+def _trace_login(step: str, fn: Callable[[], Any]) -> Any:
+    """Consigne l'issue d'une étape de connexion, jamais ses paramètres."""
+    call_id = trace.new_call_id()
+    try:
+        result = fn()
+    except Exception as e:
+        trace.record("garmin", call_id, "connexion", level=logging.ERROR, step=step,
+                     outcome=type(e).__name__)
+        raise
+    outcome = result[0] if isinstance(result, tuple) and result and isinstance(result[0], str) else "ok"
+    trace.record("garmin", call_id, "connexion", step=step, outcome=outcome)
+    return result
+
+
 def _map_login_errors(fn: Callable[[], Any]) -> Any:
     try:
         return fn()
@@ -174,7 +191,7 @@ class GarminClient:
     @classmethod
     def from_tokens(cls, tokenstore: Path) -> GarminClient:
         api = Garmin()
-        _map_login_errors(lambda: api.login(str(tokenstore)))
+        _trace_login("tokens", lambda: _map_login_errors(lambda: api.login(str(tokenstore))))
         return cls(api)
 
     @classmethod
@@ -187,14 +204,17 @@ class GarminClient:
         tokenstore, sinon la bibliothèque réutiliserait les tokens enregistrés
         (périmés ou d'un autre compte) sans jamais essayer le mot de passe.
         """
-        api = Garmin(email, password, return_on_mfa=True)
-        status, state = _map_login_errors(api.login)
-        if status == "needs_mfa":
-            return "needs_mfa", state
-        # En mode return_on_mfa, la bibliothèque ne persiste pas les tokens et
-        # ne charge pas le profil : on persiste, puis on recharge proprement.
-        _map_login_errors(lambda: api.client.dump(str(tokenstore)))
-        return "ok", cls.from_tokens(tokenstore)
+        def go() -> tuple[Literal["ok", "needs_mfa"], GarminClient | dict]:
+            api = Garmin(email, password, return_on_mfa=True)
+            status, state = _map_login_errors(api.login)
+            if status == "needs_mfa":
+                return "needs_mfa", state
+            # En mode return_on_mfa, la bibliothèque ne persiste pas les tokens et
+            # ne charge pas le profil : on persiste, puis on recharge proprement.
+            _map_login_errors(lambda: api.client.dump(str(tokenstore)))
+            return "ok", cls.from_tokens(tokenstore)
+
+        return _trace_login("identifiants", go)
 
     @classmethod
     def finish_login(cls, state: dict, code: str, tokenstore: Path) -> GarminClient:
@@ -204,17 +224,43 @@ class GarminClient:
             api.resume_login(state, code)
             api.client.dump(str(tokenstore))
 
-        _map_login_errors(go)
+        _trace_login("mfa", lambda: _map_login_errors(go))
         return cls(api)
 
     # --- appel unique avec traduction d'erreurs ---------------------------
 
     def _call(self, fn: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+        if not trace.enabled("garmin"):
+            return self._attempts(fn, args, kwargs, "")
+        call_id = trace.new_call_id()
+        trace.record("garmin", call_id, "appel", method=getattr(fn, "__name__", repr(fn)),
+                     args=args, kwargs=kwargs)
+        started = time.monotonic()
+        try:
+            result = self._attempts(fn, args, kwargs, call_id)
+        except Exception as e:
+            cause = e.__cause__ or e
+            trace.record("garmin", call_id, "erreur", level=logging.ERROR,
+                         duration_ms=int((time.monotonic() - started) * 1000),
+                         type=type(cause).__name__, message=str(cause))
+            raise
+        try:
+            body = json.dumps(result, default=str, ensure_ascii=False)
+        except Exception:  # le journal ne doit jamais faire échouer l'appel
+            body = repr(result)
+        trace.record("garmin", call_id, "réponse", duration_ms=int((time.monotonic() - started) * 1000),
+                     size=len(body), body=trace.truncate(body, trace.GARMIN_MAX_CHARS))
+        return result
+
+    def _attempts(self, fn: Callable[..., Any], args: tuple, kwargs: dict, call_id: str) -> Any:
         for attempt in (1, 2):
             try:
                 return fn(*args, **kwargs)
             except GarminConnectTooManyRequestsError as e:
                 if attempt == 1:
+                    if call_id:
+                        trace.record("garmin", call_id, "limite atteinte, nouvelle tentative",
+                                     level=logging.WARNING, delay_s=RETRY_DELAY_S)
                     self._sleep(RETRY_DELAY_S)
                     continue
                 raise GarminRateLimited("Garmin limite les requêtes, réessaie plus tard") from e

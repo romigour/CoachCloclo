@@ -7,6 +7,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ValidationError
 
 from coach.api.deps import hash_pin, is_loopback, valid_pin
+from coach import trace
 from coach.config import load_settings, save_settings
 from coach.desktop.context import Desktop
 from coach.desktop.updater import UpdateBusy, UpdateError
@@ -59,6 +60,13 @@ def desktop_router(desktop: Desktop) -> APIRouter:
             return _local_only()
         desktop.claude.start_login()
         return {"status": "started"}
+
+    @api.post("/logs/open")
+    def open_logs(request: Request):
+        if not is_loopback(request):
+            return _local_only()
+        desktop.open_folder(trace.logs_dir())
+        return {"status": "ok"}
 
     @api.get("/update")
     def update_view():

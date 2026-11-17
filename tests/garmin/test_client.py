@@ -50,7 +50,11 @@ class FakeLib:
     def __getattr__(self, name):
         if name.startswith("_"):
             raise AttributeError(name)
-        return lambda *a, **k: self._answer(name, *a, **k)
+        def method(*a, **k):
+            return self._answer(name, *a, **k)
+
+        method.__name__ = name  # comme une vraie méthode liée (nom repris par le journal)
+        return method
 
     def today(self):
         return date(2026, 10, 27)
@@ -468,3 +472,62 @@ def test_fake_activity_laps():
     assert fake.activity_laps(7) == [lap] and fake.activity_laps(8) == []
     with pytest.raises(GarminUnavailable):
         FakeGarminClient(fail_on={"activity_laps"}).activity_laps(7)
+
+
+# --- journal de diagnostic --------------------------------------------------
+
+
+def garmin_log(home):
+    return (home / "logs" / "garmin.log").read_text(encoding="utf-8")
+
+
+def _trace_on():
+    from coach.config import Settings, save_settings
+
+    save_settings(Settings(trace_garmin=True))
+
+
+def test_call_traces_method_params_and_response(coach_home):
+    _trace_on()
+    GarminClient(FakeLib({"get_activities": load("activities")})).activities_page(0, 20)
+    log = garmin_log(coach_home)
+    assert '"method": "get_activities"' in log and "20" in log and "réponse" in log
+
+
+def test_long_response_truncated(coach_home):
+    _trace_on()
+    GarminClient(FakeLib({"get_activities": [{"x": "a" * 30_000}]})).activities_page(0, 1)
+    assert "tronqué" in garmin_log(coach_home)
+
+
+def test_rate_limit_retry_and_error_traced(coach_home):
+    _trace_on()
+    lib = FakeLib(error=GarminConnectTooManyRequestsError("429"))
+    with pytest.raises(GarminRateLimited):
+        GarminClient(lib, sleep=lambda s: None).activities_page(0, 1)
+    log = garmin_log(coach_home)
+    assert "nouvelle tentative" in log and "erreur" in log
+
+
+def test_login_never_logs_credentials(ctor, coach_home):
+    _trace_on()
+    ctor.login_error = GarminConnectAuthenticationError("401")
+    with pytest.raises(GarminAuthRequired):
+        GarminClient.start_login("moi@exemple.fr", "MotDePasse!", coach_home / "tok")
+    GarminClient.finish_login({"flow": "ios"}, "987654", coach_home / "tok")
+    log = garmin_log(coach_home)
+    assert "connexion" in log
+    for secret in ("MotDePasse!", "moi@exemple.fr", "987654", "ios", str(coach_home / "tok")):
+        assert secret not in log
+
+
+def test_no_garmin_trace_when_disabled(coach_home):
+    GarminClient(FakeLib({"get_activities": []})).activities_page(0, 1)
+    assert not (coach_home / "logs" / "garmin.log").exists()
+
+
+def test_response_body_keys_are_masked(coach_home):
+    _trace_on()
+    GarminClient(FakeLib({"get_activities": [{"oauth2_token": "SECRET-TOK", "ok": 1}]})).activities_page(0, 1)
+    log = garmin_log(coach_home)
+    assert "SECRET-TOK" not in log and "oauth2_token" in log

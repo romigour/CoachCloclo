@@ -284,3 +284,28 @@ def test_lan_addresses_ignores_public_primary(monkeypatch):
     infos = [(socket.AF_INET, 0, 0, "", ("192.168.1.20", 0))]
     monkeypatch.setattr(socket, "getaddrinfo", lambda *a, **k: infos)
     assert lan_addresses(8765) == ["http://192.168.1.20:8765"]
+
+
+# --- journaux de diagnostic -------------------------------------------------------------
+
+
+@pytest.fixture
+def opened(desktop):
+    calls = []
+    desktop.open_folder = calls.append
+    return calls
+
+
+def test_open_logs_calls_open_folder(pc, opened):
+    from coach.trace import logs_dir
+
+    assert pc.post("/api/logs/open").json() == {"status": "ok"}
+    assert opened == [logs_dir()]
+    assert pc.get("/api/diagnostics").json()["can_open"] is True
+
+
+def test_open_logs_refused_from_lan(phone_with_pin_cookie, opened):
+    r = phone_with_pin_cookie.post("/api/logs/open")
+    assert r.status_code == 403 and r.json()["code"] == "local_only"
+    assert opened == []
+    assert phone_with_pin_cookie.get("/api/diagnostics").json()["can_open"] is False

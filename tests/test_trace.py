@@ -81,3 +81,38 @@ def test_truncate():
 def test_new_call_id_is_8_hex():
     cid = new_call_id()
     assert len(cid) == 8 and int(cid, 16) >= 0
+
+
+def test_token_counts_are_not_masked():
+    out = redact({"usage": {"input_tokens": 5, "output_tokens": 3}, "max_tokens": 32000,
+                  "access_token": "a", "csrftoken": "b", "token": "c"})
+    assert out == {"usage": {"input_tokens": 5, "output_tokens": 3}, "max_tokens": 32000,
+                   "access_token": "***", "csrftoken": "***", "token": "***"}
+
+
+def test_concurrent_first_calls_share_one_handler(coach_home, monkeypatch):
+    import threading
+    import time
+
+    import coach.trace as tr
+
+    real = tr.RotatingFileHandler
+    created = []
+
+    def slow(*a, **k):
+        time.sleep(0.05)  # élargit la fenêtre de course
+        h = real(*a, **k)
+        created.append(h)
+        return h
+
+    monkeypatch.setattr(tr, "RotatingFileHandler", slow)
+    threads = [threading.Thread(target=tr._logger, args=("claude",)) for _ in range(4)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    for h in created:
+        if h not in tr._handlers.values():
+            h.close()
+    assert len(created) == 1  # aucun handler orphelin gardant le fichier ouvert
+    assert len(tr.logging.getLogger("coach.trace.claude").handlers) == 1

@@ -245,7 +245,9 @@ class GarminClient:
                          type=type(cause).__name__, message=str(cause))
             raise
         try:
-            body = json.dumps(result, default=str, ensure_ascii=False)
+            # masquage par clé avant de réduire la réponse à du texte
+            plain = json.loads(json.dumps(result, default=str))
+            body = json.dumps(trace.redact(plain), ensure_ascii=False)
         except Exception:  # le journal ne doit jamais faire échouer l'appel
             body = repr(result)
         trace.record("garmin", call_id, "réponse", duration_ms=int((time.monotonic() - started) * 1000),

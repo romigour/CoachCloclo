@@ -309,3 +309,14 @@ def test_api_traces_request_and_response_without_key(coach_home):
 def test_no_trace_when_disabled(coach_home):
     cli(fake_run(stdout=json.dumps({"result": "ok"}))).complete("s", "p")
     assert not (coach_home / "logs" / "claude.log").exists()
+
+
+def test_api_trace_keeps_token_counts(coach_home):
+    from coach.config import save_settings
+
+    save_settings(Settings(trace_claude=True))
+    client = FakeClient([SimpleNamespace(type="text", text="ok")])
+    client.usage = SimpleNamespace(input_tokens=11, output_tokens=22)
+    AnthropicApiProvider("k", "m1", client=client).complete("S", "U")
+    log = claude_log(coach_home)
+    assert '"output_tokens": 22' in log and '"max_tokens": 32000' in log

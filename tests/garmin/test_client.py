@@ -524,3 +524,10 @@ def test_login_never_logs_credentials(ctor, coach_home):
 def test_no_garmin_trace_when_disabled(coach_home):
     GarminClient(FakeLib({"get_activities": []})).activities_page(0, 1)
     assert not (coach_home / "logs" / "garmin.log").exists()
+
+
+def test_response_body_keys_are_masked(coach_home):
+    _trace_on()
+    GarminClient(FakeLib({"get_activities": [{"oauth2_token": "SECRET-TOK", "ok": 1}]})).activities_page(0, 1)
+    log = garmin_log(coach_home)
+    assert "SECRET-TOK" not in log and "oauth2_token" in log

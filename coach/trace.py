@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import logging
 import secrets as _secrets
+import threading
 from collections.abc import Iterable
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
@@ -25,10 +26,13 @@ MAX_BYTES = 5_000_000
 BACKUP_COUNT = 3
 MASK = "***"
 
-_SENSITIVE = ("password", "passwd", "token", "secret", "api_key", "apikey",
+# sous-chaînes de nom de clé à masquer ; « token » seulement en fin de nom (`access_token`,
+# `csrftoken`), pour garder les compteurs `input_tokens`, `max_tokens`…
+_SENSITIVE = ("password", "passwd", "secret", "api_key", "apikey",
               "authorization", "cookie", "oauth", "ticket", "mfa")
 
 _handlers: dict[Path, RotatingFileHandler] = {}
+_lock = threading.Lock()  # création et échange des handlers (routes servies en parallèle)
 
 
 def logs_dir() -> Path:
@@ -57,7 +61,7 @@ def truncate(text: str, limit: int) -> str:
 
 def _sensitive(key: Any) -> bool:
     k = str(key).lower()
-    return any(word in k for word in _SENSITIVE)
+    return k.endswith("token") or any(word in k for word in _SENSITIVE)
 
 
 def redact(value: Any, secrets: Iterable[str] = ()) -> Any:
@@ -80,20 +84,21 @@ def redact(value: Any, secrets: Iterable[str] = ()) -> Any:
 
 def _logger(category: Category) -> logging.Logger:
     logger = logging.getLogger(f"coach.trace.{category}")
-    logger.propagate = False
-    logger.setLevel(logging.DEBUG)
     path = logs_dir() / f"{category}.log"
-    handler = _handlers.get(path)
-    if handler is None:
-        handler = RotatingFileHandler(path, maxBytes=MAX_BYTES, backupCount=BACKUP_COUNT,
-                                      encoding="utf-8", delay=True)
-        handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
-        _handlers[path] = handler
-    for old in list(logger.handlers):
-        if old is not handler:
-            logger.removeHandler(old)
-    if handler not in logger.handlers:
-        logger.addHandler(handler)
+    with _lock:
+        logger.propagate = False
+        logger.setLevel(logging.DEBUG)
+        handler = _handlers.get(path)
+        if handler is None:
+            handler = RotatingFileHandler(path, maxBytes=MAX_BYTES, backupCount=BACKUP_COUNT,
+                                          encoding="utf-8", delay=True)
+            handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
+            _handlers[path] = handler
+        for old in list(logger.handlers):
+            if old is not handler:
+                logger.removeHandler(old)
+        if handler not in logger.handlers:
+            logger.addHandler(handler)
     return logger
 
 
@@ -121,6 +126,11 @@ def record(category: Category, call_id: str, event: str, *, level: int = logging
 
 def _reset_handlers() -> None:
     """Ferme et oublie les fichiers ouverts (tests, changement de dossier de données)."""
+    with _lock:
+        _close_all()
+
+
+def _close_all() -> None:
     for handler in _handlers.values():
         for category in ("claude", "garmin"):
             logging.getLogger(f"coach.trace.{category}").removeHandler(handler)

@@ -326,6 +326,9 @@ export function setupDone(s: SetupStatus, claudeSkipped: boolean): boolean {
 
 export type SettingsView = { llm_mode: "cli" | "api"; anthropic_model: string | null; has_api_key: boolean };
 
+/** Journaux de diagnostic (GET/PUT /api/diagnostics) ; `can_open` : appli de bureau, depuis ce PC. */
+export type DiagnosticsView = { trace_claude: boolean; trace_garmin: boolean; logs_dir: string; can_open: boolean };
+
 export type LlmUsageRow = {
   created_at: string;
   kind: "generation" | "adjustment";
@@ -553,6 +556,10 @@ const rawApi = {
   saveSettings: (s: { llm_mode: "cli" | "api"; anthropic_api_key?: string; anthropic_model?: string }) =>
     request<SettingsView>("PUT", "/settings", s),
   llmUsage: () => get<LlmUsageView>("/llm-usage"),
+  diagnostics: () => get<DiagnosticsView>("/diagnostics"),
+  saveDiagnostics: (b: Partial<Pick<DiagnosticsView, "trace_claude" | "trace_garmin">>) =>
+    put<DiagnosticsView>("/diagnostics", b),
+  openLogs: () => post<{ status: string }>("/logs/open"),
   createGoal: (g: GoalInput) => {
     const f = new FormData();
     f.set("type", g.type);

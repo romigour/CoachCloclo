@@ -20,3 +20,12 @@ def repo(tmp_path):
     from coach.plan.repo import Repo, make_engine
 
     return Repo(make_engine(tmp_path / "t.db"))
+
+
+@pytest.fixture(autouse=True)
+def _trace_handlers_fermes():
+    """Les journaux de diagnostic gardent leurs fichiers ouverts : on les ferme après chaque test."""
+    yield
+    from coach.trace import _reset_handlers
+
+    _reset_handlers()

@@ -42,6 +42,9 @@ class Settings(BaseModel):
     storage_mode: Literal["local", "turso"] = "local"
     turso_url: str | None = None
     turso_token: str | None = Field(default=None, repr=False)
+    # journaux de diagnostic (voir coach.trace)
+    trace_claude: bool = False
+    trace_garmin: bool = False
 
 
 def load_settings() -> Settings:

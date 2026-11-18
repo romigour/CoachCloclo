@@ -1,11 +1,14 @@
 """Règles pures des objectifs : écart entre courses, fin de cycle, classification d'un changement."""
 
+from collections.abc import Iterable
+from dataclasses import dataclass
 from datetime import date, timedelta
 from typing import Literal
 
 from coach.plan.models import PRIORITY_LABELS, Goal
 
-MIN_GAP_DAYS = 14
+MIN_GAP_DAYS = 14  # en deçà, deux blocs non-Plaisir forment un groupe rapproché
+BLOCK_MAX_GAP_DAYS = 2  # jusque-là, deux courses forment un bloc (week-end défi)
 
 ChangeKind = Literal["close", "draft", "regenerate", "shrink", "adjust", "horizon"]
 
@@ -58,3 +61,151 @@ def classify_change(
     if touched_in_cycle:
         return "draft" if not plan_accepted else "adjust"
     return "horizon"
+
+
+# --- blocs et courses rapprochées ---------------------------------------------------------------
+
+Role = Literal["affute", "integre", "rebond"]
+_RANK = {"principal": 3, "secondaire": 2, "plaisir": 1}
+
+
+def goal_key(goal: Goal) -> int:
+    """Clé d'un objectif : son id, 0 pour un objectif pas encore enregistré (comme `NEW_GOAL_ID`)."""
+    return goal.id if goal.id is not None else 0
+
+
+def _dated(goal: Goal) -> str:
+    return f"{goal_label(goal)} ({goal.race_date:%d/%m})"
+
+
+@dataclass(frozen=True, eq=False)
+class RaceBlock:
+    """Courses enchaînées (au plus `BLOCK_MAX_GAP_DAYS` jours entre deux), préparées comme un seul défi."""
+
+    goals: tuple[Goal, ...]  # triés par date
+
+    @property
+    def start(self) -> date:
+        return self.goals[0].race_date
+
+    @property
+    def end(self) -> date:
+        return self.goals[-1].race_date
+
+    @property
+    def priority(self) -> str:
+        return max((g.priority for g in self.goals), key=_RANK.__getitem__)
+
+    @property
+    def distance_km(self) -> float:
+        return sum(g.distance_km for g in self.goals)
+
+    @property
+    def d_plus_m(self) -> int:
+        return sum(g.d_plus_m for g in self.goals)
+
+
+@dataclass(frozen=True, eq=False)
+class Proximity:
+    """Place d'un objectif : son bloc, et dans un groupe rapproché son rôle et le bloc affûté."""
+
+    block: RaceBlock
+    role: Role | None
+    tapered: RaceBlock | None
+    group: tuple[RaceBlock, ...]
+
+
+def race_blocks(goals: Iterable[Goal]) -> list[RaceBlock]:
+    """Blocs des objectifs (archivés ignorés), triés par date."""
+    ordered = sorted((g for g in goals if g.status != "archived"), key=lambda g: g.race_date)
+    chunks: list[list[Goal]] = []
+    for g in ordered:
+        if chunks and (g.race_date - chunks[-1][-1].race_date).days <= BLOCK_MAX_GAP_DAYS:
+            chunks[-1].append(g)
+        else:
+            chunks.append([g])
+    return [RaceBlock(tuple(c)) for c in chunks]
+
+
+def _groups(blocks: list[RaceBlock]) -> list[list[RaceBlock]]:
+    """Groupes rapprochés : blocs non-Plaisir à moins de `MIN_GAP_DAYS` jours de proche en proche."""
+    groups: list[list[RaceBlock]] = []
+    for b in (b for b in blocks if b.priority != "plaisir"):
+        if groups and (b.start - groups[-1][-1].end).days < MIN_GAP_DAYS:
+            groups[-1].append(b)
+        else:
+            groups.append([b])
+    return groups
+
+
+def proximity(goals: Iterable[Goal]) -> dict[int, Proximity]:
+    """Bloc, rôle et bloc affûté de chaque objectif (clé `goal_key`).
+
+    Dans un groupe rapproché, le bloc affûté est le plus prioritaire, à égalité le plus tardif ;
+    ceux d'avant sont intégrés à son affûtage, ceux d'après sont des courses de rebond.
+    """
+    blocks = race_blocks(goals)
+    roles: dict[int, tuple[Role, RaceBlock, tuple[RaceBlock, ...]]] = {}
+    for group in _groups(blocks):
+        if len(group) < 2:
+            continue
+        tapered = max(reversed(group), key=lambda b: _RANK[b.priority])  # égalité : le plus tardif
+        members = tuple(group)
+        for b in group:
+            role: Role = "affute" if b is tapered else "integre" if b.end < tapered.start else "rebond"
+            roles[id(b)] = (role, tapered, members)
+    result: dict[int, Proximity] = {}
+    for b in blocks:
+        role, tapered, members = roles.get(id(b), (None, None, (b,)))
+        for g in b.goals:
+            result[goal_key(g)] = Proximity(block=b, role=role, tapered=tapered, group=members)
+    return result
+
+
+def block_label(block: RaceBlock) -> str:
+    """« Trail de 20 km (27/03) + Trail de 30 km (28/03) »."""
+    return " + ".join(_dated(g) for g in block.goals)
+
+
+def proximity_label(goal: Goal, prox: dict[int, Proximity]) -> str | None:
+    """Libellé court sous l'objectif (« Bloc avec … », « Intégré à l'affûtage de … »), None s'il est isolé."""
+    p = prox.get(goal_key(goal))
+    if p is None:
+        return None
+    parts: list[str] = []
+    others = [x for x in p.block.goals if goal_key(x) != goal_key(goal)]
+    if others:
+        parts.append("Bloc avec " + " + ".join(_dated(x) for x in others))
+    if p.role == "integre":
+        parts.append(f"Intégré à l'affûtage de {block_label(p.tapered)}")
+    elif p.role == "rebond":
+        parts.append(f"Course de rebond après {block_label(p.tapered)}")
+    elif p.role == "affute":
+        parts.append("Affûté (courses rapprochées)")
+    return " · ".join(parts) or None
+
+
+def _join_and(items: list[str]) -> str:
+    return items[0] if len(items) == 1 else ", ".join(items[:-1]) + " et " + items[-1]
+
+
+def proximity_notice(goal: Goal, prox: dict[int, Proximity]) -> str | None:
+    """Avertissement après l'ajout ou la modification d'un objectif d'un bloc ou d'un groupe rapproché."""
+    p = prox.get(goal_key(goal))
+    if p is None:
+        return None
+    sentences: list[str] = []
+    if len(p.block.goals) > 1:
+        sentences.append(f"{block_label(p.block)} seront préparés comme un seul bloc.")
+    if p.role is not None:
+        text = (
+            f"{_join_and([block_label(b) for b in p.group])} sont à moins de {MIN_GAP_DAYS} jours : "
+            f"{block_label(p.tapered)} sera affûté"
+        )
+        for b in p.group:
+            if b is p.tapered:
+                continue
+            fate = "sera intégré à son affûtage" if b.end < p.tapered.start else "sera une course de rebond"
+            text += f" ; {block_label(b)} {fate}"
+        sentences.append(text + ".")
+    return " ".join(sentences) or None

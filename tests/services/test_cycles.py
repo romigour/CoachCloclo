@@ -257,15 +257,15 @@ def test_first_goal_long_after_finished_cycle_has_no_recovery(repo):
     assert repo.open_injury(cycle.id) is not None
 
 
-def test_first_goal_without_active_cycle_checks_gap(repo):
-    """Objectif encore à venir le 29/08 (Principal) : un Principal 7 jours plus tard est refusé."""
+def test_first_goal_without_active_cycle_accepts_close_principal(repo):
+    """Objectif encore à venir le 29/08 (Principal) : un Principal 7 jours plus tard est accepté, et le
+    cycle va jusqu'à lui (le plus tardif des deux est affûté)."""
     from coach.services.goals import add_goal
 
     _finished(repo)
-    with pytest.raises(GoalError, match="est à 7 jours"):
-        add_goal(repo, _garmin(date(2027, 5, 24)), FakeLLMProvider([]), _first_input(race_date=date(2027, 9, 5)))
-    assert repo.active_cycle() is None
-    assert [g.race_date for g in repo.upcoming_goals()] == [NEXT]
+    add_goal(repo, _garmin(date(2027, 5, 24)), FakeLLMProvider([]), _first_input(race_date=date(2027, 9, 5)))
+    assert repo.active_cycle().end_date == date(2027, 9, 5)
+    assert [g.race_date for g in repo.upcoming_goals()] == [NEXT, date(2027, 9, 5)]
 
 
 def test_first_goal_without_active_cycle_ends_at_next_principal(repo):

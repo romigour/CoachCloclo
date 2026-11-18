@@ -13,7 +13,7 @@ from coach.llm.prompts import SYSTEM_PROMPT, build_generation_prompt, estimate_f
 from coach.llm.provider import LLMProvider
 from coach.llm.schemas import PlanResponse, Weekday, validate_plan
 from coach.plan import calendar
-from coach.plan.goals import goal_label
+from coach.plan.goals import block_label, goal_label, race_blocks
 from coach.plan.constraints import constraint_errors, planned_from_plan
 from coach.plan.models import Cycle, Goal, Session
 from coach.plan.repo import Repo
@@ -52,6 +52,12 @@ def _recovery_note(repo: Repo, cycle: Cycle) -> str | None:
         goal = db.get(Goal, cycle.recovery_from_goal_id)
     if goal is None:
         return None
+    block = next((b for b in race_blocks(repo.past_goals()) if any(g.id == goal.id for g in b.goals)), None)
+    if block is not None and len(block.goals) > 1:
+        return (
+            f"Commence par une récupération adaptée au bloc {block_label(block)}, soit {block.distance_km:g} km "
+            f"et {block.d_plus_m} m de D+ en {(block.end - block.start).days + 1} jours."
+        )
     return f"Commence par une récupération adaptée à {goal_label(goal)} couru le {goal.race_date:%d/%m/%Y}."
 
 

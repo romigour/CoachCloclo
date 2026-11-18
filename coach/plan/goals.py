@@ -1,11 +1,11 @@
-"""Règles pures des objectifs : écart entre courses, fin de cycle, classification d'un changement."""
+"""Règles pures des objectifs : blocs et courses rapprochées, fin de cycle, classification d'un changement."""
 
 from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import date, timedelta
 from typing import Literal
 
-from coach.plan.models import PRIORITY_LABELS, Goal
+from coach.plan.models import Goal
 
 MIN_GAP_DAYS = 14  # en deçà, deux blocs non-Plaisir forment un groupe rapproché
 BLOCK_MAX_GAP_DAYS = 2  # jusque-là, deux courses forment un bloc (week-end défi)
@@ -18,22 +18,6 @@ def goal_label(goal: Goal) -> str:
     distance = f"{goal.distance_km:g}".replace(".", ",")
     prefix = "Trail" if goal.type == "trail" else "Course sur route"
     return f"{prefix} de {distance} km"
-
-
-def gap_conflict(goal: Goal, others: list[Goal]) -> str | None:
-    """Message du premier objectif actif trop proche (hors Plaisir), sinon None."""
-    if goal.priority == "plaisir":
-        return None
-    for other in others:
-        if other.id == goal.id or other.status != "active" or other.priority == "plaisir":
-            continue
-        days = abs((goal.race_date - other.race_date).days)
-        if days < MIN_GAP_DAYS:
-            return (
-                f"{goal_label(other)} du {other.race_date:%d/%m/%Y} ({PRIORITY_LABELS[other.priority]}) "
-                f"est à {days} jours : passe l'un des deux en Plaisir ou déplace-le"
-            )
-    return None
 
 
 def cycle_end(goals: list[Goal]) -> date | None:

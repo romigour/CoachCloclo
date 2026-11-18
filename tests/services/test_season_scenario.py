@@ -7,7 +7,8 @@ import pytest
 from coach.garmin.port import FakeGarminClient
 from coach.llm.provider import FakeLLMProvider, LLMInvalidResponse
 from coach.llm.schemas import GoalEstimate, PlanResponse, WeekSpec
-from coach.services.goals import GoalError, GoalInput, add_goal
+from coach.plan.goals import proximity
+from coach.services.goals import GoalInput, add_goal
 from coach.services.plans import generate_plan
 from tests.llm.factories import make_session
 from tests.services.test_goals import METRICS
@@ -56,22 +57,21 @@ def season(repo):
     return repo, garmin
 
 
-def test_season_goals_and_gap_rule(season):
+def test_season_close_races_are_accepted(season):
+    """Week-end défi tout en Secondaire et semi Secondaire 6 jours avant : plus de refus ; le semi est
+    intégré à l'affûtage du bloc."""
     repo, garmin = season
     cycle = repo.active_cycle()
     assert (cycle.plan_start, cycle.end_date, cycle.sessions_per_week) == (TODAY, ULTRA, 4)
 
     add_goal(repo, garmin, FakeLLMProvider([]), goal())  # trail 20 km Secondaire, samedi
-    add_goal(repo, garmin, FakeLLMProvider([]), goal(distance_km=30, race_date=TRAIL_30, priority="plaisir"))
-
-    with pytest.raises(GoalError) as e:  # semi Secondaire à 6 jours du trail Secondaire
-        add_goal(repo, garmin, FakeLLMProvider([]), goal(type="route", distance_km=21.1, d_plus_m=0, race_date=SEMI))
-    assert str(e.value) == (
-        "Trail de 20 km du 27/03/2027 (Secondaire) est à 6 jours : passe l'un des deux en Plaisir ou déplace-le"
-    )
-    add_goal(repo, garmin, FakeLLMProvider([]),
-             goal(type="route", distance_km=21.1, d_plus_m=0, race_date=SEMI, priority="plaisir"))
+    add_goal(repo, garmin, FakeLLMProvider([]), goal(distance_km=30, race_date=TRAIL_30))  # Secondaire aussi
+    add_goal(repo, garmin, FakeLLMProvider([]), goal(type="route", distance_km=21.1, d_plus_m=0, race_date=SEMI))
     assert {g.race_date for g in repo.upcoming_goals()} == RACES
+    prox = proximity(repo.upcoming_goals())
+    semi = next(g for g in repo.upcoming_goals() if g.race_date == SEMI)
+    assert prox[semi.id].role == "integre"
+    assert [g.race_date for g in prox[semi.id].tapered.goals] == [TRAIL_20, TRAIL_30]
     assert repo.active_cycle().end_date == ULTRA  # les courses du printemps ne déplacent pas la fin du cycle
 
 

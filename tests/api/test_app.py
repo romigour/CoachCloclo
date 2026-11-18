@@ -1210,8 +1210,9 @@ def test_add_and_remove_goals(make_client):
     assert (body["proposal_id"], body["needs_generation"]) == (None, False)
     later = body["goal"]
     assert [g["id"] for g in client.get("/api/plan").json()["horizon"]] == [later["id"]]
-    r = client.post("/api/goals", data={**form, "race_date": "2027-04-18"})
-    assert r.status_code == 422 and "est à 7 jours" in r.json()["detail"]
+    r = client.post("/api/goals", data={**form, "race_date": "2027-04-18"})  # 7 jours après : accepté
+    assert r.status_code == 200, r.text
+    assert client.delete(f"/api/goals/{r.json()['goal']['id']}").status_code == 200
     r = client.patch(f"/api/goals/{later['id']}", json={"priority": "plaisir"})
     assert r.status_code == 200 and r.json()["goal"]["priority"] == "plaisir"
     r = client.delete(f"/api/goals/{later['id']}")

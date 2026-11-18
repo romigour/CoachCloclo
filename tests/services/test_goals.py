@@ -264,19 +264,13 @@ def test_add_secondary_in_accepted_cycle_asks_adjustment(repo, monday_garmin):
     assert len(repo.sessions(_cid(repo))) == 41 and monday_garmin.calls == []
 
 
-def test_add_goal_gap_conflict_saves_nothing(repo, monday_garmin):
+def test_add_goal_close_to_principal_is_accepted(repo, monday_garmin):
+    """Plus de règle d'écart : un Secondaire 7 jours avant le Principal est intégré à son affûtage."""
     accepted_goal(repo, monday_garmin)
-    llm = FakeLLMProvider([])
-    with pytest.raises(GoalError) as e:
-        add_goal(repo, monday_garmin, llm, other_input(race_date=date(2027, 1, 31)))
-    assert str(e.value) == (
-        "Trail de 42 km du 07/02/2027 (Principal) est à 7 jours : passe l'un des deux en Plaisir ou déplace-le"
-    )
-    assert len(_goals(repo)) == 1 and llm.calls == []
-    # un Plaisir n'est jamais en conflit
-    add_goal(repo, monday_garmin, FakeLLMProvider([race_adjustment_json(repo, 13)]),
-             other_input(race_date=date(2027, 1, 31), priority="plaisir"))
-    assert len(_goals(repo)) == 2
+    llm = FakeLLMProvider([race_adjustment_json(repo, 13)])
+    goal, _ = add_goal(repo, monday_garmin, llm, other_input(race_date=date(2027, 1, 31)))
+    assert goal.status == "active" and len(_goals(repo)) == 2
+    assert "Course sur route de 10 km (31/01) est intégré à l'affûtage de Trail de 42 km (07/02)" in llm.calls[0]
 
 
 def test_add_goal_must_be_after_today(repo, monday_garmin):
@@ -524,18 +518,14 @@ def test_update_goal_in_draft_and_unknown_goals(repo, monday_garmin):
     assert llm.calls == []
 
 
-def test_update_goal_date_respects_gap(repo, monday_garmin):
+def test_update_goal_date_close_to_other_is_accepted(repo, monday_garmin):
     accepted_goal(repo, monday_garmin)
     later, _ = add_goal(repo, monday_garmin, FakeLLMProvider([]), other_input(race_date=date(2027, 4, 11)))
     llm = FakeLLMProvider([])
-    with pytest.raises(GoalError, match="Trail de 42 km du 07/02/2027 \\(Principal\\) est à 7 jours"):
-        update_goal(repo, monday_garmin, llm, later.id, GoalUpdate(race_date=date(2027, 2, 14)))
-    assert _get(repo, Goal, later.id).race_date == date(2027, 4, 11) and llm.calls == []
-    # même règle au changement de priorité : un Plaisir proche devient Principal
-    fun, _ = add_goal(repo, monday_garmin, FakeLLMProvider([]),
-                      other_input(race_date=date(2027, 4, 18), priority="plaisir"))
-    with pytest.raises(GoalError, match="est à 7 jours"):
-        update_goal(repo, monday_garmin, llm, fun.id, GoalUpdate(priority="principal"))
+    # 7 jours après le Principal : course de rebond, au cycle suivant (horizon), sans appel à Claude
+    update_goal(repo, monday_garmin, llm, later.id, GoalUpdate(race_date=date(2027, 2, 14)))
+    assert _get(repo, Goal, later.id).race_date == date(2027, 2, 14) and llm.calls == []
+    assert repo.active_cycle().end_date == date(2027, 2, 7)
 
 
 def test_update_priority_to_principal_moves_end(repo, monday_garmin):

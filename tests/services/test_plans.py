@@ -376,3 +376,24 @@ def test_generate_plan_failure_records_usage(repo, fake_garmin):
         generate_plan(repo, fake_garmin, FakeLLMProvider(["{}", "{}"], usage=u))
     [row] = repo.llm_usages()
     assert (row.status, row.attempts) == ("failed", 2)
+
+
+def test_recovery_note_names_block(repo):
+    from coach.services.plans import _recovery_note
+    from tests.plan.factories import make_cycle as plan_cycle
+    from tests.plan.factories import make_goal
+
+    with repo.transaction() as db:
+        sat = make_goal(race_date=date(2027, 3, 27), distance_km=20, d_plus_m=450, status="done")
+        sun = make_goal(race_date=date(2027, 3, 28), distance_km=30, d_plus_m=600, status="done")
+        alone = make_goal(race_date=date(2027, 1, 10), distance_km=42, d_plus_m=2000, status="done")
+        db.add_all([sat, sun, alone])
+        db.flush()
+        ids = sun.id, alone.id
+    assert _recovery_note(repo, plan_cycle(recovery_from_goal_id=ids[0])) == (
+        "Commence par une récupération adaptée au bloc Trail de 20 km (27/03) + Trail de 30 km (28/03), "
+        "soit 50 km et 1050 m de D+ en 2 jours."
+    )
+    assert _recovery_note(repo, plan_cycle(recovery_from_goal_id=ids[1])) == (
+        "Commence par une récupération adaptée à Trail de 42 km couru le 10/01/2027."
+    )

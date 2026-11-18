@@ -16,7 +16,7 @@ from coach.llm.prompts import NEW_GOAL_ID, fmt_duration
 from coach.llm.provider import LLMProvider
 from coach.llm.schemas import Weekday
 from coach.plan import calendar
-from coach.plan.goals import cycle_end, classify_change, gap_conflict, goal_label
+from coach.plan.goals import cycle_end, classify_change, goal_label
 from coach.plan.models import ALL_DAYS, PRIORITY_LABELS, Cycle, Goal, Proposal, Session
 from coach.plan.repo import Repo
 from coach.services import CoachError
@@ -222,15 +222,13 @@ def _reshape(
     """Applique un changement d'objectif (`before` → `after`, l'un des deux absent pour un ajout ou un
     retrait) et ses effets sur le cycle actif ; `write(db)` enregistre l'objectif.
 
-    Rien n'est enregistré si la règle d'écart, Claude ou le retrait du Jour J sur Garmin échoue.
+    Rien n'est enregistré si Claude ou le retrait du Jour J sur Garmin échoue.
     """
     from coach.services.adjust import ask_adjustment  # import tardif : adjust importe race_strategy
     from coach.services.race_strategy import withdraw_race  # import tardif : race_strategy importe ce module
 
     # 1. objectifs actifs après le changement
     others = [g for g in repo.upcoming_goals() if before is None or g.id != before.id]
-    if after is not None and (conflict := gap_conflict(after, others)):
-        raise GoalError(conflict)
     goals_after = sorted(others + ([after] if after is not None else []), key=lambda g: g.race_date)
 
     def withdraw() -> None:
@@ -351,7 +349,7 @@ def _create_first(repo: Repo, garmin: GarminPort, data: GoalInput, summary: GpxS
 
     Après un cycle terminé, le nouveau cycle part comme un cycle suivant (`prepare_next_cycle`) :
     lundi suivant sa fin, récupération après sa dernière course si elle date de moins de 4 semaines,
-    arrêt encore ouvert recopié. Les objectifs déjà à venir comptent pour la règle d'écart et la fin.
+    arrêt encore ouvert recopié. Les objectifs déjà à venir comptent pour la fin du cycle.
     """
     # import tardif : cycles importe ce module
     from coach.services.cycles import carry_open_injury, next_bounds, recovery_goal_id
@@ -374,8 +372,6 @@ def _create_first(repo: Repo, garmin: GarminPort, data: GoalInput, summary: GpxS
     )
     new = _new_goal(data, summary, cycle)
     others = repo.upcoming_goals()
-    if conflict := gap_conflict(new, others):
-        raise GoalError(conflict)
     prev = repo.last_done_cycle(today)
     cycle.plan_start, cycle.end_date = next_bounds(prev, today, [*others, new])
     new.plan_start = cycle.plan_start  # champ hérité, gardé cohérent

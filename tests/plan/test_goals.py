@@ -67,13 +67,14 @@ def test_cycle_end_without_principal_is_last():
     assert cycle_end(goals) == date(2027, 8, 1)
 
 
-def test_cycle_end_extends_over_consecutive_days():
+def test_cycle_end_extends_over_block():
     goals = [
         make_goal(race_date=date(2027, 5, 20), priority="principal"),
         make_goal(race_date=date(2027, 5, 21), priority="plaisir"),
         make_goal(race_date=date(2027, 5, 23), priority="plaisir"),
+        make_goal(race_date=date(2027, 5, 26), priority="plaisir"),
     ]
-    assert cycle_end(goals) == date(2027, 5, 21)
+    assert cycle_end(goals) == date(2027, 5, 23)
 
 
 def test_cycle_end_empty_is_none():
@@ -185,3 +186,23 @@ def test_labels_and_notice():
     alone = g(5, date(2027, 6, 1))
     assert proximity_label(alone, proximity([alone])) is None
     assert proximity_notice(alone, proximity([alone])) is None
+
+
+def test_cycle_end_extends_over_two_day_block():
+    p, s = g(1, date(2027, 3, 27), "principal"), g(2, date(2027, 3, 29), "plaisir")
+    assert cycle_end([p, s]) == date(2027, 3, 29)
+
+
+def test_cycle_end_reaches_tapered_block_of_principal_group():
+    a, b = g(1, date(2027, 3, 10), "principal"), g(2, date(2027, 3, 18), "principal")
+    assert cycle_end([a, b]) == date(2027, 3, 18)
+
+
+def test_cycle_end_stops_before_rebound():
+    a, b = g(1, date(2027, 3, 10), "principal"), g(2, date(2027, 3, 18), "secondaire")
+    assert cycle_end([a, b]) == date(2027, 3, 10)
+
+
+def test_cycle_end_without_principal_is_last_block_end():
+    a, b = g(1, date(2027, 3, 27)), g(2, date(2027, 3, 28))
+    assert cycle_end([a, b]) == date(2027, 3, 28)

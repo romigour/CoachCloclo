@@ -37,15 +37,15 @@ def gap_conflict(goal: Goal, others: list[Goal]) -> str | None:
 
 
 def cycle_end(goals: list[Goal]) -> date | None:
-    """Fin du cycle : premier Principal (sinon dernier objectif), étendue aux jours consécutifs."""
+    """Fin du cycle : bloc du premier Principal, ou bloc affûté de son groupe rapproché s'il est plus
+    tardif ; sans Principal, fin du dernier bloc."""
     if not goals:
         return None
-    ordered = sorted(goals, key=lambda g: g.race_date)
-    end = next((g.race_date for g in ordered if g.priority == "principal"), ordered[-1].race_date)
-    dates = {g.race_date for g in ordered}
-    while end + timedelta(days=1) in dates:
-        end += timedelta(days=1)
-    return end
+    first = next((g for g in sorted(goals, key=lambda g: g.race_date) if g.priority == "principal"), None)
+    if first is None:
+        return race_blocks(goals)[-1].end
+    p = next(p for g, p in _placements(goals) if g is first)
+    return p.tapered.end if p.role == "integre" else p.block.end
 
 
 def classify_change(
@@ -144,6 +144,11 @@ def proximity(goals: Iterable[Goal]) -> dict[int, Proximity]:
     Dans un groupe rapproché, le bloc affûté est le plus prioritaire, à égalité le plus tardif ;
     ceux d'avant sont intégrés à son affûtage, ceux d'après sont des courses de rebond.
     """
+    return {goal_key(g): p for g, p in _placements(goals)}
+
+
+def _placements(goals: Iterable[Goal]) -> list[tuple[Goal, Proximity]]:
+    """`proximity` par objectif, sans clé : sûr même avec plusieurs objectifs sans id."""
     blocks = race_blocks(goals)
     roles: dict[int, tuple[Role, RaceBlock, tuple[RaceBlock, ...]]] = {}
     for group in _groups(blocks):
@@ -154,11 +159,11 @@ def proximity(goals: Iterable[Goal]) -> dict[int, Proximity]:
         for b in group:
             role: Role = "affute" if b is tapered else "integre" if b.end < tapered.start else "rebond"
             roles[id(b)] = (role, tapered, members)
-    result: dict[int, Proximity] = {}
+    result: list[tuple[Goal, Proximity]] = []
     for b in blocks:
         role, tapered, members = roles.get(id(b), (None, None, (b,)))
-        for g in b.goals:
-            result[goal_key(g)] = Proximity(block=b, role=role, tapered=tapered, group=members)
+        p = Proximity(block=b, role=role, tapered=tapered, group=members)
+        result += [(g, p) for g in b.goals]
     return result
 
 

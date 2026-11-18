@@ -682,3 +682,18 @@ def test_close_cycle_garmin_failure_leaves_sessions_to_retry(repo, monday_garmin
     remove_goal(repo, monday_garmin, FakeLLMProvider([]), goal.id)
     left = repo.sessions(cycle_id)
     assert len(left) == 2 and all((s.status, s.pending_removal) == ("sync_error", True) for s in left)
+
+
+def test_legacy_cycle_end_kept_when_change_does_not_move_it(repo, monday_garmin):
+    """Cycle enregistré avant les blocs : Principal le 07/02 et Plaisir 2 jours après, fin au 07/02 (ancienne
+    règle des jours consécutifs). Un changement qui ne touche pas la fin garde la fin enregistrée."""
+    goal = accepted_goal(repo, monday_garmin)
+    with repo.transaction() as db:
+        db.add(Goal(**{**_get(repo, Goal, goal.id).model_dump(exclude={"id"}),
+                       "race_date": date(2027, 2, 9), "priority": "plaisir", "distance_km": 10}))
+    _, result = update_goal(
+        repo, monday_garmin, FakeLLMProvider([adjustment_json()]), goal.id, GoalUpdate(target_time="5:30")
+    )
+    assert result.proposal_id is not None and result.needs_generation is False
+    cycle = repo.active_cycle()
+    assert cycle.end_date == date(2027, 2, 7) and cycle.plan_accepted is True

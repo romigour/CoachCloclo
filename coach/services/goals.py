@@ -247,6 +247,11 @@ def _reshape(
 
     # 2. nouvelle fin du cycle et nature du changement
     new_end = cycle_end([g for g in goals_after if g.race_date >= cycle.plan_start])
+    goals_before = others + ([before] if before is not None else [])
+    if new_end == cycle_end([g for g in goals_before if g.race_date >= cycle.plan_start]):
+        # le changement ne déplace pas la fin : la fin enregistrée fait foi (un cycle d'avant les blocs
+        # peut s'arrêter au samedi d'un Principal suivi d'un Plaisir le lundi)
+        new_end = cycle.end_date
     touched = (before is not None and cycle.plan_start <= before.race_date <= cycle.end_date) or (
         after is not None and new_end is not None and cycle.plan_start <= after.race_date <= new_end
     )

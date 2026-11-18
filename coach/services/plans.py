@@ -91,6 +91,7 @@ def generate_plan(repo: Repo, garmin: GarminPort, llm: LLMProvider) -> PlanRespo
         cycle, goals, horizon, zones, recent_history(garmin), n, _gpx_texts(goals), today=today,
         race_texts=race_texts, constraints=constraints, first_week=first_week, fixed=fixed,
         recovery_note=_recovery_note(repo, cycle),
+        recent=repo.recent_done_goals(today),
     )
     pace_available = zones.pace is not None
     # chaque objectif du cycle en mode `claude` est (ré)estimé, au-dessus de l'allure plancher

@@ -84,6 +84,7 @@ def ask_adjustment(
         race_texts=race_texts,
         change_note=change_note,
         constraints=constraints,
+        recent=repo.recent_done_goals(today),
     )
     with tracked(repo, "adjustment") as meter:
         adj = ask_structured(

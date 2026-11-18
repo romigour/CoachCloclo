@@ -502,8 +502,10 @@ def _gen(goals, horizon=(), **kw):
     )
 
 
-def _adj_prompt(goals, horizon=()):
-    return build_adjustment_prompt(make_cycle(), list(goals), list(horizon), ZONES, 2, [], [], [], [], constraints=_AVAIL)
+def _adj_prompt(goals, horizon=(), **kw):
+    return build_adjustment_prompt(
+        make_cycle(), list(goals), list(horizon), ZONES, 2, [], [], [], [], constraints=_AVAIL, **kw
+    )
 
 
 def test_single_principal_prompt_unchanged():
@@ -585,10 +587,66 @@ def test_prompt_consecutive_goals_as_block():
     sunday = _secondary(id=3, race_date=date(2027, 1, 31), distance_km=30, priority="plaisir")
     other = _secondary(id=4, race_date=date(2026, 12, 6), priority="plaisir")
     p = _gen([other, saturday, sunday])
-    block = " (enchaînés, à traiter comme un bloc)"
     assert "- 2026-12-06 : route, 10 km, 0 m de D+, priorité Plaisir\n" in p
-    assert "- 2027-01-30 : trail, 20 km, 500 m de D+, priorité Secondaire" + block + "\n" in p
-    assert "- 2027-01-31 : route, 30 km, 0 m de D+, priorité Plaisir" + block + "\n" in p
+    assert "- 2027-01-30 : trail, 20 km, 500 m de D+, priorité Secondaire\n" in p
+    assert "- 2027-01-31 : route, 30 km, 0 m de D+, priorité Plaisir\n" in p
+    assert "(enchaînés, à traiter comme un bloc)" not in p
+    assert "Bloc Trail de 20 km (30/01) + Course sur route de 30 km (31/01)" in p
+
+
+def _t(id_, d, prio="secondaire", km=20, dplus=450, **kw):
+    return make_goal(
+        id=id_, race_date=d, priority=prio, distance_km=km, d_plus_m=dplus, target_source="user",
+        target_time_s=7200, **kw,
+    )
+
+
+def test_secondary_rule_is_proportional():
+    assert "proportionné" in PRIORITY_RULES
+    assert "charge de fond du Principal" in _gen([_t(2, date(2027, 1, 9)), _t(1, date(2027, 1, 31), "principal")])
+
+
+def test_block_rules_for_weekend():
+    sat, sun = _t(2, date(2027, 1, 16)), _t(3, date(2027, 1, 17), km=30, dplus=600)
+    for p in (_gen([sat, sun, _t(1, date(2027, 1, 31), "principal")]), _adj_prompt([sat, sun])):
+        assert "Bloc Trail de 20 km (16/01) + Trail de 30 km (17/01) (50 km, 1050 m de D+" in p
+        for needle in ("un seul défi", "jambes fatiguées", "cumul"):
+            assert needle in p
+        assert "(enchaînés" not in p
+
+
+def test_close_group_rules():
+    p = _gen([_t(2, date(2027, 1, 2)), _t(3, date(2027, 1, 9)), _t(1, date(2027, 1, 31), "principal")])
+    assert "Trail de 20 km (02/01) est intégré à l'affûtage de Trail de 20 km (09/01)" in p
+    p = _gen([_t(2, date(2027, 1, 2), "principal"), _t(3, date(2027, 1, 9))])
+    assert "Trail de 20 km (09/01) est une course de rebond après Trail de 20 km (02/01)" in p
+
+
+def test_rebound_after_done_principal():
+    done = _t(2, date(2027, 1, 2), "principal", status="done")
+    p = _gen([_t(3, date(2027, 1, 9))], recent=[done])
+    assert "course de rebond après Trail de 20 km (02/01)" in p
+    assert "- 2027-01-02" not in p
+
+
+def test_day_two_keeps_block_rules_after_day_one_done():
+    sat = _t(2, date(2027, 1, 16), status="done")
+    sun = _t(3, date(2027, 1, 17), "principal", km=30, dplus=600)
+    for p in (_gen([sun], recent=[sat]), _adj_prompt([sun], recent=[sat])):
+        assert "un seul défi" in p
+        assert "Objectif : course de type" not in p
+
+
+def test_horizon_end_names_tapered_block():
+    ultra = _t(5, date(2027, 5, 15), "principal", km=80, dplus=4000)
+    p = _gen([_t(1, date(2027, 1, 10), "principal"), _t(2, date(2027, 1, 18), "principal")], [ultra])
+    assert "Termine ce cycle par l'affûtage de Trail de 20 km (18/01) sans anticiper le suivant." in p
+
+
+def test_horizon_marks_blocks():
+    sat, sun = _t(5, date(2027, 3, 27)), _t(6, date(2027, 3, 28), km=30, dplus=600)
+    p = _gen([make_goal(id=1)], [sat, sun])
+    assert "- 2027-03-27 : trail, 20 km, 450 m de D+, priorité Secondaire (bloc avec Trail de 30 km (28/03))\n" in p
 
 
 def test_prompt_horizon_principal_line():
@@ -600,7 +658,7 @@ def test_prompt_horizon_principal_line():
             "Objectifs suivants (préparés dans un cycle ultérieur, ne pas les anticiper) :\n"
             "- 2027-05-15 : trail, 80 km, 4000 m de D+, priorité Principal\n"
             "- 2027-06-13 : route, 10 km, 0 m de D+, priorité Plaisir\n"
-            "Termine ce cycle par l'affûtage de Trail de 42 km sans anticiper le suivant."
+            "Termine ce cycle par l'affûtage de Trail de 42 km (31/01) sans anticiper le suivant."
         ) in p
         # un seul Principal dans le cycle : liste, sans règles de priorité ; l'horizon n'est pas estimé
         assert "- 2027-01-31 : trail, 42 km, 2000 m de D+, priorité Principal, temps visé 1 h 50" in p

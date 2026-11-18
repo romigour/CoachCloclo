@@ -2,6 +2,7 @@
 
 import datetime as dt
 import json
+from collections.abc import Sequence
 from typing import get_args
 
 from coach.analysis.laps import StepComparison, StepResult
@@ -10,7 +11,7 @@ from coach.analysis.zones import Zones
 from coach.llm.schemas import AdjustmentResponse, PlanResponse, Weekday
 from coach.plan.calendar import week_of
 from coach.plan.constraints import PlanConstraints
-from coach.plan.goals import goal_label
+from coach.plan.goals import MIN_GAP_DAYS, RaceBlock, block_label, goal_key, goal_label, proximity
 from coach.plan.models import PRIORITY_LABELS, Activity, Cycle, Event, Goal, Session
 
 HISTORY_WEEKS = 8
@@ -178,8 +179,10 @@ NEW_GOAL_ID = 0  # id provisoire d'un objectif pas encore enregistré (ajout), d
 
 PRIORITY_RULES = """Préparation selon la priorité :
 - Principal : affûtage complet avant la course.
-- Secondaire : une séance spécifique dans les 10 jours avant, un mini-affûtage de quelques jours (volume \
-réduit, intensité conservée), une récupération après, sans casser la progression vers le Principal.
+- Secondaire : une séance spécifique dans les 10 jours avant ; un mini-affûtage proportionné à la taille de la \
+course ou du bloc (quelques jours pour une course courte, jusqu'à environ une semaine pour une course longue ou un \
+bloc) et à sa distance au Principal, volume réduit, intensité conservée ; une récupération après ; la charge de \
+fond du Principal est maintenue.
 - Plaisir : pas d'affûtage ; la course remplace une séance de sa semaine (souvent la sortie longue), avec une \
 récupération légère après si elle est longue."""
 # rappelé dans tout prompt, un ou plusieurs objectifs : c'est contrôlé (constraint_errors)
@@ -210,12 +213,18 @@ def _single_goal_text(goal: Goal, *, generation: bool = False, plan_start: dt.da
     return text
 
 
-def _is_single(goals: list[Goal], horizon: list[Goal]) -> bool:
-    """Un seul objectif, Principal, et rien après : le texte d'avant les cycles est conservé."""
-    return len(goals) == 1 and goals[0].priority == "principal" and not horizon
+def _is_single(goals: list[Goal], horizon: list[Goal], recent: Sequence[Goal] = ()) -> bool:
+    """Un seul objectif, Principal, rien après et aucune course courue juste avant : le texte d'avant les
+    cycles est conservé."""
+    return (
+        len(goals) == 1
+        and goals[0].priority == "principal"
+        and not horizon
+        and not any(abs((r.race_date - goals[0].race_date).days) < MIN_GAP_DAYS for r in recent)
+    )
 
 
-def _goal_line(goal: Goal, *, generation: bool = False, with_time: bool = True, block: bool = False) -> str:
+def _goal_line(goal: Goal, *, generation: bool = False, with_time: bool = True) -> str:
     """« - 2027-03-28 : trail, 20 km, 800 m de D+, priorité Secondaire, temps visé 2 h 10 »."""
     text = (
         f"- {goal.race_date.isoformat()} : {goal.type}, {goal.distance_km:g} km, {goal.d_plus_m} m de D+, "
@@ -224,25 +233,24 @@ def _goal_line(goal: Goal, *, generation: bool = False, with_time: bool = True, 
     if with_time and goal.target_time_s is not None:
         label = "estimation précédente" if generation and goal.target_source == "claude" else "temps visé"
         text += f", {label} {fmt_duration(goal.target_time_s)}"
-    return text + (" (enchaînés, à traiter comme un bloc)" if block else "")
+    return text
 
 
 def _goals_text(
-    goals: list[Goal], horizon: list[Goal], *, generation: bool = False, plan_start: dt.date | None = None
+    goals: list[Goal],
+    horizon: list[Goal],
+    *,
+    generation: bool = False,
+    plan_start: dt.date | None = None,
+    recent: Sequence[Goal] = (),
 ) -> str:
-    """Objectifs du cycle : texte d'avant les cycles pour un seul Principal sans horizon, sinon une ligne
-    par objectif ; deux courses à des dates consécutives sont signalées comme un bloc."""
+    """Objectifs du cycle : texte d'avant les cycles pour un seul Principal isolé, sinon une ligne par
+    objectif (les blocs et courses rapprochées sont décrits par `_cycle_rules`)."""
     if not goals:
         raise ValueError("le cycle n'a aucun objectif")
-    if _is_single(goals, horizon):
+    if _is_single(goals, horizon, recent):
         return _single_goal_text(goals[0], generation=generation, plan_start=plan_start)
-    ordered = sorted(goals, key=lambda g: g.race_date)
-    dates = {g.race_date for g in ordered}
-    one_day = dt.timedelta(days=1)
-    lines = [
-        _goal_line(g, generation=generation, block=g.race_date - one_day in dates or g.race_date + one_day in dates)
-        for g in ordered
-    ]
+    lines = [_goal_line(g, generation=generation) for g in sorted(goals, key=lambda g: g.race_date)]
     text = "Objectifs du cycle :\n" + "\n".join(lines)
     if plan_start is not None:
         text += f"\nLe plan débute le {plan_start.isoformat()}."
@@ -254,20 +262,70 @@ def _first_principal(goals: list[Goal]) -> Goal | None:
     return next((g for g in sorted(goals, key=lambda g: g.race_date) if g.priority == "principal"), None)
 
 
-def _cycle_rules(goals: list[Goal], horizon: list[Goal]) -> list[str]:
-    """Règles de priorité (plusieurs objectifs ou un objectif non Principal), règle du jour de course
-    (toujours) et horizon, une partie chacun."""
+def _block_rule(block: RaceBlock) -> str:
+    """Consigne d'un bloc de plusieurs courses enchaînées, préparé comme un seul défi."""
+    climb = " et, avec ce D+, la montée et la descente" if block.d_plus_m else ""
+    return (
+        f"Bloc {block_label(block)} ({block.distance_km:g} km, {block.d_plus_m} m de D+ en {len(block.goals)} "
+        "courses) : un seul défi, affûtage unique avant le premier jour ; prépare des enchaînements dos à dos"
+        f"{climb} ; chaque jour se court sur les jambes fatiguées des jours précédents : estime le temps de chaque "
+        "jour en conséquence ; récupération après dimensionnée sur le cumul."
+    )
+
+
+def _proximity_rules(goals: list[Goal], horizon: list[Goal], recent: Sequence[Goal]) -> list[str]:
+    """Consignes des blocs et des courses rapprochées qui touchent les objectifs du cycle ; les courses
+    déjà courues (`recent`) situent les objectifs sans recevoir de consigne propre."""
+    prox = proximity([*goals, *horizon, *recent])
+    lines: list[str] = []
+    seen: set[int] = set()
+    for g in sorted(goals, key=lambda g: g.race_date):
+        p = prox[goal_key(g)]
+        if id(p.block) in seen:
+            continue
+        seen.add(id(p.block))
+        if len(p.block.goals) > 1:
+            lines.append(_block_rule(p.block))
+        if p.role == "integre":
+            lines.append(
+                f"{block_label(p.block)} est intégré à l'affûtage de {block_label(p.tapered)} : pas d'affûtage "
+                "propre, à courir comme une grosse séance d'intensité, récupération courte."
+            )
+        elif p.role == "rebond":
+            lines.append(
+                f"{block_label(p.block)} est une course de rebond après {block_label(p.tapered)} : pas "
+                "d'affûtage, la récupération en tient lieu, objectif réaliste compte tenu de la fatigue."
+            )
+    return lines
+
+
+def _horizon_line(goal: Goal, prox: dict) -> str:
+    """Ligne d'un objectif de l'horizon, avec les autres courses de son bloc."""
+    others = [o for o in prox[goal_key(goal)].block.goals if goal_key(o) != goal_key(goal)]
+    suffix = " (bloc avec " + " + ".join(f"{goal_label(o)} ({o.race_date:%d/%m})" for o in others) + ")"
+    return _goal_line(goal, with_time=False) + (suffix if others else "")
+
+
+def _cycle_rules(goals: list[Goal], horizon: list[Goal], recent: Sequence[Goal] = ()) -> list[str]:
+    """Règles de priorité (plusieurs objectifs, un objectif non Principal, ou des blocs et courses
+    rapprochées), règle du jour de course (toujours), consignes de proximité et horizon, une partie chacun."""
     parts: list[str] = []
-    if len(goals) > 1 or any(g.priority != "principal" for g in goals):
+    near = _proximity_rules(goals, horizon, recent)
+    if len(goals) > 1 or any(g.priority != "principal" for g in goals) or near:
         parts.append(PRIORITY_RULES)
     parts.append(RACE_DAY_RULE)
+    if near:
+        parts.append("\n".join(near))
     if horizon:
+        prox = proximity([*goals, *horizon, *recent])
         text = "Objectifs suivants (préparés dans un cycle ultérieur, ne pas les anticiper) :\n" + "\n".join(
-            _goal_line(g, with_time=False) for g in sorted(horizon, key=lambda g: g.race_date)
+            _horizon_line(g, prox) for g in sorted(horizon, key=lambda g: g.race_date)
         )
         end = _first_principal(goals)
         if end is not None and any(g.priority == "principal" for g in horizon):
-            text += f"\nTermine ce cycle par l'affûtage de {goal_label(end)} sans anticiper le suivant."
+            p = prox[goal_key(end)]
+            last = p.tapered if p.role == "integre" else p.block
+            text += f"\nTermine ce cycle par l'affûtage de {block_label(last)} sans anticiper le suivant."
         parts.append(text)
     return parts
 
@@ -297,10 +355,10 @@ def _estimate_text(to_estimate: list[Goal]) -> str:
     )
 
 
-def _target_parts(goals: list[Goal], horizon: list[Goal]) -> list[str]:
+def _target_parts(goals: list[Goal], horizon: list[Goal], recent: Sequence[Goal] = ()) -> list[str]:
     """Consigne de génération sur les temps : estimation par objectif, ou plan construit pour les temps visés."""
     to_estimate = generation_estimates(goals)
-    if _is_single(goals, horizon):
+    if _is_single(goals, horizon, recent):
         goal = goals[0]
         if to_estimate:
             return [
@@ -441,6 +499,7 @@ def build_generation_prompt(
     first_week: int = 1,
     fixed: list[Session] = (),
     recovery_note: str | None = None,
+    recent: Sequence[Goal] = (),
 ) -> str:
     """Prompt de génération du plan du cycle ; `today` situe le jour courant dans la semaine `first_week`.
 
@@ -450,10 +509,10 @@ def build_generation_prompt(
     après la dernière course du cycle précédent) suit la ligne des objectifs.
     """
     parts = [
-        _goals_text(goals, horizon, generation=True, plan_start=cycle.plan_start)
+        _goals_text(goals, horizon, generation=True, plan_start=cycle.plan_start, recent=recent)
         + (" " + _today_text(cycle, today) if today is not None else ""),
         *([recovery_note] if recovery_note else []),
-        *_cycle_rules(goals, horizon),
+        *_cycle_rules(goals, horizon, recent),
         *([_availability_text(constraints)] if constraints is not None else []),
         *([t] if constraints is not None and (t := _events_text(constraints)) else []),
         f"Construis un plan de {n_weeks} semaines, avec au plus {cycle.sessions_per_week} séances "
@@ -470,7 +529,7 @@ def build_generation_prompt(
         )
     elif first_week > 1:
         parts.append(f"Semaines {first_week} à {n_weeks} seulement : les semaines précédentes sont passées.")
-    parts += _target_parts(goals, horizon)
+    parts += _target_parts(goals, horizon, recent)
     parts += [
         _zones_text(zones),
         _history_text(history),
@@ -518,6 +577,7 @@ def build_adjustment_prompt(
     race_texts: list[str] = (),
     change_note: str | None = None,
     constraints: PlanConstraints | None = None,
+    recent: Sequence[Goal] = (),
 ) -> str:
     """Prompt de proposition d'ajustements après une synchronisation.
 
@@ -528,9 +588,9 @@ def build_adjustment_prompt(
     comparisons = comparisons or {}
     to_estimate = adjustment_estimates(goals)
     parts = [
-        _goals_text(goals, horizon, plan_start=cycle.plan_start),
+        _goals_text(goals, horizon, plan_start=cycle.plan_start, recent=recent),
         *([change_note] if change_note else []),
-        *_cycle_rules(goals, horizon),
+        *_cycle_rules(goals, horizon, recent),
         *([_estimate_text(to_estimate)] if to_estimate else []),
         *([_availability_text(constraints)] if constraints is not None else []),
         *([t] if constraints is not None and (t := _events_text(constraints)) else []),

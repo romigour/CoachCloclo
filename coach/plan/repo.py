@@ -3,7 +3,7 @@
 import json
 from collections.abc import Iterator
 from contextlib import contextmanager
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 
 from pydantic import TypeAdapter
@@ -207,6 +207,17 @@ class Repo:
     def past_goals(self) -> list[Goal]:
         """Objectifs courus (`done`), du plus récent au plus ancien."""
         stmt = select(Goal).where(Goal.status == "done").order_by(Goal.race_date.desc(), Goal.id.desc())
+        with self._open() as db:
+            return list(db.exec(stmt))
+
+    def recent_done_goals(self, today: date, days: int = 14) -> list[Goal]:
+        """Objectifs courus (`done`) dans les `days` derniers jours, du plus ancien au plus récent :
+        ils forment encore des blocs et des courses rapprochées avec les objectifs à venir."""
+        stmt = (
+            select(Goal)
+            .where(Goal.status == "done", Goal.race_date >= today - timedelta(days=days), Goal.race_date <= today)
+            .order_by(Goal.race_date, Goal.id)
+        )
         with self._open() as db:
             return list(db.exec(stmt))
 

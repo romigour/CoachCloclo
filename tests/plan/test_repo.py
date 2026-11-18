@@ -523,3 +523,16 @@ def test_check_schema_version_on_libsql_engine(tmp_path):
     with pytest.raises(SchemaTooNew):
         _check_schema_version(engine)
     assert repo.get_state("schema_version") == {"v": SCHEMA_VERSION + 1}
+
+
+def test_recent_done_goals(repo):
+    from datetime import date
+
+    from tests.plan.factories import make_goal
+
+    with repo.transaction() as db:
+        db.add(make_goal(race_date=date(2027, 3, 25), status="done"))
+        db.add(make_goal(race_date=date(2027, 3, 8), status="done"))
+        db.add(make_goal(race_date=date(2027, 3, 27), status="active"))
+    got = repo.recent_done_goals(date(2027, 3, 28))
+    assert [g.race_date for g in got] == [date(2027, 3, 25)]

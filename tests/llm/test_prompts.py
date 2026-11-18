@@ -38,6 +38,22 @@ def test_generation_prompt_states_today_with_weekday():
     assert "Aujourd'hui : mercredi 4 novembre 2026 (semaine 1)" in p
 
 
+def test_generation_prompt_mid_week_forbids_past_days():
+    """Départ en milieu de semaine : les jours déjà passés de la semaine courante sont exclus."""
+    cycle = make_cycle(plan_start=date(2026, 11, 9))
+    p = build_generation_prompt(cycle, [make_goal()], [], ZONES, [], n_weeks=14, gpx_texts=[],
+                                today=date(2026, 11, 17), first_week=2)
+    assert ("En semaine 2, lundi est déjà passé : aucune séance ce jour-là "
+            "(la première séance tombe au plus tôt aujourd'hui, mardi).") in p
+
+
+def test_generation_prompt_on_monday_has_no_past_days_rule():
+    cycle = make_cycle(plan_start=date(2026, 11, 9))
+    p = build_generation_prompt(cycle, [make_goal()], [], ZONES, [], n_weeks=14, gpx_texts=[],
+                                today=date(2026, 11, 16), first_week=2)
+    assert "déjà passé" not in p
+
+
 def test_generation_prompt_without_pace_zones_forbids_pace():
     p = build_generation_prompt(make_cycle(), [make_goal(type="route")], [], ZONES_NO_PACE, [], n_weeks=8, gpx_texts=[])
     assert "Aucune zone d'allure" in p
@@ -494,9 +510,11 @@ def test_single_principal_prompt_unchanged():
     """Un seul Principal sans horizon : texte d'avant les cycles, au nom du champ d'estimation et à la règle
     du jour de course près."""
     today = " Aujourd'hui : mercredi 4 novembre 2026 (semaine 2)."
+    _PAST_TEXT = ("En semaine 2, lundi et mardi sont déjà passés : aucune séance ce jour-là "
+                  "(la première séance tombe au plus tôt aujourd'hui, mercredi).")
     user = make_goal(id=1, target_time_s=6600, target_source="user")
     assert _head(_gen([user])) == "\n\n".join([
-        _LINE + " Temps visé : 1 h 50." + today, RACE_DAY_RULE, _AVAIL_TEXT, _GEN_TEXT,
+        _LINE + " Temps visé : 1 h 50." + today, RACE_DAY_RULE, _AVAIL_TEXT, _GEN_TEXT, _PAST_TEXT,
         "Construis le plan pour atteindre ce temps visé (allures cibles, volume).",
     ])
     assert _head(_adj_prompt([user])) == "\n\n".join(
@@ -504,7 +522,7 @@ def test_single_principal_prompt_unchanged():
     )
     claude = make_goal(id=1, target_source="claude")
     assert _head(_gen([claude])) == "\n\n".join([
-        _LINE + today, RACE_DAY_RULE, _AVAIL_TEXT, _GEN_TEXT,
+        _LINE + today, RACE_DAY_RULE, _AVAIL_TEXT, _GEN_TEXT, _PAST_TEXT,
         "Estime d'abord un temps réaliste pour cette course d'après l'historique et les zones, "
         "indique-le dans estimated_times (goal_id 1, en secondes), puis construis le plan pour ce temps.",
     ])

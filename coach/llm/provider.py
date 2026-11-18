@@ -28,6 +28,11 @@ class LLMUsageLimit(LLMError):
     """Limite d'usage atteinte."""
 
 
+# Un plan d'une trentaine de semaines (~20 k tokens de sortie) prend près de 3 min ;
+# une relance après réponse invalide régénère tout le plan.
+LLM_TIMEOUT_S = 600
+
+
 class LLMTimeout(LLMError):
     """Délai dépassé."""
 
@@ -115,7 +120,7 @@ class ClaudeCliProvider:
     Windows).
     """
 
-    def __init__(self, executable: str = "claude", timeout_s: int = 180,
+    def __init__(self, executable: str = "claude", timeout_s: int = LLM_TIMEOUT_S,
                  runner=subprocess.run, which=shutil.which, cwd=None):
         self.executable = executable
         self.timeout_s = timeout_s
@@ -189,7 +194,7 @@ class AnthropicApiProvider:
 
         self._anthropic = anthropic
         self.model = model
-        self.client = client if client is not None else anthropic.Anthropic(api_key=api_key, timeout=180)
+        self.client = client if client is not None else anthropic.Anthropic(api_key=api_key, timeout=LLM_TIMEOUT_S)
         self.last_usage: CallUsage | None = None
 
     def complete(self, system: str, prompt: str) -> str:

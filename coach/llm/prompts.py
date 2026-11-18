@@ -384,6 +384,19 @@ def _today_text(cycle: Cycle, today: dt.date) -> str:
     )
 
 
+def _past_days_text(cycle: Cycle, today: dt.date) -> str | None:
+    """Jours déjà passés de la semaine courante : la génération y refuse toute séance."""
+    if today.weekday() == 0:
+        return None
+    past = _WEEKDAYS[: today.weekday()]
+    verb = "est déjà passé" if len(past) == 1 else "sont déjà passés"
+    days = past[0] if len(past) == 1 else ", ".join(past[:-1]) + " et " + past[-1]
+    return (
+        f"En semaine {week_of(cycle, today)}, {days} {verb} : aucune séance ce jour-là "
+        f"(la première séance tombe au plus tôt aujourd'hui, {_WEEKDAYS[today.weekday()]})."
+    )
+
+
 def fmt_duration(s: int) -> str:
     """« 5 h 12 » (arrondi à la minute)."""
     h, m = divmod(round(s / 60), 60)
@@ -448,6 +461,8 @@ def build_generation_prompt(
         f"la dernière semaine se termine à la course. Numérote les semaines de {first_week} à {n_weeks} "
         "et les séances de chaque semaine à partir de 1 (champ order).",
     ]
+    if today is not None and (t := _past_days_text(cycle, today)):
+        parts.append(t)
     if fixed:
         parts.append(
             f"Semaines {first_week} à {n_weeks} seulement : les séances suivantes sont fixées et comptent "

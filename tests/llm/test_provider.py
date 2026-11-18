@@ -52,7 +52,7 @@ def test_cli_provider_parses_envelope():
     assert run.args[run.args.index("--system-prompt") + 1] == "sys"
     assert run.args[run.args.index("--tools") + 1] == ""
     assert "--no-session-persistence" in run.args
-    assert run.kwargs["encoding"] == "utf-8" and run.kwargs["timeout"] == 180
+    assert run.kwargs["encoding"] == "utf-8" and run.kwargs["timeout"] == 600
 
 
 def test_cli_usage_limit():
@@ -122,13 +122,13 @@ def test_api_provider_concatenates_text_blocks():
     }
 
 
-def test_api_provider_client_timeout_180s(monkeypatch):
+def test_api_provider_client_timeout_600s(monkeypatch):
     import anthropic
 
     seen = {}
     monkeypatch.setattr(anthropic, "Anthropic", lambda **kw: seen.update(kw) or object())
     AnthropicApiProvider("k", "m")
-    assert seen == {"api_key": "k", "timeout": 180}
+    assert seen == {"api_key": "k", "timeout": 600}
 
 
 def test_api_provider_maps_errors():

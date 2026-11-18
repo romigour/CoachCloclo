@@ -32,6 +32,7 @@
   let summary = $state("");
   let busy = $state("");
   let error = $state<unknown>(null);
+  let notice = $state(""); // avertissement du dernier changement (bloc, courses rapprochées)
   let selected = $state<number | null>(null);
   let editing = $state<Goal | null>(null);
   let editingSettings = $state(false);
@@ -88,6 +89,7 @@
 
   /** Suite d'un ajout, d'une modification ou d'un retrait : proposition à relire, ou plan à régénérer. */
   async function changed(r: PlanChange) {
+    notice = r.notice ?? "";
     onchanged?.();
     if (r.proposal_id != null) {
       location.hash = "#/proposal";
@@ -99,6 +101,7 @@
 
   async function add(input: GoalInput) {
     error = null;
+    notice = "";
     const first = cycle === null; // le premier objectif crée le cycle : on génère le plan aussitôt
     busy = first ? "Création de l'objectif…" : "Ajout de l'objectif… (Claude peut ajuster ton plan)";
     let created = false;
@@ -107,6 +110,7 @@
       created = true;
       adding = false;
       if (first) {
+        notice = r.notice ?? "";
         onchanged?.();
         await generate();
       } else {
@@ -216,6 +220,10 @@
   <p class="card busy" role="status">{busy}</p>
 {/if}
 
+{#if notice}
+  <p class="card" role="status">{notice}</p>
+{/if}
+
 {#if needsGeneration}
   <section class="card row spread" aria-label="Plan à recalculer">
     <p>
@@ -302,6 +310,7 @@
                   <strong>{goalLabel(g)}</strong>
                 </div>
                 <span class="meta">{details(g)}</span>
+                {#if g.proximity_label}<span class="meta proximity">{g.proximity_label}</span>{/if}
                 {#if goalTimeLabel(g)}<span class="meta">{goalTimeLabel(g)}</span>{/if}
               </div>
               <div class="row">

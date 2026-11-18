@@ -278,8 +278,8 @@ test("ajoute un objectif sans réglages du plan quand un cycle existe", async ()
   expect(location.hash).toBe("");
 });
 
-test("affiche le message d'écart renvoyé par le serveur", async () => {
-  const msg = "Course sur route de 10 km du 07/02/2027 (Secondaire) est à 6 jours : passe l'un des deux en Plaisir ou déplace-le";
+test("affiche l'erreur renvoyée par le serveur", async () => {
+  const msg = "La course doit être après aujourd'hui";
   server({ onwrite: () => json({ code: "invalid", detail: msg }, 422) });
   render(Goal);
   await fireEvent.click(await screen.findByRole("button", { name: "Ajouter un objectif" }));
@@ -440,4 +440,31 @@ test("plan à recalculer : le plan précédent reste affiché sous le bandeau G�
   const calendar = screen.getByRole("table", { name: "Calendrier du programme" });
   expect(within(calendar).getByText("Seuil 3 × 10 min")).toBeVisible();
   expect(screen.queryByRole("button", { name: "Valider le plan" })).toBeNull();
+});
+
+const BLOCK_NOTICE = "Course sur route de 10 km (07/02) + Trail de 20 km (08/02) seront préparés comme un seul bloc.";
+
+test("affiche l'avertissement de courses rapprochées après un ajout", async () => {
+  server({ onwrite: () => json({ goal: plaisir, proposal_id: null, needs_generation: false, notice: BLOCK_NOTICE }) });
+  render(Goal);
+  await fireEvent.click(await screen.findByRole("button", { name: "Ajouter un objectif" }));
+  fillBase();
+  await submitForm("Ajouter l'objectif");
+  const status = await screen.findByText(BLOCK_NOTICE);
+  expect(status).toHaveAttribute("role", "status");
+});
+
+test("affiche le libellé de proximité sous l'objectif", async () => {
+  server({ goals: [{ ...secondaire, proximity_label: "Bloc avec Trail de 20 km (08/02)" }, principal] });
+  render(Goal);
+  const li = await items();
+  expect(li[0]).toHaveTextContent("Bloc avec Trail de 20 km (08/02)");
+});
+
+test("affiche les objectifs sans libellé de proximité (lecture seule)", async () => {
+  server({ goals: [principal, secondaire] });
+  render(Goal);
+  const li = await items();
+  expect(li).toHaveLength(2);
+  expect(li[0].querySelectorAll(".meta.proximity")).toHaveLength(0);
 });

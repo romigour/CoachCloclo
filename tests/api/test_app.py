@@ -1216,7 +1216,7 @@ def test_add_and_remove_goals(make_client):
     r = client.patch(f"/api/goals/{later['id']}", json={"priority": "plaisir"})
     assert r.status_code == 200 and r.json()["goal"]["priority"] == "plaisir"
     r = client.delete(f"/api/goals/{later['id']}")
-    assert r.status_code == 200 and r.json() == {"proposal_id": None, "needs_generation": False}
+    assert r.status_code == 200 and r.json() == {"proposal_id": None, "needs_generation": False, "notice": None}
     assert client.get("/api/plan").json()["horizon"] == []
     assert client.delete(f"/api/goals/{later['id']}").status_code == 422
 
@@ -2035,3 +2035,43 @@ def test_settings_put_keeps_trace_flags(make_client):
     c.put("/api/diagnostics", json={"trace_garmin": True})
     c.put("/api/settings", json={"llm_mode": "cli"})
     assert load_settings().trace_garmin is True
+
+
+_HORIZON = {"type": "route", "distance_km": "10", "race_date": "2027-04-11", "priority": "secondaire"}
+
+
+def test_post_goal_returns_block_notice(make_client):
+    client = make_client(llm=FakeLLMProvider([valid_plan_json(14, 3)]))
+    _accepted_goal(client)
+    first = client.post("/api/goals", data=_HORIZON).json()
+    assert first["notice"] is None and first["goal"]["proximity_label"] is None
+    body = client.post("/api/goals", data={**_HORIZON, "race_date": "2027-04-12"}).json()
+    assert body["notice"] == (
+        "Course sur route de 10 km (11/04) + Course sur route de 10 km (12/04) seront préparés comme un seul bloc."
+    )
+    assert body["goal"]["proximity_label"] == "Bloc avec Course sur route de 10 km (11/04)"
+    r = client.patch(f"/api/goals/{body['goal']['id']}", json={"target_time": "0:50"})
+    assert r.json()["notice"] is not None
+
+
+def test_status_goals_have_proximity_label(make_client):
+    client = make_client(llm=FakeLLMProvider([valid_plan_json(14, 3)]))
+    principal = _accepted_goal(client)
+    client.post("/api/goals", data=_HORIZON)
+    client.post("/api/goals", data={**_HORIZON, "race_date": "2027-04-12"})
+    labels = {g["race_date"]: g["proximity_label"] for g in client.get("/api/status").json()["goals"]}
+    assert labels[principal["race_date"]] is None
+    assert labels["2027-04-11"] == "Bloc avec Course sur route de 10 km (12/04)"
+    assert labels["2027-04-12"] == "Bloc avec Course sur route de 10 km (11/04)"
+    horizon = client.get("/api/plan").json()["horizon"]
+    assert [g["proximity_label"] for g in horizon] == [labels["2027-04-11"], labels["2027-04-12"]]
+
+
+def test_delete_goal_from_block_clears_label(make_client):
+    client = make_client(llm=FakeLLMProvider([valid_plan_json(14, 3)]))
+    _accepted_goal(client)
+    sat = client.post("/api/goals", data=_HORIZON).json()["goal"]
+    client.post("/api/goals", data={**_HORIZON, "race_date": "2027-04-12"})
+    assert client.delete(f"/api/goals/{sat['id']}").status_code == 200
+    labels = {g["race_date"]: g["proximity_label"] for g in client.get("/api/status").json()["goals"]}
+    assert labels["2027-04-12"] is None

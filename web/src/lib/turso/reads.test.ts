@@ -4,8 +4,10 @@ import { describe, expect, it } from "vitest";
 import { loadFixtureDb } from "./testing";
 import { activities, events, plan, status, zones } from "./reads";
 
+// `proximity_label` (blocs et courses rapprochées) n'est calculé que par le serveur : la lecture seule ne l'a pas.
 const expected = JSON.parse(
   readFileSync(resolve(process.cwd(), "src/lib/turso/__fixtures__/expected.json"), "utf8"),
+  (key, value) => (key === "proximity_label" ? undefined : value),
 ) as Record<string, any>;
 
 describe.each(["active", "between"] as const)("lectures (%s)", (s) => {

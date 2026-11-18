@@ -47,6 +47,7 @@ from coach.llm.provider import (
     LLMUsageLimit,
 )
 from coach.plan import calendar
+from coach.plan.goals import Proximity, proximity, proximity_label, proximity_notice
 from coach.plan.models import Activity, Cycle, Event, Goal, Proposal, Session
 from coach.plan.repo import SCHEMA_VERSION, Repo, SchemaTooNew
 from coach.services import CoachError
@@ -223,12 +224,19 @@ class _LazyLLM:
         return self._llm.complete(system, prompt)
 
 
-def _change_dict(result: ChangeResult, goal: Goal | None = None) -> dict:
-    body = {"proposal_id": result.proposal_id, "needs_generation": result.needs_generation}
-    return body if goal is None else {"goal": _goal_dict(goal), **body}
+def _prox(repo: Repo) -> dict[int, Proximity]:
+    """Blocs et courses rapprochées des objectifs à venir et des courses des 14 derniers jours."""
+    return proximity([*repo.upcoming_goals(), *repo.recent_done_goals(date.today())])
 
 
-def _goal_dict(goal: Goal) -> dict:
+def _change_dict(result: ChangeResult, goal: Goal | None = None, prox: dict[int, Proximity] | None = None) -> dict:
+    """Effet d'un changement d'objectif ; `notice` signale un bloc ou des courses rapprochées."""
+    notice = proximity_notice(goal, prox) if goal is not None and prox is not None else None
+    body = {"proposal_id": result.proposal_id, "needs_generation": result.needs_generation, "notice": notice}
+    return body if goal is None else {"goal": _goal_dict(goal, prox), **body}
+
+
+def _goal_dict(goal: Goal, prox: dict[int, Proximity] | None = None) -> dict:
     return {
         "id": goal.id,
         "type": goal.type,
@@ -240,6 +248,7 @@ def _goal_dict(goal: Goal) -> dict:
         "target_time_s": goal.target_time_s,
         "target_source": goal.target_source,
         "gpx_summary": json.loads(goal.gpx_summary_json) if goal.gpx_summary_json else None,
+        "proximity_label": proximity_label(goal, prox) if prox is not None else None,
     }
 
 
@@ -584,6 +593,7 @@ def create_app(
             }
         cycle = repo.active_cycle()
         goals = repo.upcoming_goals()
+        prox = _prox(repo)
         proposal = repo.pending_proposal()
         history = load_state(repo)
         # le thread peut ne pas avoir encore écrit son état : le runner fait foi
@@ -593,9 +603,9 @@ def create_app(
             "llm_mode": load_settings().llm_mode,
             "pending_proposal_id": proposal.id if proposal else None,
             "cycle": _cycle_dict(cycle) if cycle else None,
-            "goals": [_goal_dict(g) for g in goals],
-            "next_goal": _goal_dict(goals[0]) if goals else None,
-            "past_goals": [_goal_dict(g) for g in repo.past_goals()],
+            "goals": [_goal_dict(g, prox) for g in goals],
+            "next_goal": _goal_dict(goals[0], prox) if goals else None,
+            "past_goals": [_goal_dict(g, prox) for g in repo.past_goals()],
             # réglages à reprendre pour « Préparer le cycle suivant » (sans cycle actif seulement)
             "last_cycle": _cycle_dict(last) if cycle is None and (last := repo.last_done_cycle(date.today())) else None,
             "has_activities": repo.has_activities(),
@@ -707,12 +717,12 @@ def create_app(
         except ValidationError as e:
             return _invalid(e.errors(), ("body",))
         goal, result = add_goal(repo, garmin, _LazyLLM(request.app.state.llm_factory), data)
-        return _change_dict(result, goal)
+        return _change_dict(result, goal, _prox(repo))
 
     @api.patch("/goals/{goal_id}")
     def patch_goal(goal_id: int, body: GoalUpdate, request: Request, repo: RepoDep, garmin: GarminDep):
         goal, result = update_goal(repo, garmin, _LazyLLM(request.app.state.llm_factory), goal_id, body)
-        return _change_dict(result, goal)
+        return _change_dict(result, goal, _prox(repo))
 
     @api.delete("/goals/{goal_id}")
     def delete_goal(goal_id: int, request: Request, repo: RepoDep, garmin: GarminDep):
@@ -766,10 +776,11 @@ def create_app(
         for s in repo.sessions(cycle.id):
             weeks.setdefault(s.week_index, []).append(_session_dict(s))
         injury = repo.open_injury(cycle.id)
+        prox = _prox(repo)
         return {
             "cycle": _cycle_dict(cycle),
-            "goals": [_goal_dict(g) for g in repo.goals_in(cycle)],
-            "horizon": [_goal_dict(g) for g in repo.horizon_goals(cycle)],
+            "goals": [_goal_dict(g, prox) for g in repo.goals_in(cycle)],
+            "horizon": [_goal_dict(g, prox) for g in repo.horizon_goals(cycle)],
             "open_injury": _event_dict(injury) if injury else None,
             "weeks": [
                 {

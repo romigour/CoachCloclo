@@ -6,6 +6,7 @@
   import ErrorBanner from "../components/ErrorBanner.svelte";
   import IntensityProfile from "../components/IntensityProfile.svelte";
   import Icon from "../components/Icon.svelte";
+  import { takeNotice } from "../lib/notice";
 
   let { onchanged }: { onchanged?: () => void } = $props();
 
@@ -15,6 +16,8 @@
   let error = $state<unknown>(null);
   let busy = $state(false);
   let warning = $state("");
+  // avertissement du changement d'objectif qui a créé cette proposition (bloc, courses rapprochées)
+  const notice = takeNotice();
 
   const OP_LABEL = { modify: "Modifiée", add: "Ajoutée", remove: "Retirée" } as const;
 
@@ -79,6 +82,10 @@
 </header>
 
 <ErrorBanner {error} onpin={load} />
+
+{#if notice}
+  <p class="card" role="status">{notice}</p>
+{/if}
 
 {#if warning}
   <p class="banner warning">{warning} <a href="#/week">Voir la semaine</a></p>

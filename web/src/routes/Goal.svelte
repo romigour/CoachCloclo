@@ -12,6 +12,7 @@
   import GoalEditDialog from "../components/GoalEditDialog.svelte";
   import PlanSettingsDialog from "../components/PlanSettingsDialog.svelte";
   import PriorityBadge from "../components/PriorityBadge.svelte";
+  import { handOffNotice } from "../lib/notice";
   import AvailabilityFields, { availabilityValid } from "../components/AvailabilityFields.svelte";
 
   let { onchanged, today = todayIso() }: { onchanged?: () => void; today?: string } = $props();
@@ -92,6 +93,7 @@
     notice = r.notice ?? "";
     onchanged?.();
     if (r.proposal_id != null) {
+      handOffNotice(r.notice); // la page Proposition l'affiche
       location.hash = "#/proposal";
       return;
     }

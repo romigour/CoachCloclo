@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
 import { afterEach, expect, test, vi } from "vitest";
 import Goal from "./Goal.svelte";
+import { takeNotice } from "../lib/notice";
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -467,4 +468,14 @@ test("affiche les objectifs sans libellé de proximité (lecture seule)", async 
   const li = await items();
   expect(li).toHaveLength(2);
   expect(li[0].querySelectorAll(".meta.proximity")).toHaveLength(0);
+});
+
+test("transmet l'avertissement à la proposition quand l'ajout en crée une", async () => {
+  server({ onwrite: () => json({ goal: plaisir, proposal_id: 12, needs_generation: false, notice: BLOCK_NOTICE }) });
+  render(Goal);
+  await fireEvent.click(await screen.findByRole("button", { name: "Ajouter un objectif" }));
+  fillBase();
+  await submitForm("Ajouter l'objectif");
+  await waitFor(() => expect(location.hash).toBe("#/proposal"));
+  expect(takeNotice()).toBe(BLOCK_NOTICE);
 });

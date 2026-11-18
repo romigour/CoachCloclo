@@ -2,6 +2,7 @@ import { render, screen } from "@testing-library/svelte";
 import { afterEach, expect, test, vi } from "vitest";
 import Proposal from "./Proposal.svelte";
 import type { Change, SessionSpec } from "../lib/api";
+import { handOffNotice } from "../lib/notice";
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -38,4 +39,18 @@ test("a removed session shows no bike chip", async () => {
   render(Proposal);
   await screen.findByText("Retirée");
   expect(screen.queryByText("Vélo")).toBeNull();
+});
+
+test("affiche une seule fois l'avertissement transmis par la page Objectifs", async () => {
+  mock([change("modify", spec("Footing", "run"))]);
+  handOffNotice("Semi et trail sont à moins de 14 jours : le trail sera affûté.");
+  const first = render(Proposal);
+  expect(await screen.findByText("Semi et trail sont à moins de 14 jours : le trail sera affûté.")).toHaveAttribute(
+    "role",
+    "status",
+  );
+  first.unmount();
+  render(Proposal);
+  await screen.findByText("Footing");
+  expect(screen.queryByText(/moins de 14 jours/)).toBeNull();
 });

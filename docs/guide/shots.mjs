@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const BASE = process.env.COACH_URL || 'http://127.0.0.1:8765';
+const BASE = (process.env.COACH_URL || 'http://127.0.0.1:8765').replace(/\/+$/, '');
 const OUT = process.env.SHOTS_OUT || join(dirname(fileURLToPath(import.meta.url)), 'img');
 const CHROME = process.env.CHROME || 'C:/Program Files/Google/Chrome/Application/chrome.exe';
 const FULL = process.env.SHOTS_FULL === '1';
@@ -28,7 +28,8 @@ export const SHOTS = [
   { name: 'race', hash: '#/race/3', waitFor: 'table[aria-label="Segments"]' },
   { name: 'stats-top', hash: '#/stats', waitFor: 'main h1' },
   { name: 'stats-run', hash: '#/stats', waitFor: 'main h1', scrollTo: 'text=Course à pied' },
-  { name: 'stats-records', hash: '#/stats', waitFor: 'main h1', scrollTo: 'text=Records' },
+  { name: 'stats-records', hash: '#/stats', waitFor: 'main h1', viewport: [1600, 900],
+    clip: ['section[aria-labelledby="races-title"]', 'section[aria-labelledby="rec-title"]'] },
   { name: 'stats-dark', hash: '#/stats', waitFor: 'main h1', scheme: 'dark' },
   { name: 'm-week', hash: '#/week', waitFor: 'main h1', viewport: PHONE, mobile: true, scrollTo: 'main' },
   { name: 'm-stats', hash: '#/stats', waitFor: 'main h1', viewport: PHONE, mobile: true, scrollTo: 'main' },
@@ -59,15 +60,17 @@ async function cdp(port) {
           waiting.set(++id, { ok, ko });
           ws.send(JSON.stringify({ id, method, params }));
         });
-        // Lecture seule : toute requête d'écriture (POST, PUT, PATCH, DELETE) reçoit une réponse vide
-        // sans atteindre l'appli. Évite la synchro Garmin et l'analyse Claude lancées à chaque chargement.
+        // Lecture seule : toute requête d'écriture (POST, PUT, PATCH, DELETE), quelle que soit son URL,
+        // reçoit une réponse vide sans quitter Chrome. Évite la synchro Garmin et l'analyse Claude
+        // lancées à chaque chargement. Limite : un GET peut écrire côté appli (ex. la stratégie Jour J
+        // est créée à sa première lecture) ; ne capturer que des écrans déjà calculés.
         const onPaused = (p) => {
           if (p.request.method === 'GET') return send('Fetch.continueRequest', { requestId: p.requestId });
           console.log(`  bloqué : ${p.request.method} ${p.request.url.replace(BASE, '')}`);
           return send('Fetch.fulfillRequest', { requestId: p.requestId, responseCode: 200,
             responseHeaders: [{ name: 'Content-Type', value: 'application/json' }], body: Buffer.from('{}').toString('base64') });
         };
-        await send('Fetch.enable', { patterns: [{ urlPattern: BASE + '/api/*' }] });
+        await send('Fetch.enable', { patterns: [{ urlPattern: '*' }] });
         return { send, close: () => ws.close() };
       }
     } catch { /* Chrome pas encore prêt */ }
@@ -82,7 +85,7 @@ const FIND = `(sel) => {
   const t = sel.slice(5);
   let best = null;
   for (const el of document.querySelectorAll('main *')) {
-    if ((el.innerText || '').trim().startsWith(t)) best = el;  // le plus profond gagne
+    if ((el.innerText || '').trim().startsWith(t)) best = el;  // le dernier dans l'ordre du document gagne
   }
   if (!best) return null;
   // remonte jusqu'à la carte / section qui le contient
@@ -117,12 +120,18 @@ async function shoot(send, s) {
     if (!ok) throw new Error(`${s.name} : bouton ${s.click} introuvable`);
     await sleep(800);
   }
+  // clip peut être une liste de sélecteurs : la capture couvre alors leur rectangle englobant.
   const target = s.clip || s.scrollTo;
   let clip;
   if (target) {
-    const rect = await evalJs(send, `(() => { const el = (${FIND})(${JSON.stringify(target)});
-      if (!el) return null; el.scrollIntoView({ block: 'start' }); window.scrollBy(0, -16);
-      const r = el.getBoundingClientRect(); return { x: r.x, y: r.y + window.scrollY, width: r.width, height: r.height }; })()`);
+    const sels = [target].flat();
+    const rect = await evalJs(send, `(() => { const f = ${FIND};
+      const els = ${JSON.stringify(sels)}.map(f); if (els.some(e => !e)) return null;
+      els[0].scrollIntoView({ block: 'start' }); window.scrollBy(0, -16);
+      const rs = els.map(e => e.getBoundingClientRect());
+      const x = Math.min(...rs.map(r => r.left)), y = Math.min(...rs.map(r => r.top));
+      const right = Math.max(...rs.map(r => r.right)), bottom = Math.max(...rs.map(r => r.bottom));
+      return { x, y: y + window.scrollY, width: right - x, height: bottom - y }; })()`);
     if (!rect) throw new Error(`${s.name} : ${target} introuvable`);
     await sleep(500);
     if (s.clip) {

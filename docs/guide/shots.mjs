@@ -21,6 +21,7 @@ const PHONE = [390, 844];
 // Un sélecteur peut être 'text=…' : premier élément dont le texte commence par …
 export const SHOTS = [
   { name: 'week', hash: '#/week', waitFor: 'main h1' },
+  { name: 'week-plan', hash: '#/week', waitFor: 'main h1', scrollTo: 'text=Cette semaine' },
   { name: 'goals', hash: '#/goal', waitFor: 'ul.goals' },
   { name: 'goals-close', hash: '#/goal', waitFor: 'ul.goals', clip: 'ul.goals' },
   { name: 'event', hash: '#/week', waitFor: 'main h1', click: 'Signaler un imprévu' },

@@ -195,7 +195,8 @@ footer { border-top: 1px solid var(--line); padding-block: 28px 40px; color: var
     </div>
     <nav aria-label="Sections">
       <a href="#stats">Statistiques</a>
-      <a href="#plan">Plan</a>
+      <a href="#saison">Saison</a>
+      <a href="#plan">Ma semaine</a>
       <a href="#claude">Claude</a>
       <a href="#jour-j">Jour J</a>
       <a href="#telephone">Téléphone</a>
@@ -206,8 +207,8 @@ footer { border-top: 1px solid var(--line); padding-block: 28px 40px; color: var
   <section class="hero">
     <div class="hero-text">
       <span class="eyebrow">Running · trail · Garmin · Claude</span>
-      <h1>Un coach qui lit ta montre et ajuste ton plan chaque semaine.</h1>
-      <p class="lead">CoachCloclo importe tes activités Garmin, construit un plan d'entraînement avec Claude pour ta prochaine course, l'envoie sur ta montre et l'adapte à ce que tu cours vraiment. Tout tourne sur ton ordinateur.</p>
+      <h1>Un coach qui lit ta montre et prépare toute ta saison.</h1>
+      <p class="lead">CoachCloclo importe tes activités Garmin et construit avec Claude un plan d'entraînement autour de tes courses : la grande, celles qui y mènent, et même deux courses le même week-end. Il envoie les séances sur ta montre et adapte le plan à ce que tu cours vraiment. Tout tourne sur ton ordinateur.</p>
       <div class="pace" aria-label="En bref">
         <span>Du <b>10 km</b> au <b>marathon</b>, et le trail</span>
         <span>Séances calées en <b>zones FC</b></span>
@@ -215,17 +216,17 @@ footer { border-top: 1px solid var(--line); padding-block: 28px 40px; color: var
       </div>
     </div>
     <figure>
-      <button class="shot" type="button" data-full="img/today.jpg" aria-label="Agrandir la capture Aujourd'hui">
+      <button class="shot" type="button" data-full="img/week.jpg" aria-label="Agrandir la capture Ma semaine">
         <span class="bar" aria-hidden="true"><i></i><i></i><i></i></span>
-        <img src="img/today.jpg" alt="Écran Aujourd'hui : la semaine en cours, la séance du jour Endurance fondamentale 55 min détaillée en zones cardio, une proposition de Claude et la progression avant la course." width="2160" height="1350">
+        <img src="img/week.jpg" alt="Écran Ma semaine : la prochaine séance, Endurance fondamentale et lignes droites en 57 minutes, détaillée en zones cardio, avec le bouton Envoyer sur la montre et le compte à rebours J-122 avant la course." width="2160" height="1350">
       </button>
-      <figcaption>L'écran Aujourd'hui : ta semaine, la séance du jour détaillée et le compte à rebours avant la course.</figcaption>
+      <figcaption>Ma semaine : la séance du jour détaillée, ta semaine et le compte à rebours avant ta prochaine course.</figcaption>
     </figure>
   </section>
 
   <ol class="steps" aria-label="Comment ça marche">
     <li><span class="n">01</span><h3>Connecte Garmin et Claude</h3><p>Un assistant au premier lancement s'en charge, sans terminal.</p></li>
-    <li><span class="n">02</span><h3>Fixe ton objectif</h3><p>Distance, date, jours où tu peux courir, temps visé.</p></li>
+    <li><span class="n">02</span><h3>Ajoute tes courses</h3><p>Une ou plusieurs, chacune avec sa date et sa priorité. Puis les jours où tu peux courir.</p></li>
     <li><span class="n">03</span><h3>Claude écrit ton plan</h3><p>À partir de tes 8 dernières semaines, de tes zones et de ta VO2max.</p></li>
     <li><span class="n">04</span><h3>Cours, synchronise</h3><p>Les séances partent sur la montre, tes sorties sont rattachées et analysées.</p></li>
   </ol>
@@ -248,7 +249,7 @@ footer { border-top: 1px solid var(--line); padding-block: 28px 40px; color: var
       </div>
       <figure>
         <button class="shot" type="button" data-full="img/stats-top.jpg" aria-label="Agrandir la capture Statistiques">
-          <img src="img/stats-top.jpg" alt="Statistiques : 311 heures, 2 424 km de course, 281 séances, 43 044 m de D+ sur 12 mois, et le calendrier de régularité." loading="lazy">
+          <img src="img/stats-top.jpg" alt="Statistiques : 310 heures, 2 409 km de course, 279 séances, 43 065 m de D+ sur 12 mois, et le calendrier de régularité." loading="lazy">
         </button>
       </figure>
     </div>
@@ -260,7 +261,7 @@ footer { border-top: 1px solid var(--line); padding-block: 28px 40px; color: var
       </div>
       <figure>
         <button class="shot" type="button" data-full="img/stats-run.jpg" aria-label="Agrandir la capture Course à pied">
-          <img src="img/stats-run.jpg" alt="Graphiques course à pied : tendance d'efficacité aérobie +7,7 %, VO2max à 57, sortie la plus longue par mois, temps par zone FC." loading="lazy">
+          <img src="img/stats-run.jpg" alt="Graphiques course à pied : tendance d'efficacité aérobie +7,9 %, VO2max à 57, sortie la plus longue par mois, temps par zone FC." loading="lazy">
         </button>
       </figure>
     </div>
@@ -277,33 +278,50 @@ footer { border-top: 1px solid var(--line); padding-block: 28px 40px; color: var
     </div>
   </section>
 
-  <!-- OBJECTIF + PLAN -->
-  <section class="feature" id="plan">
+  <!-- SAISON -->
+  <section class="feature" id="saison">
     <div class="feature-head">
-      <span class="eyebrow">Objectif et plan</span>
-      <h2>Tu dis quand tu peux courir. Claude fait le reste.</h2>
+      <span class="eyebrow">Ta saison</span>
+      <h2>Toutes tes courses, un seul plan.</h2>
+      <p class="lead">Tu ajoutes tes courses de l'année et tu dis lesquelles comptent. Claude construit un cycle d'entraînement qui les enchaîne, sans jamais sacrifier ta grande course.</p>
     </div>
     <div class="split">
       <div class="text">
         <ul class="points">
-          <li><div>Route ou trail <span>(avec le tracé GPX pour le dénivelé).</span></div></li>
-          <li><div>10 km, semi, marathon <span>ou une distance libre, et la date de la course.</span></div></li>
-          <li><div>De 2 à 7 séances par semaine, <span>les jours possibles cochés et le jour de ta sortie longue.</span></div></li>
-          <li><div>Option vélo : <span>une séance facile par semaine remplacée par du vélo doux, envoyée sur la montre comme un workout vélo.</span></div></li>
-          <li><div>Temps visé : <span>tu le fixes, ou Claude l'estime d'après ta forme.</span></div></li>
+          <li><div>Principal, Secondaire ou Plaisir : <span>chaque course a sa priorité. La principale est préparée à fond, une secondaire reçoit un petit affûtage, une course plaisir sert d'entraînement.</span></div></li>
+          <li><div>Route ou trail, <span>du 10 km à l'ultra, avec le tracé GPX pour le dénivelé.</span></div></li>
+          <li><div>Un temps estimé pour chaque course, <span>calculé par Claude d'après ta forme, ou le temps que tu vises.</span></div></li>
+          <li><div>Tes disponibilités dans les réglages du plan : <span>de 2 à 7 séances par semaine, les jours possibles, ta sortie longue et, si tu veux, une séance de vélo doux.</span></div></li>
         </ul>
         <p class="note">Claude s'appuie sur tes activités des 8 dernières semaines, tes zones cardiaques, ton seuil, ta VO2max et les prédictions de temps de Garmin.</p>
       </div>
       <figure>
-        <button class="shot" type="button" data-full="img/goal.jpg" aria-label="Agrandir la capture Objectif">
-          <img src="img/goal.jpg" alt="Formulaire Nouvel objectif : type de course, distance, séances par semaine, jours possibles, sortie longue, option vélo, temps visé, tracé GPX." loading="lazy">
+        <button class="shot" type="button" data-full="img/goals.jpg" aria-label="Agrandir la capture Objectifs">
+          <img src="img/goals.jpg" alt="Page Objectifs : un semi-marathon secondaire le 21 mars, un trail de 20 km le 27 mars et un trail de 30 km le 28 mars en principal, puis un trail de 57 km en mai, chacun avec son temps estimé par Claude." loading="lazy">
         </button>
       </figure>
     </div>
     <div class="split flip">
       <div class="text">
-        <h3>Le programme, semaine par semaine</h3>
-        <p>Chaque séance a un objectif, une durée et des blocs calés sur tes zones : échauffement, effort, retour au calme, avec les fréquences cardiaques à viser.</p>
+        <h3>Deux courses le même week-end ? C'est prévu.</h3>
+        <p>Des courses à un ou deux jours d'écart forment un bloc, préparé comme un seul défi. Le temps estimé du deuxième jour tient compte de la fatigue de la veille. Quand des courses sont proches, l'appli te dit laquelle reçoit l'affûtage et comment les autres s'y intègrent.</p>
+        <p>À la fin du cycle, l'appli te propose de préparer le suivant, en commençant par une récupération adaptée à la course que tu viens de faire.</p>
+      </div>
+      <figure>
+        <button class="shot" type="button" data-full="img/goals-close.jpg" aria-label="Agrandir la capture Courses rapprochées">
+          <img src="img/goals-close.jpg" alt="Liste des objectifs : le trail de 20 km et le trail de 30 km forment un bloc affûté, et le semi-marathon est intégré à leur affûtage." loading="lazy">
+        </button>
+      </figure>
+    </div>
+  </section>
+
+  <!-- MA SEMAINE -->
+  <section class="feature" id="plan">
+    <div class="split">
+      <div class="text">
+        <span class="eyebrow">Ma semaine</span>
+        <h2>Ta séance du jour, ta semaine, d'un coup d'œil.</h2>
+        <p>Un seul écran : la prochaine séance en grand, la semaine en cours et le programme jusqu'à la course. Chaque séance a un objectif, une durée et des blocs calés sur tes zones : échauffement, effort, retour au calme, avec les fréquences cardiaques à viser.</p>
         <ul class="points">
           <li><div>« Envoyer sur la montre » <span>pousse la séance dans ton calendrier Garmin.</span></div></li>
           <li><div>Après la synchro, <span>ta sortie est rattachée à la séance prévue, et Claude analyse ce que tu as fait.</span></div></li>
@@ -311,8 +329,8 @@ footer { border-top: 1px solid var(--line); padding-block: 28px 40px; color: var
         </ul>
       </div>
       <figure>
-        <button class="shot" type="button" data-full="img/plan.jpg" aria-label="Agrandir la capture Programme">
-          <img src="img/plan.jpg" alt="Programme sur 3 semaines avant un semi-marathon, avec le détail de la séance du mardi et le bouton Envoyer sur la montre." loading="lazy">
+        <button class="shot" type="button" data-full="img/week-plan.jpg" aria-label="Agrandir la capture du programme de la semaine">
+          <img src="img/week-plan.jpg" alt="Ma semaine : le programme du lundi au dimanche avec les séances prévues, la frise des 20 semaines du cycle et les courses suivantes." loading="lazy">
         </button>
       </figure>
     </div>
@@ -357,7 +375,7 @@ footer { border-top: 1px solid var(--line); padding-block: 28px 40px; color: var
       </div>
       <figure>
         <button class="shot" type="button" data-full="img/race.jpg" aria-label="Agrandir la capture Jour J">
-          <img src="img/race.jpg" alt="Jour J d'un semi : temps visé 1 h 39, départ 08:00, allure moyenne 4:42 par km, tableau des segments avec heures de passage." loading="lazy">
+          <img src="img/race.jpg" alt="Jour J d'un trail de 57 km : temps visé 6 h 30 estimé par Claude, départ 08:00, allure moyenne 6:53 par km, 1 990 m de D+ et le profil d'altitude découpé en montées et descentes." loading="lazy">
         </button>
       </figure>
     </div>
@@ -370,6 +388,8 @@ footer { border-top: 1px solid var(--line); padding-block: 28px 40px; color: var
         <span class="eyebrow">Apparence</span>
         <h3>Clair ou sombre, comme ton Windows.</h3>
         <p>Le thème suit le réglage de ton ordinateur, ou tu le choisis dans les Réglages.</p>
+        <h3>Tu sais ce que coûte Claude.</h3>
+        <p>Les Réglages montrent la consommation de chaque génération de plan et de chaque ajustement, avec une estimation en euros.</p>
       </div>
       <figure>
         <button class="shot" type="button" data-full="img/stats-dark.jpg" aria-label="Agrandir la capture en thème sombre">
@@ -386,7 +406,7 @@ footer { border-top: 1px solid var(--line); padding-block: 28px 40px; color: var
     <div class="band-grid">
       <div class="text">
         <span class="eyebrow">Sur ton téléphone</span>
-        <h2>Ta séance du jour dans la poche.</h2>
+        <h2>Ta semaine dans la poche.</h2>
         <p class="lead">Le mode LAN rend l'appli accessible depuis ton téléphone, sur le même Wi-Fi que ton PC. Protégé par un PIN.</p>
         <ol class="how">
           <li><div><b>Active l'accès</b><span>Réglages → « Accès depuis ton téléphone » → Activer, puis choisis un PIN de 4 à 12 chiffres.</span></div></li>
@@ -399,7 +419,7 @@ footer { border-top: 1px solid var(--line); padding-block: 28px 40px; color: var
         <p style="color: var(--band-muted); font-size: .88rem;">Seul le PC peut activer l'accès ou changer le PIN. Ton PC doit rester allumé avec CoachCloclo lancé.</p>
       </div>
       <div class="phones">
-        <button class="phone" type="button" data-full="img/m-today.jpg" aria-label="Agrandir la vue téléphone Aujourd'hui"><img src="img/m-today.jpg" alt="Écran Aujourd'hui sur téléphone." loading="lazy"></button>
+        <button class="phone" type="button" data-full="img/m-week.jpg" aria-label="Agrandir la vue téléphone Ma semaine"><img src="img/m-week.jpg" alt="Écran Ma semaine sur téléphone." loading="lazy"></button>
         <button class="phone" type="button" data-full="img/m-stats.jpg" aria-label="Agrandir la vue téléphone Statistiques"><img src="img/m-stats.jpg" alt="Écran Statistiques sur téléphone." loading="lazy"></button>
       </div>
     </div>
@@ -411,12 +431,13 @@ footer { border-top: 1px solid var(--line); padding-block: 28px 40px; color: var
     <div class="feature-head">
       <span class="eyebrow">Version mobile</span>
       <h2>Ton plan en lecture seule, partout.</h2>
-      <p class="lead">Une appli installable sur l'écran d'accueil de ton téléphone, qui lit ta base Turso sans rien pouvoir y modifier. Elle demande que l'appli de bureau soit déjà en stockage cloud (Turso). Contrairement à l'accès par le réseau local (ci-dessus), qui exige que le PC soit allumé et le téléphone sur le même réseau et donne toutes les fonctions, la version mobile marche partout, en lecture seule, via Turso.</p>
+      <p class="lead">Avec le stockage cloud, activé dans les Réglages, tes données vont dans ta propre base Turso. Tu peux alors utiliser la même base sur deux PC, et consulter ton plan depuis une appli installable sur l'écran d'accueil de ton téléphone, qui lit ta base sans rien pouvoir y modifier.</p>
+      <p>Contrairement à l'accès par le réseau local (ci-dessus), qui exige que le PC soit allumé et le téléphone sur le même réseau et donne toutes les fonctions, la version mobile marche partout, en lecture seule, via Turso.</p>
     </div>
     <ul class="points">
       <li><b>Installe-la.</b> Ouvre <a href="https://romigour.github.io/CoachCloclo/app/">romigour.github.io/CoachCloclo/app</a> sur ton téléphone, puis « Ajouter à l'écran d'accueil ».</li>
       <li><b>Connecte-la.</b> Au premier lancement, elle demande seulement l'URL et le jeton Turso, enregistrés sur le téléphone. Crée un jeton en lecture seule : <code>turso db tokens create &lt;base&gt; --read-only</code>. L'écran « Connexion » permet de les modifier ou de les effacer.</li>
-      <li><b>Consulte.</b> Aujourd'hui (la séance du jour), Plan (la semaine, imprévus visibles) et Statistiques. Aucune action ne peut créer, modifier ou supprimer quoi que ce soit.</li>
+      <li><b>Consulte.</b> Ma semaine (la séance du jour et le programme, imprévus visibles) et Statistiques. Aucune action ne peut créer, modifier ou supprimer quoi que ce soit.</li>
       <li><b>Mets à jour au besoin.</b> Si elle affiche « Mets à jour l'appli de bureau puis relance-la une fois », installe la dernière version de l'appli de bureau et relance-la.</li>
     </ul>
   </section>
@@ -438,7 +459,7 @@ footer { border-top: 1px solid var(--line); padding-block: 28px 40px; color: var
     <p class="note">L'installateur n'est pas signé : si Windows SmartScreen s'affiche, clique sur « Informations complémentaires » puis « Exécuter quand même ». Les mises à jour s'installent ensuite en un clic depuis l'appli.</p>
   </section>
   <footer>
-    Tes données restent sur ta machine : l'appli ne parle qu'à Garmin et à Claude. Captures réalisées avec la version 0.7.3.
+    Tes données restent chez toi, ou dans ta propre base Turso si tu l'actives : l'appli ne parle qu'à Garmin, à Claude et, si tu le choisis, à Turso. Captures réalisées avec la version 0.13.0.
   </footer>
 </div>
 

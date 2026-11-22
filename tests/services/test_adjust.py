@@ -42,9 +42,9 @@ def test_ask_adjustment_passes_change_note(repo, coach_home, fake_garmin, accept
 
 def test_save_proposal_stales_previous(repo):
     with repo.transaction() as db:
-        first = save_proposal(db, AdjustmentResponse(analysis="A", changes=[]))
+        first = save_proposal(db, AdjustmentResponse(analysis="A", changes=[]), [])
     with repo.transaction() as db:
-        second = save_proposal(db, AdjustmentResponse(analysis="B", changes=[]))
+        second = save_proposal(db, AdjustmentResponse(analysis="B", changes=[]), [])
     with repo.transaction() as db:
         status = {p.id: p.status for p in db.exec(select(Proposal)).all()}
     assert status == {first: "stale", second: "pending"}
@@ -162,7 +162,7 @@ def test_ask_adjustment_rejects_session_on_race_day(repo, coach_home, fake_garmi
 def test_save_proposal_stores_estimates(repo):
     adj = AdjustmentResponse(analysis="A", changes=[], estimated_times=[GoalEstimate(goal_id=4, seconds=3000)])
     with repo.transaction() as db:
-        pid = save_proposal(db, adj)
+        pid = save_proposal(db, adj, [])
     with repo.transaction() as db:
         assert json.loads(db.get(Proposal, pid).estimates_json) == [{"goal_id": 4, "seconds": 3000}]
 
@@ -245,3 +245,24 @@ def test_request_adjustment_failure_keeps_pending_notes(repo, coach_home, fake_g
         request_adjustment(repo, fake_garmin, FakeLLMProvider(["{}", "{}"]))
     cycle = repo.active_cycle()
     assert cycle.adjust_due is True and cycle.adjust_notes() == ["Note A", "Note B"]
+
+
+class _ConcurrentChangeLLM:
+    """Claude simulé pendant la réponse duquel l'athlète modifie encore un objectif (autre requête)."""
+
+    def __init__(self, repo, cycle_id: int):
+        self.repo, self.cycle_id, self.calls = repo, cycle_id, []
+
+    def complete(self, system: str, prompt: str) -> str:
+        self.calls.append(prompt)
+        _pend(self.repo, self.cycle_id, "Note C")
+        return adjustment_json()
+
+
+def test_note_added_during_adjustment_is_kept(repo, coach_home, fake_garmin, accepted_plan):
+    _pend(repo, accepted_plan.id, "Note A", "Note B")
+    llm = _ConcurrentChangeLLM(repo, accepted_plan.id)
+    request_adjustment(repo, fake_garmin, llm)
+    assert "Note B" in llm.calls[0] and "Note C" not in llm.calls[0]
+    cycle = repo.active_cycle()
+    assert cycle.adjust_due is True and cycle.adjust_notes() == ["Note C"]

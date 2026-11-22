@@ -14,7 +14,7 @@ from coach.llm.provider import LLMProvider
 from coach.llm.schemas import AdjustmentResponse, validate_adjustment
 from coach.plan.calendar import n_weeks, week_of
 from coach.plan.constraints import constraint_errors, planned_after_adjustment
-from coach.plan.models import Activity, Cycle, Goal, Proposal, Session, clear_adjust
+from coach.plan.models import Activity, Cycle, Goal, Proposal, Session, consume_adjust_notes
 from coach.plan.repo import Repo
 from coach.services.context import load_constraints, recent_history, refresh_snapshot
 from coach.services.laps import session_comparison
@@ -113,18 +113,20 @@ def ask_adjustment(
     return adj
 
 
-def save_proposal(db: DbSession, adj: AdjustmentResponse) -> int:
-    """Passe les propositions en attente à `stale`, ajoute la nouvelle et renvoie son id ; le cycle actif
-    n'a plus de changement d'objectif en attente.
+def save_proposal(db: DbSession, adj: AdjustmentResponse, sent_notes: list[str]) -> int:
+    """Passe les propositions en attente à `stale`, ajoute la nouvelle et renvoie son id.
+
+    `sent_notes` : changements d'objectif transmis à Claude par la demande (`cycle.adjust_notes()` du cycle
+    passé à `ask_adjustment`) ; seuls ceux-là quittent l'attente. Un changement fait pendant l'appel à
+    Claude reste en attente (le bandeau reste affiché).
 
     Les estimations de temps sont gardées avec la proposition, appliquées à son acceptation.
     """
     for old in db.exec(select(Proposal).where(Proposal.status == "pending")).all():
         old.status = "stale"
         db.add(old)
-    # la demande a transmis les changements d'objectif en attente (`ask_adjustment`) : plus rien à lancer
     for c in db.exec(select(Cycle).where(Cycle.status == "active")).all():
-        clear_adjust(c)
+        consume_adjust_notes(c, sent_notes)
         db.add(c)
     proposal = Proposal(
         analysis=adj.analysis,
@@ -160,7 +162,7 @@ def request_adjustment(
         repo, garmin, llm, cycle, zones, repo.sessions(cycle.id), garmin.today(), missed=list(missed), change_note=note
     )
     with repo.transaction() as db:
-        proposal_id = save_proposal(db, adj)
+        proposal_id = save_proposal(db, adj, cycle.adjust_notes())
     state = load_sync_state(repo)
     state.proposal_due = False
     save_sync_state(repo, state)

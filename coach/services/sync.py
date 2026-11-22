@@ -137,4 +137,4 @@ def _propose(
         repo, garmin, llm, cycle, zones, sessions, today, done=done, missed=missed
     )
     with repo.transaction() as db:
-        return save_proposal(db, adj)
+        return save_proposal(db, adj, cycle.adjust_notes())

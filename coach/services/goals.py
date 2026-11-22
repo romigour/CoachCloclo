@@ -143,15 +143,17 @@ def _save_change(
     adj,
     removed_ids: set[int],
     apply,
+    sent_notes: list[str],
 ) -> int:
     """Enregistre en une transaction la modification (`apply(db)`), les retraits et la proposition,
-    puis retire de la montre les séances exportées ; renvoie l'id de la proposition."""
+    puis retire de la montre les séances exportées ; renvoie l'id de la proposition. `sent_notes` : voir
+    `save_proposal`."""
     from coach.services.adjust import save_proposal  # import tardif : adjust importe race_strategy, qui importe ce module
 
     with repo.transaction() as db:
         apply(db)
         to_clean = _remove_sessions(db, removed_ids)
-        proposal_id = save_proposal(db, adj)
+        proposal_id = save_proposal(db, adj, sent_notes)
     # Retire les séances de la montre ; un échec Garmin les laisse en `sync_error` (à relancer).
     sync_marked(repo, garmin, to_clean, zones)
     return proposal_id

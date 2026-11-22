@@ -95,6 +95,15 @@ def add_adjust_note(c: Cycle, note: str) -> None:
     c.adjust_due = True
 
 
+def consume_adjust_notes(c: Cycle, sent: list[str]) -> None:
+    """Retire les notes transmises à Claude (`sent`, en tête de liste) ; celles ajoutées depuis restent en
+    attente, et le cycle reste à mettre à jour."""
+    notes = c.adjust_notes()
+    rest = notes[len(sent):] if notes[: len(sent)] == sent else notes
+    c.adjust_notes_json = json.dumps(rest, ensure_ascii=False)
+    c.adjust_due = bool(rest)
+
+
 def clear_adjust(c: Cycle) -> None:
     """Plus rien en attente : les changements ont été transmis à Claude (ou le plan est régénéré)."""
     c.adjust_due = False

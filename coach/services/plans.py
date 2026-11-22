@@ -201,7 +201,7 @@ def update_plan_settings(
         db.add(c)
         saved["cycle"] = c
 
-    proposal_id = _save_change(repo, garmin, zones, adj, set(), apply)
+    proposal_id = _save_change(repo, garmin, zones, adj, set(), apply, edited.adjust_notes())
     return saved["cycle"], proposal_id
 
 

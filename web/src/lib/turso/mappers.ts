@@ -33,6 +33,8 @@ export function cycleDict(r: Row): Cycle {
     include_bike: Boolean(r.include_bike),
     plan_accepted: Boolean(r.plan_accepted),
     needs_generation: Boolean(r.needs_generation),
+    // colonne non lue : le mobile ne lance pas la mise à jour, et une base distante pas encore migrée ne l'a pas
+    adjust_due: false,
   };
 }
 

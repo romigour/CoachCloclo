@@ -91,6 +91,8 @@ export type Cycle = {
   include_bike: boolean;
   plan_accepted: boolean;
   needs_generation: boolean;
+  /** Objectifs changés : mise à jour de l'entraînement à lancer (« Mettre à jour l'entraînement »). */
+  adjust_due: boolean;
 };
 
 /** Corps de PATCH /api/cycle : seuls les champs modifiés ; `long_run_day: ""` retire le jour imposé. */
@@ -462,7 +464,13 @@ export type GoalInput = {
 
 /** Effet d'un changement d'objectif sur le plan : proposition d'ajustement à relire, ou plan à régénérer. */
 /** `notice` : avertissement de bloc ou de courses rapprochées après un ajout ou une modification. */
-export type PlanChange = { proposal_id: number | null; needs_generation: boolean; notice?: string | null };
+export type PlanChange = {
+  proposal_id: number | null;
+  needs_generation: boolean;
+  /** Le changement attend la mise à jour de l'entraînement (bandeau sur Objectifs et Ma semaine). */
+  adjust_due?: boolean;
+  notice?: string | null;
+};
 export type GoalChange = PlanChange & { goal: Goal };
 /** Corps de PATCH /api/goals/{id} : seuls les champs modifiés. */
 export type GoalUpdate = { race_date?: string; target_time?: string; priority?: Priority };

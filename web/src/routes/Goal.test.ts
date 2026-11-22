@@ -479,3 +479,30 @@ test("transmet l'avertissement à la proposition quand l'ajout en crée une", as
   await waitFor(() => expect(location.hash).toBe("#/proposal"));
   expect(takeNotice()).toBe(BLOCK_NOTICE);
 });
+
+test("un ajout dans un plan validé affiche le bandeau de mise à jour, qui lance une seule demande", async () => {
+  let cycle = accepted;
+  const f = server({
+    cycle: () => cycle,
+    onwrite: (url) => {
+      if (url === "/api/goals") {
+        cycle = mkCycle({ plan_accepted: true, adjust_due: true });
+        return json({ goal: plaisir, proposal_id: null, needs_generation: false, adjust_due: true });
+      }
+      return json({ proposal_id: 12 });
+    },
+  });
+  const onchanged = vi.fn();
+  render(Goal, { onchanged });
+  expect(screen.queryByText("Tes objectifs ont changé")).toBeNull();
+  await fireEvent.click(await screen.findByRole("button", { name: "Ajouter un objectif" }));
+  fillBase();
+  await submitForm("Ajouter l'objectif");
+  const banner = await screen.findByRole("region", { name: "Plan à mettre à jour" });
+  expect(location.hash).toBe("");
+  expect(screen.queryByText(/Claude peut ajuster/)).toBeNull();
+  await fireEvent.click(within(banner).getByRole("button", { name: "Mettre à jour l'entraînement" }));
+  await waitFor(() => expect(location.hash).toBe("#/proposal"));
+  expect(writes(f)).toEqual(["POST /api/goals", "POST /api/cycle/adjust"]);
+  expect(onchanged).toHaveBeenCalledTimes(2);
+});

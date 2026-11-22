@@ -8,7 +8,7 @@ afterEach(() => vi.unstubAllGlobals());
 const cycle: Cycle = {
   id: 2, status: "active", plan_start: "2027-01-04", end_date: "2027-03-01", sessions_per_week: 4,
   available_days: ["lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche"], long_run_day: "dimanche",
-  include_bike: false, plan_accepted: true, needs_generation: false,
+  include_bike: false, plan_accepted: true, needs_generation: false, adjust_due: false,
 };
 
 function mock(status = 200, body: unknown = { cycle, proposal_id: 9 }) {

@@ -15,6 +15,7 @@
   import PriorityBadge from "../components/PriorityBadge.svelte";
   import RaceDayCard from "../components/RaceDayCard.svelte";
   import { READONLY } from "../lib/mode";
+  import AdjustBanner from "../components/AdjustBanner.svelte";
 
   let {
     version = 0,
@@ -209,6 +210,8 @@
       </section>
       {#if generating}<p class="card busy" role="status">Claude construit ton plan… (cela peut prendre une minute)</p>{/if}
     {/if}
+
+    <AdjustBanner cycle={plan.cycle} onproposal={goProposal} />
 
     {#if status?.pending_proposal_id != null}
       {#if READONLY}

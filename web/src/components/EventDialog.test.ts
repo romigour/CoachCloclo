@@ -8,7 +8,7 @@ afterEach(() => vi.unstubAllGlobals());
 const cycle: Cycle = {
   id: 3, status: "active", plan_start: "2026-10-26", end_date: "2026-12-06", sessions_per_week: 3,
   available_days: ["lundi", "mercredi", "samedi"], long_run_day: null, include_bike: false, plan_accepted: true,
-  needs_generation: false,
+  needs_generation: false, adjust_due: false,
 };
 const session = (id: number, title: string): Session => ({
   id, order: id, type: "EF", title, description: "", target_kind: "pace", status: "todo", suggested_day: "mercredi",

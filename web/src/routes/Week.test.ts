@@ -17,7 +17,7 @@ const s = (id: number, title: string, suggested_day: Session["suggested_day"], s
 const cycle: Cycle = {
   id: 1, status: "active", plan_start: "2026-10-26", end_date: "2026-12-06", sessions_per_week: 3,
   available_days: ["lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche"], long_run_day: null,
-  include_bike: false, plan_accepted: true, needs_generation: false,
+  include_bike: false, plan_accepted: true, needs_generation: false, adjust_due: false,
 };
 const goal: Goal = {
   id: 1, type: "route", distance_km: 21.1, d_plus_m: 0, race_date: "2026-12-06", priority: "principal", status: "active",
@@ -261,4 +261,24 @@ test("sans horizon, pas de liste Ensuite", async () => {
   render(Week, { today: "2026-11-03" });
   await screen.findByRole("heading", { name: "Ma semaine" });
   expect(screen.queryByRole("region", { name: "Ensuite" })).toBeNull();
+});
+
+test("goals changed on the accepted plan: the update banner leads to the proposal", async () => {
+  const f = vi.fn(async (url: string, init?: RequestInit) => {
+    const json = (b: unknown) => new Response(JSON.stringify(b), { status: 200 });
+    if (init?.method === "POST" && url === "/api/cycle/adjust") return json({ proposal_id: 12 });
+    return json(url === "/api/plan" ? { ...plan, cycle: { ...cycle, adjust_due: true } } : []);
+  });
+  vi.stubGlobal("fetch", f);
+  render(Week, { today: "2026-10-30" });
+  const banner = await screen.findByRole("region", { name: "Plan à mettre à jour" });
+  await fireEvent.click(within(banner).getByRole("button", { name: "Mettre à jour l'entraînement" }));
+  await waitFor(() => expect(location.hash).toBe("#/proposal"));
+});
+
+test("nothing pending: no update banner", async () => {
+  mock();
+  render(Week, { today: "2026-10-30" });
+  await screen.findByRole("region", { name: "Séance sélectionnée" });
+  expect(screen.queryByRole("region", { name: "Plan à mettre à jour" })).toBeNull();
 });

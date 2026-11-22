@@ -6,7 +6,7 @@ import type { Cycle } from "../lib/api";
 const cycle: Cycle = {
   id: 1, status: "active", plan_start: "2027-01-04", end_date: "2027-03-01", sessions_per_week: 4,
   available_days: ["lundi", "mercredi", "samedi", "dimanche"], long_run_day: null, include_bike: false,
-  plan_accepted: true, needs_generation: false,
+  plan_accepted: true, needs_generation: false, adjust_due: false,
 };
 
 const priority = () => within(screen.getByRole("group", { name: "Priorité" }));

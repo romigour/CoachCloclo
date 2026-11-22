@@ -12,6 +12,7 @@
   import GoalEditDialog from "../components/GoalEditDialog.svelte";
   import PlanSettingsDialog from "../components/PlanSettingsDialog.svelte";
   import PriorityBadge from "../components/PriorityBadge.svelte";
+  import AdjustBanner from "../components/AdjustBanner.svelte";
   import { handOffNotice } from "../lib/notice";
   import AvailabilityFields, { availabilityValid } from "../components/AvailabilityFields.svelte";
 
@@ -105,7 +106,7 @@
     error = null;
     notice = "";
     const first = cycle === null; // le premier objectif crée le cycle : on génère le plan aussitôt
-    busy = first ? "Création de l'objectif…" : "Ajout de l'objectif… (Claude peut ajuster ton plan)";
+    busy = first ? "Création de l'objectif…" : "Ajout de l'objectif…";
     let created = false;
     try {
       const r = await api.createGoal(input);
@@ -179,7 +180,7 @@
   async function remove(g: Goal) {
     if (!confirm(`Retirer ${goalLabel(g)} du ${formatDate(g.race_date)} ?`)) return;
     error = null;
-    busy = "Retrait de l'objectif… (Claude peut ajuster ton plan)";
+    busy = "Retrait de l'objectif…";
     try {
       await changed(await api.removeGoal(g.id));
     } catch (err) {
@@ -187,6 +188,12 @@
     } finally {
       busy = "";
     }
+  }
+
+  /** « Mettre à jour l'entraînement » : la proposition de Claude est à relire. */
+  function adjusted() {
+    onchanged?.();
+    location.hash = "#/proposal";
   }
 
   async function edited(r: PlanChange) {
@@ -225,6 +232,8 @@
 {#if notice}
   <p class="card" role="status">{notice}</p>
 {/if}
+
+<AdjustBanner {cycle} onproposal={adjusted} />
 
 {#if needsGeneration}
   <section class="card row spread" aria-label="Plan à recalculer">

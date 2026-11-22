@@ -15,7 +15,7 @@ const goal: Goal = {
 /** Cycle qui se termine par la course de `goal`. */
 const cycle: Cycle = {
   id: 1, status: "active", plan_start: "2026-10-26", end_date: "2026-12-06", sessions_per_week: 3,
-  available_days: ["lundi"], long_run_day: null, include_bike: false, plan_accepted: true, needs_generation: false,
+  available_days: ["lundi"], long_run_day: null, include_bike: false, plan_accepted: true, needs_generation: false, adjust_due: false,
 };
 
 const segments: RaceSegment[] = Array.from({ length: 10 }, (_, i) => ({
@@ -306,4 +306,25 @@ test("an horizon goal without a time says it will be estimated with its cycle", 
   expect(await screen.findByText("Temps estimé à la préparation de son cycle, ou fixe un temps visé")).toBeVisible();
   expect(screen.queryByText(/Pas de temps de référence/)).toBeNull();
   expect(screen.queryByText("Pas de temps visé")).toBeNull();
+});
+
+test("a goal edit that leaves the plan to update goes to the goals page and its banner", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (_url: string, init?: RequestInit) =>
+      new Response(
+        JSON.stringify(
+          init?.method === "PATCH" ? { goal, proposal_id: null, needs_generation: false, adjust_due: true } : view(),
+        ),
+        { status: 200 },
+      ),
+    ),
+  );
+  location.hash = "#/race";
+  render(Race, { goals: [goal], goalId: goal.id });
+  await fireEvent.click(await screen.findByRole("button", { name: "Modifier l'objectif" }));
+  const dialog = screen.getByRole("dialog", { name: "Modifier l'objectif" });
+  await fireEvent.input(within(dialog).getByLabelText("Date de la course"), { target: { value: "2026-12-13" } });
+  await fireEvent.click(within(dialog).getByRole("button", { name: "Enregistrer" }));
+  await waitFor(() => expect(location.hash).toBe("#/goal"));
 });

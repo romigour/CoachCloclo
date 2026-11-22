@@ -88,12 +88,13 @@
     load();
   });
 
-  // comme depuis la page Objectifs : la modification passe par une proposition de Claude
+  // comme depuis la page Objectifs
   function edited(r: PlanChange) {
     editing = false;
     onchanged?.();
     if (r.proposal_id != null) location.hash = "#/proposal";
-    else if (r.needs_generation) location.hash = "#/goal"; // le bandeau « Générer » y attend
+    // le bandeau « Générer » ou « Mettre à jour l'entraînement » y attend
+    else if (r.needs_generation || r.adjust_due) location.hash = "#/goal";
     else load();
   }
 </script>

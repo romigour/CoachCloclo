@@ -213,3 +213,14 @@ def test_ask_adjustment_records_usage(repo, coach_home, fake_garmin, accepted_pl
                    repo.sessions(accepted_plan.id), TODAY)
     rows = repo.llm_usages()
     assert len(rows) == before + 1 and (rows[0].kind, rows[0].status, rows[0].mode) == ("adjustment", "ok", "api")
+
+
+def test_ask_adjustment_prompt_has_long_history(repo, coach_home, fake_garmin, accepted_plan):
+    from tests.plan.factories import make_activity
+
+    repo.add(make_activity(garmin_activity_id=902, date=date(2026, 9, 14), type_key="trail_running"))
+    llm = FakeLLMProvider([adjustment_json()])
+    ask_adjustment(
+        repo, fake_garmin, llm, accepted_plan, _zones(), repo.sessions(accepted_plan.id), TODAY,
+    )
+    assert "- septembre 2026 : 1 sortie," in llm.calls[0]

@@ -11,6 +11,7 @@ from coach.services.context import refresh_snapshot
 from coach.services.goals import GoalError
 from coach.services.plans import PlanSettingsUpdate, accept_plan, generate_plan, update_plan_settings
 from tests.llm.factories import make_plan, make_session, valid_plan_json
+from tests.plan.factories import make_activity
 from tests.services.test_goals import METRICS, _proposals, first_goal, monday_garmin  # noqa: F401 (fixture)
 from tests.services.test_goals import accepted_goal as _accepted_goal
 from tests.services.test_sync import adjustment_json
@@ -397,3 +398,19 @@ def test_recovery_note_names_block(repo):
     assert _recovery_note(repo, plan_cycle(recovery_from_goal_id=ids[1])) == (
         "Commence par une récupération adaptée à Trail de 42 km couru le 10/01/2027."
     )
+
+
+def test_generation_prompt_has_long_history(repo, fake_garmin):
+    _goal(repo, fake_garmin)
+    repo.add(make_activity(garmin_activity_id=901, date=date(2026, 10, 5)))
+    llm = FakeLLMProvider([valid_plan_json(n_weeks=14, per_week=3)])
+    generate_plan(repo, fake_garmin, llm)
+    assert "- octobre 2026 : 1 sortie," in llm.calls[0]
+
+
+def test_generation_prompt_unchanged_without_stored_activities(repo, fake_garmin):
+    _goal(repo, fake_garmin)
+    assert not repo.has_activities()
+    llm = FakeLLMProvider([valid_plan_json(n_weeks=14, per_week=3)])
+    generate_plan(repo, fake_garmin, llm)
+    assert "Historique long" not in llm.calls[0]

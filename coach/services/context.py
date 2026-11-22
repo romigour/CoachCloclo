@@ -2,6 +2,7 @@
 
 from datetime import date, timedelta
 
+from coach.analysis.long_history import LongHistory, kept_records, monthly_volume, past_races, window_start
 from coach.analysis.zones import Zones, compute_zones
 from coach.garmin.port import GarminPort, Metrics
 from coach.plan.constraints import PlanConstraints
@@ -75,3 +76,16 @@ def recent_history(garmin: GarminPort) -> list[Activity]:
             )
         )
     return out
+
+
+def long_history(repo: Repo, today: date) -> LongHistory | None:
+    """Historique long lu en base (import de l'historique) ; None si la base n'a aucune activité."""
+    if not repo.has_activities():
+        return None
+    activities = repo.all_activities()
+    start = window_start(today)
+    return LongHistory(
+        months=monthly_volume([a for a in activities if a.date >= start], today),
+        races=past_races(repo.races(), {a.id: a for a in activities}),
+        records=kept_records(repo.records()),
+    )

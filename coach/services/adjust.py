@@ -16,7 +16,7 @@ from coach.plan.calendar import n_weeks, week_of
 from coach.plan.constraints import constraint_errors, planned_after_adjustment
 from coach.plan.models import Activity, Cycle, Goal, Proposal, Session
 from coach.plan.repo import Repo
-from coach.services.context import load_constraints, recent_history, refresh_snapshot
+from coach.services.context import load_constraints, long_history, recent_history, refresh_snapshot
 from coach.services.laps import session_comparison
 from coach.services.llm_usage import tracked
 from coach.services.race_strategy import race_line_for_prompt
@@ -84,6 +84,7 @@ def ask_adjustment(
         race_texts=race_texts,
         change_note=change_note,
         constraints=constraints,
+        long_history=long_history(repo, today),
         recent=repo.recent_done_goals(today),
     )
     with tracked(repo, "adjustment") as meter:

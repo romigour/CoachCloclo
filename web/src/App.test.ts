@@ -150,7 +150,7 @@ test("status polling is cleaned up on unmount", async () => {
 });
 
 async function loginToGarmin() {
-  await screen.findByText("Connexion Garmin");
+  await screen.findByLabelText("E-mail Garmin");
   await fireEvent.input(screen.getByLabelText("E-mail Garmin"), { target: { value: "a@b.c" } });
   await fireEvent.input(screen.getByLabelText("Mot de passe"), { target: { value: "secret" } });
   await fireEvent.click(screen.getByRole("button", { name: "Se connecter" }));
@@ -161,7 +161,7 @@ test("first Garmin login syncs, then opens stats once activities exist", async (
   statusBody = { ...statusBody, garmin: "auth_required", ...noGoal };
   location.hash = "#/setup";
   render(App);
-  await screen.findByText("Connexion Garmin");
+  await screen.findByLabelText("E-mail Garmin");
   expect(syncs()).toBe(0);
   statusBody = { ...statusBody, garmin: "ok" };
   afterSync = () => (statusBody = { ...statusBody, has_activities: true });
@@ -175,6 +175,7 @@ test("first Garmin login without any activity after sync goes to the goal", asyn
   statusBody = { ...statusBody, garmin: "auth_required", ...noGoal };
   location.hash = "#/setup";
   render(App);
+  await screen.findByLabelText("E-mail Garmin"); // formulaire affiché tant que Garmin n'est pas connecté
   statusBody = { ...statusBody, garmin: "ok" };
   await loginToGarmin();
   await waitFor(() => expect(syncs()).toBe(1));
@@ -188,6 +189,7 @@ test("a failed sync after the first Garmin login stays on settings with its erro
   location.hash = "#/setup";
   await new Promise((r) => setTimeout(r, 0)); // laisse passer le hashchange initial (il efface l'erreur)
   render(App);
+  await screen.findByLabelText("E-mail Garmin"); // formulaire affiché tant que Garmin n'est pas connecté
   statusBody = { ...statusBody, garmin: "ok" };
   await loginToGarmin();
   await waitFor(() => expect(syncs()).toBe(1));
@@ -361,4 +363,24 @@ test("unavailable storage still lets the settings page open", async () => {
   render(App);
   await screen.findByText("Réglages", { selector: "h1" });
   expect(screen.queryByText("Données indisponibles")).toBeNull();
+});
+
+test("settings: connected Garmin keeps its login form folded until 'Changer de compte'", async () => {
+  location.hash = "#/setup";
+  render(App);
+  await fireEvent.click(await screen.findByRole("button", { name: "Changer de compte" }));
+  expect(screen.getByLabelText("E-mail Garmin")).toBeTruthy();
+  await fireEvent.click(screen.getByRole("button", { name: "Annuler" }));
+  expect(screen.queryByLabelText("E-mail Garmin")).toBeNull();
+});
+
+test("settings: Claude mode saves on change, except an API mode still missing its key", async () => {
+  location.hash = "#/setup";
+  render(App);
+  const puts = () => calls.filter((c) => c.url === "/api/settings" && c.method === "PUT").length;
+  await fireEvent.click(await screen.findByLabelText("Clé API Anthropic"));
+  expect(await screen.findByLabelText(/^Clé API/, { selector: "input[type=password]" })).toBeTruthy();
+  expect(puts()).toBe(0);
+  await fireEvent.click(screen.getByLabelText("Claude Code (CLI)"));
+  await waitFor(() => expect(puts()).toBe(1));
 });

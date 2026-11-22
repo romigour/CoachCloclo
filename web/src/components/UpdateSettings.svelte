@@ -63,24 +63,28 @@
 </script>
 
 {#if view}
-  <section class="card stack">
-    <h2>Mise à jour</h2>
-    <p>Version installée : {view.current}</p>
-    {#if phase === "downloading"}
-      <p class="busy" role="status">Téléchargement… {Math.round(progress)} %</p>
-    {:else if phase === "installing"}
-      <p class="busy" role="status">Mise à jour en cours, CoachCloclo va redémarrer…</p>
-    {:else if phase === "stuck"}
-      <p class="warning" role="status">La mise à jour semble bloquée : relance CoachCloclo depuis l'icône du bureau</p>
-    {:else}
-      <div class="row">
+  <div class="set-row">
+    <div class="set-label">
+      <h3>Mise à jour</h3>
+      <p>Version installée : {view.current}</p>
+      {#if phase === "downloading"}
+        <p class="busy" role="status">Téléchargement… {Math.round(progress)} %</p>
+      {:else if phase === "installing"}
+        <p class="busy" role="status">Mise à jour en cours, CoachCloclo va redémarrer…</p>
+      {:else if phase === "stuck"}
+        <p class="warning" role="status">La mise à jour semble bloquée : relance CoachCloclo depuis l'icône du bureau</p>
+      {:else}
+        {#if view.available}<p>Version {view.latest} disponible</p>{/if}
+        {#if message}<p role="status">{message}</p>{/if}
+      {/if}
+    </div>
+    {#if phase !== "downloading" && phase !== "installing" && phase !== "stuck"}
+      <div class="set-ctl">
         <button type="button" onclick={check} disabled={checking}>Vérifier les mises à jour</button>
         {#if view.available}
-          <button type="button" onclick={install}>Mettre à jour</button>
+          <button type="button" class="primary" onclick={install}>Mettre à jour</button>
         {/if}
       </div>
-      {#if view.available}<p>Version {view.latest} disponible</p>{/if}
-      {#if message}<p role="status">{message}</p>{/if}
     {/if}
-  </section>
+  </div>
 {/if}

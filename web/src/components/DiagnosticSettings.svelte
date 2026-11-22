@@ -38,39 +38,52 @@
 </script>
 
 {#if view}
-  <section class="card stack">
-    <h2>Diagnostic</h2>
-    <p>Enregistre le détail des échanges pour comprendre un échec. Les mots de passe et clés sont masqués.</p>
-    <label class="inline">
-      <input
-        type="checkbox"
-        checked={view.trace_claude}
-        disabled={busy}
-        onclick={(e) => {
-          e.preventDefault();
-          toggle("trace_claude", !view!.trace_claude);
-        }}
-      />
-      Journal Claude
-    </label>
-    <label class="inline">
-      <input
-        type="checkbox"
-        checked={view.trace_garmin}
-        disabled={busy}
-        onclick={(e) => {
-          e.preventDefault();
-          toggle("trace_garmin", !view!.trace_garmin);
-        }}
-      />
-      Journal Garmin
-    </label>
-    <p class="meta">Dossier des journaux : <code>{view.logs_dir}</code></p>
-    {#if view.can_open}
-      <div class="row">
-        <button type="button" onclick={openFolder}>Ouvrir le dossier des journaux</button>
+  <div class="set-list">
+    <div class="set-row">
+      <div class="set-label"><label for="trace-claude">Journal Claude</label></div>
+      <div class="set-ctl">
+        <input
+          id="trace-claude"
+          type="checkbox"
+          role="switch"
+          class="switch"
+          checked={view.trace_claude}
+          disabled={busy}
+          onclick={(e) => {
+            e.preventDefault();
+            toggle("trace_claude", !view!.trace_claude);
+          }}
+        />
       </div>
-    {/if}
-    {#if error}<p class="error" role="alert">{error}</p>{/if}
-  </section>
+    </div>
+    <div class="set-row">
+      <div class="set-label"><label for="trace-garmin">Journal Garmin</label></div>
+      <div class="set-ctl">
+        <input
+          id="trace-garmin"
+          type="checkbox"
+          role="switch"
+          class="switch"
+          checked={view.trace_garmin}
+          disabled={busy}
+          onclick={(e) => {
+            e.preventDefault();
+            toggle("trace_garmin", !view!.trace_garmin);
+          }}
+        />
+      </div>
+    </div>
+    <div class="set-row">
+      <div class="set-label">
+        <h3>Dossier des journaux</h3>
+        <p><code>{view.logs_dir}</code></p>
+        {#if error}<p class="error" role="alert">{error}</p>{/if}
+      </div>
+      {#if view.can_open}
+        <div class="set-ctl">
+          <button type="button" onclick={openFolder}>Ouvrir le dossier des journaux</button>
+        </div>
+      {/if}
+    </div>
+  </div>
 {/if}

@@ -53,6 +53,7 @@
   } as const;
 
   async function connected() {
+    garminForm = false;
     await load();
     // L'app synchronise et choisit la page ; sans elle, on retombe sur objectif / plan.
     if (onconnected) return onconnected();
@@ -71,8 +72,54 @@
     onchanged?.();
   }
 
-  async function saveSettings(e: Event) {
-    e.preventDefault();
+  /** Le mode s'enregistre dès qu'on le change, sauf la clé API à saisir la première fois. */
+  async function pickMode(next: "cli" | "api") {
+    mode = next;
+    if (next === "cli" || settings?.has_api_key) await saveSettings();
+  }
+
+  let garminForm = $state(false); // connecté : formulaire replié derrière « Changer de compte »
+
+  const SECTIONS = [
+    { id: "connexions", label: "Connexions" },
+    { id: "claude", label: "Claude" },
+    { id: "donnees", label: "Données" },
+    { id: "application", label: "Application" },
+    { id: "diagnostic", label: "Diagnostic" },
+  ] as const;
+  let current = $state<string>("connexions");
+
+  let pinnedUntil = 0; // après un clic, le défilement doux ne doit pas déplacer la sélection
+
+  function goTo(id: string) {
+    current = id;
+    pinnedUntil = Date.now() + 1000;
+    document.getElementById(`set-${id}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+
+  /** Section courante : la dernière dont le titre est passé sous le haut de l'écran ; tout en bas, la dernière. */
+  function track() {
+    if (Date.now() < pinnedUntil) return;
+    const doc = document.documentElement;
+    if (window.innerHeight + window.scrollY >= doc.scrollHeight - 4) {
+      current = SECTIONS[SECTIONS.length - 1].id;
+      return;
+    }
+    let found: string = SECTIONS[0].id;
+    for (const s of SECTIONS) {
+      const el = document.getElementById(`set-${s.id}`);
+      if (el && el.getBoundingClientRect().top <= 120) found = s.id;
+    }
+    current = found;
+  }
+
+  onMount(() => {
+    window.addEventListener("scroll", track, { passive: true });
+    return () => window.removeEventListener("scroll", track);
+  });
+
+  async function saveSettings(e?: Event) {
+    e?.preventDefault();
     saved = false;
     error = null;
     try {
@@ -89,6 +136,7 @@
   }
 </script>
 
+
 <header class="page-head">
   <div>
     <p class="eyebrow">Connexions Garmin et Claude</p>
@@ -97,84 +145,154 @@
 </header>
 <ErrorBanner {error} onpin={load} />
 
-<div class="settings-grid">
+<div class="settings-wrap">
+<div class="settings">
+  <nav class="settings-nav" aria-label="Sections des réglages">
+    {#each SECTIONS as s (s.id)}
+      <button type="button" aria-current={current === s.id ? "true" : undefined} onclick={() => goTo(s.id)}>{s.label}</button>
+    {/each}
+  </nav>
 
-<section class="card stack">
-  <h2>État</h2>
-  {#if status}
-    <ul class="plain">
-      <li>Garmin : <strong>{GARMIN_LABEL[status.garmin]}</strong></li>
-      <li>Claude : <strong>{status.llm_mode === "cli" ? "Claude Code (CLI)" : "Clé API"}</strong></li>
-      <li>Objectif : <strong>{status.next_goal ? `${status.next_goal.distance_km} km (${status.next_goal.type})` : "aucun"}</strong></li>
-    </ul>
-  {:else}
-    <p>Chargement…</p>
-  {/if}
-</section>
+  <div class="settings-body">
+    <section class="set-group" id="set-connexions" aria-labelledby="set-connexions-h">
+      <header>
+        <h2 id="set-connexions-h">Connexions</h2>
+        <p class="meta">Les comptes que CoachCloclo utilise.</p>
+      </header>
+      <div class="set-list">
+        <div class="set-row">
+          <div class="set-label">
+            <h3>Connexion Garmin</h3>
+            {#if status?.garmin === "ok"}
+              <p>Compte Garmin Connect relié. Saisis un autre compte pour en changer.</p>
+            {:else}
+              <p>Connecte ton compte Garmin Connect pour importer tes activités.</p>
+            {/if}
+          </div>
+          <div class="set-ctl">
+            {#if status}
+              <span class="state-pill" class:ok={status.garmin === "ok"} class:ko={status.garmin !== "ok"}>
+                {GARMIN_LABEL[status.garmin]}
+              </span>
+            {/if}
+            {#if status?.garmin === "ok" && !garminForm}
+              <button type="button" onclick={() => (garminForm = true)}>Changer de compte</button>
+            {/if}
+          </div>
+          {#if status && (status.garmin !== "ok" || garminForm)}
+            <div class="set-extra boxed">
+              <GarminLogin onconnected={connected} oncancel={garminForm ? () => (garminForm = false) : undefined} />
+            </div>
+          {/if}
+        </div>
+        {#if wizard}
+          <div class="set-row">
+            <div class="set-label">
+              <h3>Assistant de configuration</h3>
+              <p>Installer ou reconnecter Claude, puis Garmin.</p>
+            </div>
+            <div class="set-ctl"><a class="button" href="#/welcome">Ouvrir l'assistant</a></div>
+          </div>
+        {/if}
+      </div>
+    </section>
 
-<section class="card stack">
-  <h2>Connexion Garmin</h2>
-  <GarminLogin onconnected={connected} />
-</section>
+    <section class="set-group" id="set-claude" aria-labelledby="set-claude-h">
+      <header>
+        <h2 id="set-claude-h">Claude</h2>
+        <p class="meta">Comment le plan est généré, et ce que ça coûte.</p>
+      </header>
+      <div class="set-list">
+        <div class="set-row">
+          <div class="set-label">
+            <h3 id="mode-claude">Mode Claude</h3>
+            <p>
+              {mode === "cli" ? "Claude Code installé sur ce PC, avec ton abonnement." : "Appels directs à l'API Anthropic avec ta clé."}
+              {#if saved}<span class="ok">Enregistré</span>{/if}
+            </p>
+          </div>
+          <div class="set-ctl">
+            <div class="segmented" role="radiogroup" aria-labelledby="mode-claude">
+              <label>
+                <input type="radio" name="llm-mode" value="cli" checked={mode === "cli"} onchange={() => pickMode("cli")} />
+                <span>Claude Code (CLI)</span>
+              </label>
+              <label>
+                <input type="radio" name="llm-mode" value="api" checked={mode === "api"} onchange={() => pickMode("api")} />
+                <span>Clé API Anthropic</span>
+              </label>
+            </div>
+          </div>
+          {#if mode === "api"}
+            <form class="set-extra boxed" onsubmit={saveSettings}>
+              <div class="form-grid">
+                <label>
+                  Clé API {settings?.has_api_key ? "(déjà enregistrée, laisse vide pour la garder)" : ""}
+                  <input type="password" bind:value={apiKey} autocomplete="off" />
+                </label>
+                <label>
+                  Modèle (facultatif)
+                  <input bind:value={model} />
+                </label>
+              </div>
+              <div class="row end"><button class="primary">Enregistrer</button></div>
+            </form>
+          {/if}
+        </div>
+        <ClaudeUsage />
+      </div>
+    </section>
 
-{#if wizard}
-  <section class="card stack">
-    <h2>Assistant de configuration</h2>
-    <p><a href="#/welcome">Assistant de configuration</a> : installer ou reconnecter Claude, puis Garmin.</p>
-  </section>
-{/if}
+    <section class="set-group" id="set-donnees" aria-labelledby="set-donnees-h">
+      <header>
+        <h2 id="set-donnees-h">Données</h2>
+        <p class="meta">Ton historique d'activités et l'endroit où il est stocké.</p>
+      </header>
+      <div class="set-list">
+        <div class="set-row">
+          <div class="set-label">
+            <h3>Historique Garmin</h3>
+            {#if !status}
+              <p>Chargement…</p>
+            {:else if status.history.status === "running"}
+              <p class="busy" role="status">Import en cours… ({status.history.imported} activités)</p>
+            {:else if status.history.status === "error"}
+              <p class="error">Import interrompu : {status.history.error ?? "erreur inconnue"}</p>
+            {:else}
+              <p>{status.history.imported} activités importées</p>
+            {/if}
+          </div>
+          {#if status}
+            <div class="set-ctl">
+              <button type="button" onclick={reimport} disabled={status.history.status === "running" || status.garmin !== "ok"}>
+                <Icon name="sync" size={15} /> Réimporter l'historique
+              </button>
+            </div>
+          {/if}
+        </div>
+        <StorageSettings />
+      </div>
+    </section>
 
-<ThemeSettings />
+    <section class="set-group" id="set-application" aria-labelledby="set-application-h">
+      <header>
+        <h2 id="set-application-h">Application</h2>
+        <p class="meta">Apparence, mises à jour et accès depuis ton téléphone.</p>
+      </header>
+      <div class="set-list">
+        <ThemeSettings />
+        <UpdateSettings />
+        <LanSettings />
+      </div>
+    </section>
 
-<UpdateSettings />
-
-<LanSettings />
-
-<StorageSettings />
-
-<section class="card stack">
-  <h2>Historique Garmin</h2>
-  {#if status}
-    {#if status.history.status === "running"}
-      <p class="busy" role="status">Import en cours… ({status.history.imported} activités)</p>
-    {:else if status.history.status === "error"}
-      <p class="error">Import interrompu : {status.history.error ?? "erreur inconnue"}</p>
-    {:else}
-      <p>{status.history.imported} activités importées</p>
-    {/if}
-    <div class="row">
-      <button type="button" onclick={reimport} disabled={status.history.status === "running" || status.garmin !== "ok"}>
-        <Icon name="sync" size={15} /> Réimporter l'historique
-      </button>
-    </div>
-  {:else}
-    <p>Chargement…</p>
-  {/if}
-</section>
-
-<section class="card stack">
-  <h2>Mode Claude</h2>
-  <form class="stack" onsubmit={saveSettings}>
-    <label class="inline"><input type="radio" bind:group={mode} value="cli" /> Claude Code (CLI)</label>
-    <label class="inline"><input type="radio" bind:group={mode} value="api" /> Clé API Anthropic</label>
-    {#if mode === "api"}
-      <label>
-        Clé API {settings?.has_api_key ? "(déjà enregistrée, laisse vide pour la garder)" : ""}
-        <input type="password" bind:value={apiKey} autocomplete="off" />
-      </label>
-      <label>
-        Modèle (facultatif)
-        <input bind:value={model} />
-      </label>
-    {/if}
-    <div class="row">
-      <button class="primary">Enregistrer</button>
-      {#if saved}<span class="ok">Enregistré</span>{/if}
-    </div>
-  </form>
-</section>
-
-<ClaudeUsage />
-
-<DiagnosticSettings />
+    <section class="set-group" id="set-diagnostic" aria-labelledby="set-diagnostic-h">
+      <header>
+        <h2 id="set-diagnostic-h">Diagnostic</h2>
+        <p class="meta">Enregistre le détail des échanges pour comprendre un échec. Les mots de passe et clés sont masqués.</p>
+      </header>
+      <DiagnosticSettings />
+    </section>
+  </div>
+</div>
 </div>

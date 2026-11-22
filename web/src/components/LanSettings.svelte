@@ -99,12 +99,23 @@
 </script>
 
 {#if view}
-  <section class="card stack">
-    <h2>Accès depuis ton téléphone</h2>
-    <label class="inline">
+  <div class="set-row">
+    <div class="set-label">
+      <label for="lan-switch">Accès depuis ton téléphone</label>
+      {#if !view.local}
+        <p>Modifiable seulement depuis l'ordinateur</p>
+      {:else if view.enabled}
+        <p>Activé : ouvre une de ces adresses sur ton téléphone, connecté au même Wi-Fi.</p>
+      {:else}
+        <p>Ouvre CoachCloclo sur ton téléphone via le réseau local, protégé par un PIN.</p>
+      {/if}
+    </div>
+    <div class="set-ctl">
       <input
+        id="lan-switch"
         type="checkbox"
         role="switch"
+        class="switch"
         checked={view.enabled}
         disabled={!view.local || busy}
         onclick={(e) => {
@@ -112,51 +123,49 @@
           toggle();
         }}
       />
-      {view.enabled ? "Activé" : "Désactivé"}
-    </label>
-    {#if !view.local}
-      <p>Modifiable seulement depuis l'ordinateur</p>
-    {/if}
-
+    </div>
     {#if view.local && panel !== "none"}
-      <form class="stack" onsubmit={submit}>
+      <form class="set-extra boxed" onsubmit={submit}>
         {#if panel === "enable"}
           <p class="warning">Windows va te demander l'autorisation : coche <em>Réseaux privés</em> puis <em>Autoriser</em></p>
         {/if}
         {#if panel === "pin" || !view.has_pin}
-          <label>
-            PIN (4 à 12 chiffres)
-            <input type="password" inputmode="numeric" autocomplete="new-password" bind:value={pin} />
-          </label>
-          <label>
-            Confirmer le PIN
-            <input type="password" inputmode="numeric" autocomplete="new-password" bind:value={confirm} />
-          </label>
+          <div class="form-grid">
+            <label>
+              PIN (4 à 12 chiffres)
+              <input type="password" inputmode="numeric" autocomplete="new-password" bind:value={pin} />
+            </label>
+            <label>
+              Confirmer le PIN
+              <input type="password" inputmode="numeric" autocomplete="new-password" bind:value={confirm} />
+            </label>
+          </div>
         {/if}
         {#if error}<p class="error" role="alert">{error}</p>{/if}
-        <div class="row">
+        <div class="row end">
+          <button type="button" class="ghost" onclick={() => ((panel = "none"), (error = ""))}>Annuler</button>
           <button class="primary" disabled={busy}>{panel === "pin" ? "Enregistrer le PIN" : "Activer"}</button>
-          <button type="button" onclick={() => ((panel = "none"), (error = ""))}>Annuler</button>
         </div>
       </form>
     {:else if error}
-      <p class="error" role="alert">{error}</p>
+      <p class="set-extra error" role="alert">{error}</p>
     {/if}
-
     {#if view.enabled}
-      <ul class="plain">
-        {#each view.addresses as address}
-          <li>
-            <code>{address}</code>
-            {#if view.local}<button type="button" onclick={() => copy(address)}>Copier</button>{/if}
-            {#if copied === address}<span class="ok">Copié</span>{/if}
-          </li>
-        {/each}
-      </ul>
-      {#if view.local && panel === "none"}
-        <div class="row"><button type="button" onclick={openPin}>Changer le PIN</button></div>
-      {/if}
-      <p>Le téléphone n'arrive pas à se connecter ? Vérifie le pare-feu Windows</p>
+      <div class="set-extra">
+        <ul class="plain">
+          {#each view.addresses as address}
+            <li>
+              <code>{address}</code>
+              {#if view.local}<button type="button" class="small" onclick={() => copy(address)}>Copier</button>{/if}
+              {#if copied === address}<span class="ok">Copié</span>{/if}
+            </li>
+          {/each}
+        </ul>
+        {#if view.local && panel === "none"}
+          <div class="row"><button type="button" class="small" onclick={openPin}>Changer le PIN</button></div>
+        {/if}
+        <p class="meta">Le téléphone n'arrive pas à se connecter ? Vérifie le pare-feu Windows</p>
+      </div>
     {/if}
-  </section>
+  </div>
 {/if}

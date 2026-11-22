@@ -43,22 +43,29 @@
   });
 </script>
 
-<section class="card stack">
-  <h2>Consommation Claude</h2>
-  {#if failed}
-    <p class="empty">Consommation indisponible pour le moment</p>
-  {:else if view}
-    {#if view.recent.length === 0}
-      <p class="empty">Aucune génération enregistrée pour l'instant</p>
-    {:else}
-      <p>
-        Ce mois-ci : {plural(view.month.generations, "génération")} · {plural(view.month.adjustments, "ajustement")}
-        · {eur(view.month.cost_eur)}
-      </p>
-      {#if view.avg_generation_eur !== null}
-        <p>Coût moyen d'une génération de plan : {eur(view.avg_generation_eur)}</p>
+<div class="set-row">
+  <div class="set-label">
+    <h3>Consommation Claude</h3>
+    {#if failed}
+      <p class="empty">Consommation indisponible pour le moment</p>
+    {:else if view}
+      {#if view.recent.length === 0}
+        <p class="empty">Aucune génération enregistrée pour l'instant</p>
+      {:else}
+        <p>
+          Ce mois-ci : {plural(view.month.generations, "génération")} · {plural(view.month.adjustments, "ajustement")}
+          · {eur(view.month.cost_eur)}
+        </p>
+        {#if view.avg_generation_eur !== null}
+          <p>Coût moyen d'une génération de plan : {eur(view.avg_generation_eur)}</p>
+        {/if}
       {/if}
-      <h3>Dernières actions</h3>
+      <p class="meta">Estimation équivalent API, convertie à ≈ 0,92 €/$. En abonnement, ce n'est pas ce que tu paies.</p>
+    {/if}
+  </div>
+  {#if view && view.recent.length > 0}
+    <details class="set-extra usage">
+      <summary>Dernières actions</summary>
       <ul class="usage-list">
         {#each view.recent as r (r.created_at + r.kind + r.attempts)}
           <li>
@@ -75,16 +82,14 @@
           </li>
         {/each}
       </ul>
-    {/if}
-    <p class="meta">Estimation équivalent API, convertie à ≈ 0,92 €/$. En abonnement, ce n'est pas ce que tu paies.</p>
+    </details>
   {/if}
-</section>
+</div>
 
 <style>
-  .usage-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+  .usage > summary { font-weight: 600; color: var(--text-2); }
+  .usage-list { list-style: none; margin: 10px 0 0; padding: 0; display: grid; gap: 6px; }
   .usage-list summary { cursor: pointer; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; }
   .usage-list details p { margin: 4px 0 0; }
   .cost { margin-left: auto; font-variant-numeric: tabular-nums; }
-  h3 { margin: 0; font-size: 15px; }
-  p { margin: 0; }
 </style>

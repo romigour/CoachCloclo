@@ -40,7 +40,8 @@ synchro, sans régénération.
 Exceptions (pas de recalcul automatique) :
 - les workouts déjà envoyés sur la montre gardent leurs anciens bpm jusqu'au prochain envoi ;
 - les stratégies de course figent leur base (dont les zones FC) à la création : il faut cliquer
-  « rafraîchir la base » pour qu'elles prennent les nouvelles zones.
+  « Actualiser » (page de la course, à côté de « Données Garmin du … ») pour qu'elles prennent
+  les nouvelles zones.
 
 ## Non-objectifs
 

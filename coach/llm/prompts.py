@@ -264,6 +264,13 @@ def _goal_id(goal: Goal) -> int:
     return goal.id if goal.id is not None else NEW_GOAL_ID
 
 
+def _notes_text(goal: Goal) -> str:
+    """« Précisions de l'athlète : « … ». » précédé d'une espace, sur une ligne ; vide sans précisions."""
+    if not goal.notes:
+        return ""
+    return f" Précisions de l'athlète : « {' '.join(goal.notes.splitlines())} »."
+
+
 def _single_goal_text(goal: Goal, *, generation: bool = False, plan_start: dt.date | None = None) -> str:
     """Texte d'un cycle à un seul objectif Principal (inchangé depuis l'objectif unique).
 
@@ -281,7 +288,7 @@ def _single_goal_text(goal: Goal, *, generation: bool = False, plan_start: dt.da
             text += f" Estimation précédente : {fmt_duration(goal.target_time_s)}."
         else:
             text += f" Temps visé : {fmt_duration(goal.target_time_s)}."
-    return text
+    return text + _notes_text(goal)
 
 
 def _is_single(goals: list[Goal], horizon: list[Goal], recent: Sequence[Goal] = ()) -> bool:
@@ -295,7 +302,7 @@ def _is_single(goals: list[Goal], horizon: list[Goal], recent: Sequence[Goal] = 
     )
 
 
-def _goal_line(goal: Goal, *, generation: bool = False, with_time: bool = True) -> str:
+def _goal_line(goal: Goal, *, generation: bool = False, with_time: bool = True, with_notes: bool = True) -> str:
     """« - 2027-03-28 : trail, 20 km, 800 m de D+, priorité Secondaire, temps visé 2 h 10 »."""
     text = (
         f"- {goal.race_date.isoformat()} : {goal.type}, {goal.distance_km:g} km, {goal.d_plus_m} m de D+, "
@@ -304,6 +311,8 @@ def _goal_line(goal: Goal, *, generation: bool = False, with_time: bool = True) 
     if with_time and goal.target_time_s is not None:
         label = "estimation précédente" if generation and goal.target_source == "claude" else "temps visé"
         text += f", {label} {fmt_duration(goal.target_time_s)}"
+    if with_notes and goal.notes:
+        text += "." + _notes_text(goal)
     return text
 
 
@@ -374,7 +383,7 @@ def _horizon_line(goal: Goal, prox: dict) -> str:
     """Ligne d'un objectif de l'horizon, avec les autres courses de son bloc."""
     others = [o for o in prox[goal_key(goal)].block.goals if goal_key(o) != goal_key(goal)]
     suffix = " (bloc avec " + " + ".join(f"{goal_label(o)} ({o.race_date:%d/%m})" for o in others) + ")"
-    return _goal_line(goal, with_time=False) + (suffix if others else "")
+    return _goal_line(goal, with_time=False, with_notes=False) + (suffix if others else "")
 
 
 def _cycle_rules(goals: list[Goal], horizon: list[Goal], recent: Sequence[Goal] = ()) -> list[str]:

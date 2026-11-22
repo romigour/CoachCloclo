@@ -768,3 +768,37 @@ def test_adjustment_prompt_includes_long_history():
 def test_fmt_time():
     assert _fmt_time(2535) == "42:15"
     assert _fmt_time(5712) == "1:35:12"
+
+
+# --- précisions de l'athlète ---
+
+
+def test_single_goal_text_includes_notes():
+    from coach.llm.prompts import _goals_text
+
+    text = _goals_text([make_goal(target_time_s=6600, target_source="user", notes="Neige\npuis escaliers")], [])
+    assert text.endswith("Temps visé : 1 h 50. Précisions de l'athlète : « Neige puis escaliers ».")
+
+
+def test_goal_line_includes_notes():
+    from coach.llm.prompts import _goal_line
+
+    line = _goal_line(make_goal(priority="secondaire", notes="PR visé\r\nsur route"))
+    assert line.endswith(", priorité Secondaire. Précisions de l'athlète : « PR visé sur route ».")
+    assert "\n" not in line and "\r" not in line
+
+
+def test_cycle_goals_notes_in_generation_and_adjustment():
+    goals = [make_goal(id=1, notes="Escaliers"), make_goal(id=2, priority="secondaire", race_date=date(2026, 12, 20))]
+    for p in (_gen(goals), _adj_prompt(goals)):
+        assert p.count("Précisions de l'athlète") == 1 and "« Escaliers »" in p
+
+
+def test_horizon_line_has_no_notes():
+    horizon = [make_goal(id=2, race_date=date(2027, 6, 1), notes="Neige")]
+    assert "Précisions" not in _gen([make_goal(id=1)], horizon)
+
+
+def test_no_notes_prompt_unchanged():
+    goal = make_goal()
+    assert "Précisions" not in _gen([goal]) and "Précisions" not in _adj_prompt([goal])

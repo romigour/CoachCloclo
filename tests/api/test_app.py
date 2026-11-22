@@ -328,8 +328,20 @@ def test_patch_cycle_settings_asks_adjustment(make_client):
     assert r.status_code == 200
     body = r.json()
     assert body["cycle"]["include_bike"] is True and isinstance(body["proposal_id"], int)
+    assert body["regenerated"] is False
     assert client.get("/api/proposals/pending").json()["id"] == body["proposal_id"]
     assert client.get("/api/status").json()["cycle"]["include_bike"] is True
+
+
+def test_patch_cycle_sessions_per_week_regenerates(make_client):
+    client = make_client(llm=FakeLLMProvider([valid_plan_json(14, 3), valid_plan_json(14, 4)]))
+    _accepted_goal(client)
+    r = client.patch("/api/cycle", json={"sessions_per_week": 4})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["regenerated"] is True and body["proposal_id"] is None
+    assert body["cycle"]["sessions_per_week"] == 4 and body["cycle"]["plan_accepted"] is False
+    assert client.patch("/api/cycle", json={"sessions_per_week": 8}).status_code == 422
 
 
 def test_patch_cycle_without_plan_is_422(make_client):

@@ -244,6 +244,51 @@ def test_update_plan_settings_requires_accepted_plan(repo, monday_garmin):
     assert llm.calls == []
 
 
+def _plan_4() -> str:
+    """Plan valide à 4 séances : semaine 13 = 3 + 1 exportée, semaine 14 = 2 + 1 exportée + la course."""
+    return _plan_from(1, {**{w: 4 for w in range(1, 13)}, 13: 3, 14: 2})
+
+
+def test_update_plan_settings_sessions_per_week_regenerates(repo, monday_garmin):
+    _accepted_goal(repo, monday_garmin)
+    with repo.transaction() as db:
+        db.add(Proposal(analysis="x", changes_json="[]"))  # proposition en attente
+    llm = FakeLLMProvider([_plan_4()])
+    cycle, pid = update_plan_settings(
+        repo, monday_garmin, llm, PlanSettingsUpdate(sessions_per_week=4, include_bike=True)
+    )
+    assert pid is None
+    c = repo.active_cycle()
+    assert (c.sessions_per_week, c.include_bike) == (4, True)
+    assert not c.plan_accepted and not c.needs_generation
+    assert cycle.sessions_per_week == 4
+    assert "au plus 4 séances" in llm.calls[0]  # prompt de génération, pas d'ajustement
+    assert all(status == "stale" for _, status in _proposals(repo))
+    assert len([s for s in repo.sessions(c.id) if s.week_index == 1]) == 4
+
+
+def test_update_plan_settings_sessions_per_week_keeps_settings_when_claude_fails(repo, monday_garmin):
+    _accepted_goal(repo, monday_garmin)
+    before = [(s.id, s.status) for s in repo.sessions(_cid(repo))]
+    with pytest.raises(LLMInvalidResponse):
+        update_plan_settings(
+            repo, monday_garmin, FakeLLMProvider(["{}", "{}"]), PlanSettingsUpdate(sessions_per_week=4)
+        )
+    c = repo.active_cycle()
+    assert c.sessions_per_week == 4 and c.needs_generation
+    assert [(s.id, s.status) for s in repo.sessions(c.id)] == before
+
+
+def test_update_plan_settings_sessions_per_week_rejections(repo, monday_garmin):
+    _accepted_goal(repo, monday_garmin, available_days=["mardi", "jeudi", "samedi"])
+    llm = FakeLLMProvider([])
+    with pytest.raises(GoalError, match="au moins 4 jours possibles"):
+        update_plan_settings(repo, monday_garmin, llm, PlanSettingsUpdate(sessions_per_week=4))
+    with pytest.raises(GoalError, match="Aucune modification"):
+        update_plan_settings(repo, monday_garmin, llm, PlanSettingsUpdate(sessions_per_week=3))
+    assert llm.calls == [] and repo.active_cycle().sessions_per_week == 3
+
+
 def test_generate_plan_makes_pending_stale(repo, fake_garmin):
     _goal(repo, fake_garmin)
     old = repo.add(Proposal(analysis="avant", changes_json="[]"))

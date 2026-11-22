@@ -725,7 +725,7 @@ def create_app(
     @api.patch("/cycle")
     def patch_cycle(body: PlanSettingsUpdate, repo: RepoDep, garmin: GarminDep, llm: LLMDep):
         cycle, proposal_id = update_plan_settings(repo, garmin, llm, body)
-        return {"cycle": _cycle_dict(cycle), "proposal_id": proposal_id}
+        return {"cycle": _cycle_dict(cycle), "proposal_id": proposal_id, "regenerated": proposal_id is None}
 
     @api.post("/cycle/next")
     def post_next_cycle(repo: RepoDep, garmin: GarminDep, body: NextCycleInput | None = None):

@@ -3,7 +3,7 @@
 import json
 from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlmodel import select
 
 from coach.analysis.gpx import GpxSummary, summary_to_text
@@ -149,14 +149,34 @@ class PlanSettingsUpdate(BaseModel):
     available_days: list[Weekday] | None = None
     long_run_day: Weekday | Literal[""] | None = None  # "" : plus de jour imposé
     include_bike: bool | None = None
+    sessions_per_week: int | None = Field(None, ge=2, le=7)
+
+
+def _regenerate_with(repo: Repo, garmin: GarminPort, llm: LLMProvider, cycle_id: int, update: dict) -> Cycle:
+    """Enregistre les réglages (plan à recalculer), puis régénère la suite du plan.
+
+    Si Claude échoue, les réglages restent enregistrés et le plan reste à recalculer.
+    """
+    with repo.transaction() as db:
+        c = db.get(Cycle, cycle_id)
+        if c is None or c.status != "active":
+            raise GoalError(_NO_PLAN)
+        for key, value in update.items():
+            setattr(c, key, value)
+        c.needs_generation = True
+        db.add(c)
+    generate_plan(repo, garmin, llm)
+    return _active_cycle(repo)
 
 
 def update_plan_settings(
     repo: Repo, garmin: GarminPort, llm: LLMProvider, data: PlanSettingsUpdate
-) -> tuple[Cycle, int]:
-    """Modifie les disponibilités du cycle actif et demande l'ajustement à Claude.
+) -> tuple[Cycle, int | None]:
+    """Modifie les réglages du cycle actif.
 
-    Rien n'est enregistré si Claude échoue. Renvoie le cycle enregistré et l'id de la proposition.
+    Nombre de séances par semaine changé : la suite du plan est régénérée dès la semaine courante (plan à
+    valider de nouveau) ; renvoie le cycle et `None`. Sinon, Claude propose un ajustement : rien n'est
+    enregistré s'il échoue ; renvoie le cycle enregistré et l'id de la proposition.
     """
     from coach.services.adjust import ask_adjustment  # import tardif : cycle via race_strategy
 
@@ -183,9 +203,13 @@ def update_plan_settings(
     if data.include_bike is not None and data.include_bike != cycle.include_bike:
         update["include_bike"] = data.include_bike
         notes.append("vélo autorisé" if data.include_bike else "plus de vélo")
-    check_availability(available_days, long_run_day, cycle.sessions_per_week)
+    if data.sessions_per_week is not None and data.sessions_per_week != cycle.sessions_per_week:
+        update["sessions_per_week"] = data.sessions_per_week
+    check_availability(available_days, long_run_day, update.get("sessions_per_week", cycle.sessions_per_week))
     if not update:
         raise GoalError("Aucune modification")
+    if "sessions_per_week" in update:
+        return _regenerate_with(repo, garmin, llm, cycle.id, update), None
     edited = cycle.model_copy(update=update)
 
     _, zones = refresh_snapshot(repo, garmin)

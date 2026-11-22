@@ -206,6 +206,32 @@ test("the plan settings button depends on the cycle and opens its dialog", async
   expect(patch[0]).toBe("/api/cycle");
 });
 
+test("after a regeneration from the plan settings, the goals page reloads and shows the draft", async () => {
+  location.hash = "#/goal";
+  let regenerated = false;
+  const cycle = mkCycle({ plan_accepted: true });
+  const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+    if (init?.method === "PATCH") {
+      regenerated = true;
+      const body = { cycle: { ...cycle, plan_accepted: false, sessions_per_week: 5 }, proposal_id: null, regenerated: true };
+      return new Response(JSON.stringify(body), { status: 200 });
+    }
+    const c = regenerated ? { ...cycle, plan_accepted: false, sessions_per_week: 5 } : cycle;
+    return new Response(JSON.stringify(mkPlan(mkGoal(), c)), { status: 200 });
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  const onchanged = vi.fn();
+  render(Goal, { onchanged });
+  await fireEvent.click(await screen.findByRole("button", { name: "Réglages du plan" }));
+  const dialog = within(screen.getByRole("dialog", { name: "Réglages du plan" }));
+  await fireEvent.click(dialog.getByRole("radio", { name: "5" }));
+  await fireEvent.click(dialog.getByRole("button", { name: "Enregistrer" }));
+  expect(await screen.findByRole("button", { name: "Valider le plan" })).toBeVisible();
+  expect(location.hash).toBe("#/goal");
+  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(onchanged).toHaveBeenCalled();
+});
+
 // --- plusieurs objectifs -------------------------------------------------------------------
 
 const json = (b: unknown, status = 200) => new Response(JSON.stringify(b), { status });

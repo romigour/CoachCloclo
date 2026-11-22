@@ -205,10 +205,25 @@
     }
   }
 
-  function settingsSaved() {
+  /** Réglages enregistrés : proposition à relire, ou suite du plan régénérée (`null`, brouillon à valider). */
+  async function settingsSaved(proposalId: number | null) {
     editingSettings = false;
     onchanged?.();
-    location.hash = "#/proposal";
+    if (proposalId != null) {
+      location.hash = "#/proposal";
+      return;
+    }
+    try {
+      await load();
+    } catch (err) {
+      error = err;
+    }
+  }
+
+  /** Fermeture sans enregistrer : relecture (après un échec de régénération, le plan est à recalculer). */
+  function settingsClosed() {
+    editingSettings = false;
+    load().catch(() => {});
   }
 
   /** « 800 m D+ · 18 avril 2027 » (D+ seulement pour un trail). */
@@ -384,7 +399,7 @@
 {/if}
 
 {#if editingSettings && cycle}
-  <PlanSettingsDialog {cycle} onclose={() => (editingSettings = false)} onsaved={settingsSaved} />
+  <PlanSettingsDialog {cycle} onclose={settingsClosed} onsaved={settingsSaved} />
 {/if}
 
 <style>

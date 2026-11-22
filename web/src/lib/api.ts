@@ -95,8 +95,14 @@ export type Cycle = {
   adjust_due: boolean;
 };
 
-/** Corps de PATCH /api/cycle : seuls les champs modifiés ; `long_run_day: ""` retire le jour imposé. */
-export type PlanSettingsInput = { available_days?: string[]; long_run_day?: string; include_bike?: boolean };
+/** Corps de PATCH /api/cycle : seuls les champs modifiés ; `long_run_day: ""` retire le jour imposé.
+ * Changer `sessions_per_week` régénère la suite du plan (réponse : `proposal_id: null`, `regenerated: true`). */
+export type PlanSettingsInput = {
+  available_days?: string[];
+  long_run_day?: string;
+  include_bike?: boolean;
+  sessions_per_week?: number;
+};
 
 /** Corps de POST /api/cycle/next : réglages du plan et nombre de séances par semaine (2 à 7). */
 export type NextCycleInput = PlanSettingsInput & { sessions_per_week?: number };
@@ -594,7 +600,8 @@ const rawApi = {
   updateGoal: (goalId: number, body: GoalUpdate) => patch<GoalChange>(`/goals/${goalId}`, body),
   /** Retire (archive) un objectif ; même effet sur le plan qu'un ajout. */
   removeGoal: (goalId: number) => del<PlanChange>(`/goals/${goalId}`),
-  updatePlanSettings: (body: PlanSettingsInput) => patch<{ cycle: Cycle; proposal_id: number }>("/cycle", body),
+  updatePlanSettings: (body: PlanSettingsInput) =>
+    patch<{ cycle: Cycle; proposal_id: number | null; regenerated: boolean }>("/cycle", body),
   /** Crée le cycle suivant (à générer) ; `body` surcharge les réglages repris du dernier cycle. */
   nextCycle: (body?: NextCycleInput) => post<Cycle>("/cycle/next", body),
   generate: () => post<{ summary: string; weeks: number }>("/cycle/generate"),

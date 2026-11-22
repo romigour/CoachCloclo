@@ -76,3 +76,35 @@ test("Annuler ferme sans rien envoyer", async () => {
   expect(onclose).toHaveBeenCalled();
   expect(f).not.toHaveBeenCalled();
 });
+
+const WARNING =
+  "Changer le nombre de séances recalcule la suite du plan à partir de cette semaine ; tu devras le valider à nouveau.";
+
+test("changer le nombre de séances avertit, l'envoie et passe null à onsaved après régénération", async () => {
+  const f = mock(200, { cycle: { ...cycle, sessions_per_week: 5 }, proposal_id: null, regenerated: true });
+  const onsaved = vi.fn();
+  open({ onsaved });
+  expect(screen.getByRole("radio", { name: "4" })).toBeChecked();
+  expect(screen.queryByText(WARNING)).toBeNull();
+  await fireEvent.click(screen.getByRole("radio", { name: "5" }));
+  expect(screen.getByText(WARNING)).toBeVisible();
+  await fireEvent.click(screen.getByRole("button", { name: "Enregistrer" }));
+  await waitFor(() => expect(onsaved).toHaveBeenCalledWith(null));
+  expect(JSON.parse(patchCall(f)[1].body as string)).toEqual({ sessions_per_week: 5 });
+});
+
+test("revenir au nombre de départ retire l'avertissement et désactive Enregistrer", async () => {
+  open();
+  await fireEvent.click(screen.getByRole("radio", { name: "5" }));
+  await fireEvent.click(screen.getByRole("radio", { name: "4" }));
+  expect(screen.queryByText(WARNING)).toBeNull();
+  expect(screen.getByRole("button", { name: "Enregistrer" })).toBeDisabled();
+});
+
+test("le nombre choisi fixe le minimum de jours", async () => {
+  open();
+  for (const d of ["Lundi", "Mardi"]) await fireEvent.click(screen.getByRole("checkbox", { name: d })); // 5 jours
+  await fireEvent.click(screen.getByRole("radio", { name: "6" }));
+  expect(screen.getByText("Coche au moins 6 jours")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Enregistrer" })).toBeDisabled();
+});

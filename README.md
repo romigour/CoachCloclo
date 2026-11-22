@@ -54,7 +54,7 @@ Python (>= 3.12), bibliothèque `garminconnect`, CLI `claude` installé, connexi
 
 ## Mode LAN et PIN
 
-Avec la version installée Windows, le bloc « Accès depuis ton téléphone » des Réglages active l'écoute sur tout le réseau local et permet de définir le PIN (4 à 12 chiffres). Au premier passage, le pare-feu Windows demande une autorisation : coche « Réseaux privés ». Depuis le téléphone, ouvre l'adresse affichée dans ce bloc des Réglages (`http://<ip>:<port>`). Sans le mode LAN, seule ta machine peut accéder à l'app.
+Avec la version installée Windows, le réglage « Accès depuis ton téléphone » (Réglages → Application) active l'écoute sur tout le réseau local et permet de définir le PIN (4 à 12 chiffres). Au premier passage, le pare-feu Windows demande une autorisation : coche « Réseaux privés ». Depuis le téléphone, ouvre l'adresse affichée sous ce réglage (`http://<ip>:<port>`). Sans le mode LAN, seule ta machine peut accéder à l'app.
 
 Cet interrupteur n'existe que dans la version installée Windows : sous `coach start`, le mode LAN s'active avec `coach start --lan` (le PIN se définit à l'invite au premier lancement).
 
@@ -83,7 +83,7 @@ Option pour retrouver les mêmes données sur plusieurs PC (maison, travail). El
 1. Crée un compte sur turso.tech.
 2. Crée une base, dans une région proche de toi.
 3. Crée un jeton d'accès limité à cette seule base.
-4. Dans CoachCloclo, ouvre Réglages → Stockage des données, colle l'URL `libsql://…` et le jeton, puis active le stockage cloud.
+4. Dans CoachCloclo, ouvre Réglages → Données → Stockage des données, colle l'URL `libsql://…` et le jeton, puis active le stockage cloud.
 5. Sur le 2ᵉ PC, fais pareil avec la même URL et le même jeton : l'app détecte que la base contient déjà des données et te demande de confirmer. Elle adopte alors le cloud : les données de ce 2ᵉ PC ne sont pas envoyées dans le cloud, mais son ancienne base est gardée dans le dossier de données sous le nom `coach.db.bak`.
    Si des séances de ce PC sont déjà sur ta montre, la demande de confirmation l'indique : elles n'en seront pas retirées. Retire d'abord ce plan de la montre si tu n'en veux plus.
 

@@ -75,6 +75,8 @@ export type Goal = {
   target_time_s: number | null;
   target_source: "user" | "claude" | null;
   gpx_summary: Record<string, unknown> | null;
+  /** Précisions de l'athlète, transmises à Claude ; absentes des anciennes réponses. */
+  notes?: string | null;
   /** Bloc ou courses rapprochées (« Bloc avec … ») ; calculé par le serveur, absent en lecture seule. */
   proximity_label?: string | null;
 };
@@ -471,6 +473,7 @@ export type GoalInput = {
   long_run_day?: string;
   include_bike?: boolean;
   priority?: Priority;
+  notes?: string;
 };
 
 /** Effet d'un changement d'objectif sur le plan : proposition d'ajustement à relire, ou plan à régénérer. */
@@ -484,7 +487,7 @@ export type PlanChange = {
 };
 export type GoalChange = PlanChange & { goal: Goal };
 /** Corps de PATCH /api/goals/{id} : seuls les champs modifiés. */
-export type GoalUpdate = { race_date?: string; target_time?: string; priority?: Priority };
+export type GoalUpdate = { race_date?: string; target_time?: string; priority?: Priority; notes?: string };
 
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
   const headers: Record<string, string> = {};
@@ -595,6 +598,7 @@ const rawApi = {
     if (g.long_run_day) f.set("long_run_day", g.long_run_day);
     if (g.include_bike) f.set("include_bike", "true");
     if (g.priority) f.set("priority", g.priority);
+    if (g.notes) f.set("notes", g.notes);
     return post<GoalChange>("/goals", f);
   },
   updateGoal: (goalId: number, body: GoalUpdate) => patch<GoalChange>(`/goals/${goalId}`, body),

@@ -6,6 +6,7 @@
   import { parseTargetTime } from "../lib/race";
   import { daysUntil } from "../lib/week";
   import Icon from "./Icon.svelte";
+  import NotesField from "./NotesField.svelte";
   import AvailabilityFields, { availabilityValid } from "./AvailabilityFields.svelte";
 
   let {
@@ -44,6 +45,7 @@
   let gpx = $state<File | null>(null);
   let targetMode = $state<"claude" | "user">("claude");
   let targetText = $state("");
+  let notes = $state("");
   let targetError = $state("");
 
   const withSettings = $derived(cycle === null);
@@ -68,6 +70,7 @@
       target_time: ownTime ? targetText.trim() : undefined,
       gpx,
       priority,
+      notes: notes.trim() || undefined,
     };
     if (withSettings) {
       Object.assign(input, {
@@ -177,6 +180,8 @@
       </label>
     {/if}
   </fieldset>
+
+  <NotesField bind:value={notes} />
 
   <label class="drop">
     <Icon name="upload" size={22} />

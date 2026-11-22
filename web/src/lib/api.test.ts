@@ -103,3 +103,14 @@ test("cycleGoal : premier Principal du cycle, même si un Plaisir le lendemain p
   expect(cycleGoal({ cycle, goals: [secondaire, plaisir] })?.id).toBe(2);
   expect(cycleGoal({ cycle: null, goals: [principal] })).toBeNull();
 });
+
+test("createGoal envoie les précisions seulement si elles sont renseignées", async () => {
+  const f = vi.fn(async () => new Response(JSON.stringify({}), { status: 200 }));
+  vi.stubGlobal("fetch", f);
+  const base = { type: "route" as const, distance_km: 10, d_plus_m: 0, race_date: "2027-03-01" };
+  await api.createGoal({ ...base, notes: "Neige" });
+  await api.createGoal({ ...base, notes: "" });
+  await api.createGoal(base);
+  const bodies = (f.mock.calls as unknown as [string, RequestInit][]).map(([, i]) => i.body as FormData);
+  expect(bodies.map((b) => b.get("notes"))).toEqual(["Neige", null, null]);
+});

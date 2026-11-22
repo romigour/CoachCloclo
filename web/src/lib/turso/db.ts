@@ -59,7 +59,7 @@ export const REQUIRED_COLUMNS: Record<string, string[]> = {
   ],
   goal: [
     "id", "type", "distance_km", "d_plus_m", "race_date", "priority", "status",
-    "target_time_s", "target_source", "gpx_summary_json",
+    "target_time_s", "target_source", "notes", "gpx_summary_json",
   ],
   session: [
     "id", "cycle_id", "week_index", "order", "type", "sport", "title", "description",

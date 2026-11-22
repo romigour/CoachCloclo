@@ -1,5 +1,8 @@
 import type { Goal, Plan } from "./api";
 
+/** Longueur maximale des précisions d'un objectif (`NOTES_MAX` côté serveur). */
+export const NOTES_MAX = 280;
+
 /** Libellé court d'un objectif, comme `goal_label` côté serveur : « Trail de 20 km », « Course sur route de 21,1 km ». */
 export function goalLabel(g: Pick<Goal, "type" | "distance_km">): string {
   const distance = String(g.distance_km).replace(".", ",");

@@ -346,6 +346,7 @@
                 <span class="meta">{details(g)}</span>
                 {#if g.proximity_label}<span class="meta proximity">{g.proximity_label}</span>{/if}
                 {#if goalTimeLabel(g)}<span class="meta">{goalTimeLabel(g)}</span>{/if}
+                {#if g.notes}<span class="meta notes">{g.notes}</span>{/if}
               </div>
               <div class="row">
                 <button type="button" onclick={() => (editing = g)} disabled={!!busy}>Modifier</button>
@@ -417,5 +418,7 @@
     padding: 12px 0; border-top: 1px solid var(--divider);
   }
   .goal:first-child { border-top: none; }
+  /* précisions : retours à la ligne conservés, texte long replié */
+  .notes { white-space: pre-line; overflow-wrap: anywhere; }
   summary { cursor: pointer; font-weight: 600; }
 </style>

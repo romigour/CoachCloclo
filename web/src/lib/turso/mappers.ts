@@ -17,6 +17,7 @@ export function goalDict(r: Row): Goal {
     status: r.status as Goal["status"],
     target_time_s: num(r.target_time_s),
     target_source: str(r.target_source) as Goal["target_source"],
+    notes: str(r.notes),
     gpx_summary: r.gpx_summary_json ? JSON.parse(String(r.gpx_summary_json)) : null,
   };
 }

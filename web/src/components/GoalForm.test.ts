@@ -51,3 +51,19 @@ test("cancel is offered when adding to an existing list", async () => {
   await fireEvent.click(screen.getByRole("button", { name: "Annuler" }));
   expect(oncancel).toHaveBeenCalled();
 });
+
+test("notes field has a 280 limit and is submitted trimmed", async () => {
+  const onsubmit = vi.fn();
+  render(GoalForm, { cycle, firstGoal: false, today: "2027-01-10", onsubmit });
+  const notes = screen.getByLabelText("Précisions");
+  expect(notes).toHaveAttribute("maxlength", "280");
+  expect(notes).toHaveAttribute("placeholder", "Trail enneigé, 400 marches à la fin, je vise un record");
+  expect(screen.getByText("0 / 280")).toBeVisible();
+  await fireEvent.input(screen.getByLabelText("Date de la course"), { target: { value: "2027-02-14" } });
+  await fireEvent.submit(screen.getByRole("button", { name: "Ajouter l'objectif" }).closest("form")!);
+  expect(onsubmit.mock.calls[0][0].notes).toBeUndefined();
+  await fireEvent.input(notes, { target: { value: " Escaliers " } });
+  expect(screen.getByText("11 / 280")).toBeVisible();
+  await fireEvent.submit(screen.getByRole("button", { name: "Ajouter l'objectif" }).closest("form")!);
+  expect(onsubmit.mock.calls[1][0].notes).toBe("Escaliers");
+});

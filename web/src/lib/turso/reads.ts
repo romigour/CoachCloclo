@@ -6,7 +6,7 @@ import { activityRow, cycleDict, eventDict, goalDict, sessionDict } from "./mapp
 type Row = Record<string, unknown>;
 
 const GOAL_COLS =
-  "id, type, distance_km, d_plus_m, race_date, priority, status, target_time_s, target_source, gpx_summary_json";
+  "id, type, distance_km, d_plus_m, race_date, priority, status, target_time_s, target_source, notes, gpx_summary_json";
 const CYCLE_COLS =
   "id, status, plan_start, end_date, sessions_per_week, available_days_json, long_run_day, include_bike, plan_accepted, needs_generation";
 const EVENT_COLS = "id, kind, start_date, end_date, max_sessions, days_json, session_id, note";

@@ -5,6 +5,7 @@
   import { addDays, todayIso } from "../lib/dates";
   import { fmtTargetTime, parseTargetTime } from "../lib/race";
   import ErrorBanner from "./ErrorBanner.svelte";
+  import NotesField from "./NotesField.svelte";
 
   let {
     goal,
@@ -18,6 +19,8 @@
   let date = $state(untrack(() => goal.race_date));
   let time = $state(initialTime);
   let priority = $state<Priority>(untrack(() => goal.priority));
+  const initialNotes = untrack(() => goal.notes ?? "");
+  let notes = $state(initialNotes);
   let busy = $state(false);
   let error = $state<unknown>(null);
 
@@ -27,7 +30,10 @@
   const timeInvalid = $derived(timeChanged && !Number.isFinite(parseTargetTime(time)));
   const dateChanged = $derived(date !== goal.race_date);
   const priorityChanged = $derived(priority !== goal.priority);
-  const canSave = $derived(!busy && !!date && (dateChanged || timeChanged || priorityChanged) && !timeInvalid);
+  const notesChanged = $derived(notes.trim() !== initialNotes);
+  const canSave = $derived(
+    !busy && !!date && (dateChanged || timeChanged || priorityChanged || notesChanged) && !timeInvalid,
+  );
 
   async function submit() {
     busy = true;
@@ -37,6 +43,7 @@
       if (dateChanged) body.race_date = date;
       if (timeChanged) body.target_time = time.trim();
       if (priorityChanged) body.priority = priority;
+      if (notesChanged) body.notes = notes.trim();
       const change = await api.updateGoal(goal.id, body);
       onsaved?.(change);
     } catch (e) {
@@ -71,6 +78,7 @@
         {/each}
       </div>
     </fieldset>
+    <NotesField bind:value={notes} />
     {#if timeInvalid}<span class="hint" role="alert">Temps visé invalide : format attendu h:mm, ex. 1:50</span>{/if}
     <p class="meta">Pour changer la distance ou le type de course, crée un nouvel objectif.</p>
     {#if busy}<p class="meta" role="status">Claude ajuste ton plan… (cela peut prendre une minute)</p>{/if}

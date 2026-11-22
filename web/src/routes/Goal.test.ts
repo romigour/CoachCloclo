@@ -555,3 +555,11 @@ test("un ajout dans un plan validé affiche le bandeau de mise à jour, qui lanc
   expect(writes(f)).toEqual(["POST /api/goals", "POST /api/cycle/adjust"]);
   expect(onchanged).toHaveBeenCalledTimes(2);
 });
+
+test("les précisions d'un objectif s'affichent dans sa carte", async () => {
+  server({ goals: [mkGoal({ notes: "Neige et escaliers" }), secondaire] });
+  render(Goal);
+  const li = await items();
+  expect(li[1]).toHaveTextContent("Neige et escaliers");
+  expect(li[0]).not.toHaveTextContent("Neige");
+});

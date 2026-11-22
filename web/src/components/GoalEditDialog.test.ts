@@ -103,3 +103,32 @@ test("shows the gap message returned by the server", async () => {
   await fireEvent.click(screen.getByRole("button", { name: "Enregistrer" }));
   expect(await screen.findByRole("alert")).toHaveTextContent(msg);
 });
+
+test("notes are prefilled and sent only when changed", async () => {
+  const f = mock();
+  open({ goal: { ...goal, notes: "A" } });
+  const notes = screen.getByLabelText("Précisions");
+  expect(notes).toHaveValue("A");
+  expect(notes).toHaveAttribute("maxlength", "280");
+  await fireEvent.input(screen.getByLabelText("Date de la course"), { target: { value: "2027-03-02" } });
+  await fireEvent.click(screen.getByRole("button", { name: "Enregistrer" }));
+  await waitFor(() => expect(patchBody(f)).toEqual({ race_date: "2027-03-02" }));
+});
+
+test("replacing or clearing the notes sends them", async () => {
+  const f = mock();
+  open({ goal: { ...goal, notes: "A" } });
+  await fireEvent.input(screen.getByLabelText("Précisions"), { target: { value: "B " } });
+  await fireEvent.click(screen.getByRole("button", { name: "Enregistrer" }));
+  await waitFor(() => expect(patchBody(f)).toEqual({ notes: "B" }));
+});
+
+test("clearing the notes enables save and sends an empty string", async () => {
+  const f = mock();
+  open({ goal: { ...goal, notes: "A" } });
+  await fireEvent.input(screen.getByLabelText("Précisions"), { target: { value: "" } });
+  const save = screen.getByRole("button", { name: "Enregistrer" });
+  expect(save).toBeEnabled();
+  await fireEvent.click(save);
+  await waitFor(() => expect(patchBody(f)).toEqual({ notes: "" }));
+});

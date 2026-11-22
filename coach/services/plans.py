@@ -15,7 +15,7 @@ from coach.llm.schemas import PlanResponse, Weekday, validate_plan
 from coach.plan import calendar
 from coach.plan.goals import block_label, goal_label, race_blocks
 from coach.plan.constraints import constraint_errors, planned_from_plan
-from coach.plan.models import Cycle, Goal, Session
+from coach.plan.models import Cycle, Goal, Session, clear_adjust
 from coach.plan.repo import Repo
 from coach.services.context import load_constraints, recent_history, refresh_snapshot
 from coach.services.goals import (
@@ -133,6 +133,7 @@ def generate_plan(repo: Repo, garmin: GarminPort, llm: LLMProvider) -> PlanRespo
             raise GoalError(_NO_PLAN)
         c.plan_accepted = False
         c.needs_generation = False
+        clear_adjust(c)  # le nouveau plan tient compte de tous les objectifs
         db.add(c)
         stale_pending(db)  # les propositions portaient sur le plan remplacé
         for estimate in plan.estimated_times:

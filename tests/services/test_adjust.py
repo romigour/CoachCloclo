@@ -8,8 +8,8 @@ from coach.analysis.zones import compute_zones
 from coach.llm.provider import FakeLLMProvider, LLMInvalidResponse
 from coach.llm.prompts import NEW_GOAL_ID
 from coach.llm.schemas import AdjustmentResponse, GoalEstimate
-from coach.plan.models import Event, Goal, Proposal
-from coach.services.adjust import ask_adjustment, save_proposal
+from coach.plan.models import Cycle, Event, Goal, Proposal, add_adjust_note
+from coach.services.adjust import ask_adjustment, request_adjustment, save_proposal
 from tests.services.test_goals import monday_garmin  # noqa: F401 (fixture)
 from tests.services.test_sync import METRICS, accepted_plan, adjustment_json, fake_garmin  # noqa: F401
 
@@ -213,3 +213,30 @@ def test_ask_adjustment_records_usage(repo, coach_home, fake_garmin, accepted_pl
                    repo.sessions(accepted_plan.id), TODAY)
     rows = repo.llm_usages()
     assert len(rows) == before + 1 and (rows[0].kind, rows[0].status, rows[0].mode) == ("adjustment", "ok", "api")
+
+
+def _pend(repo, cycle_id: int, *notes: str) -> None:
+    """Changements d'objectif en attente de mise à jour."""
+    with repo.transaction() as db:
+        c = db.get(Cycle, cycle_id)
+        for note in notes:
+            add_adjust_note(c, note)
+        db.add(c)
+
+
+def test_request_adjustment_includes_and_clears_pending_notes(repo, coach_home, fake_garmin, accepted_plan):
+    _pend(repo, accepted_plan.id, "Note A", "Note B")
+    llm = FakeLLMProvider([adjustment_json()])
+    request_adjustment(repo, fake_garmin, llm)
+    prompt = llm.calls[0]
+    assert "Note A" in prompt and prompt.index("Note A") < prompt.index("Note B")
+    cycle = repo.active_cycle()
+    assert cycle.adjust_due is False and cycle.adjust_notes() == []
+
+
+def test_request_adjustment_failure_keeps_pending_notes(repo, coach_home, fake_garmin, accepted_plan):
+    _pend(repo, accepted_plan.id, "Note A", "Note B")
+    with pytest.raises(LLMInvalidResponse):
+        request_adjustment(repo, fake_garmin, FakeLLMProvider(["{}", "{}"]))
+    cycle = repo.active_cycle()
+    assert cycle.adjust_due is True and cycle.adjust_notes() == ["Note A", "Note B"]

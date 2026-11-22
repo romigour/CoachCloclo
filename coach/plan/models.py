@@ -77,9 +77,28 @@ class Cycle(SQLModel, table=True):
     plan_accepted: bool = False
     needs_generation: bool = False
     recovery_from_goal_id: int | None = None
+    # objectifs changés : mise à jour de l'entraînement à lancer, avec les changements à transmettre à Claude
+    # (défaut côté base : les insertions SQL brutes, comme la migration d'avant les cycles, les omettent)
+    adjust_due: bool = Field(default=False, sa_column_kwargs={"server_default": "0"})
+    adjust_notes_json: str = Field(default="[]", sa_column_kwargs={"server_default": "[]"})
 
     def available_days(self) -> list[str]:
         return json.loads(self.available_days_json)
+
+    def adjust_notes(self) -> list[str]:
+        return json.loads(self.adjust_notes_json)
+
+
+def add_adjust_note(c: Cycle, note: str) -> None:
+    """Ajoute un changement d'objectif en attente et marque le cycle à mettre à jour (l'appelant enregistre)."""
+    c.adjust_notes_json = json.dumps([*c.adjust_notes(), note], ensure_ascii=False)
+    c.adjust_due = True
+
+
+def clear_adjust(c: Cycle) -> None:
+    """Plus rien en attente : les changements ont été transmis à Claude (ou le plan est régénéré)."""
+    c.adjust_due = False
+    c.adjust_notes_json = "[]"
 
 
 class Session(SQLModel, table=True):

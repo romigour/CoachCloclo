@@ -397,3 +397,13 @@ def test_recovery_note_names_block(repo):
     assert _recovery_note(repo, plan_cycle(recovery_from_goal_id=ids[1])) == (
         "Commence par une récupération adaptée à Trail de 42 km couru le 10/01/2027."
     )
+
+
+def test_generate_clears_pending_adjust(repo, fake_garmin):
+    from tests.services.test_adjust import _pend
+
+    _goal(repo, fake_garmin)
+    _pend(repo, _cid(repo), "L'athlète a ajouté un objectif.")
+    generate_plan(repo, fake_garmin, FakeLLMProvider([valid_plan_json(n_weeks=14, per_week=3)]))
+    cycle = repo.active_cycle()
+    assert cycle.adjust_due is False and cycle.adjust_notes() == []

@@ -536,3 +536,16 @@ def test_recent_done_goals(repo):
         db.add(make_goal(race_date=date(2027, 3, 27), status="active"))
     got = repo.recent_done_goals(date(2027, 3, 28))
     assert [g.race_date for g in got] == [date(2027, 3, 25)]
+
+
+def test_migration_adds_cycle_adjust_columns(tmp_path):
+    """Une base d'avant la mise à jour à la demande reçoit les deux colonnes ; ses cycles n'ont rien en attente."""
+    path = tmp_path / "old.db"
+    Repo(make_engine(path)).add(make_cycle())
+    conn = sqlite3.connect(path)
+    conn.execute("ALTER TABLE cycle DROP COLUMN adjust_due")
+    conn.execute("ALTER TABLE cycle DROP COLUMN adjust_notes_json")
+    conn.commit()
+    conn.close()
+    cycle = Repo(make_engine(path)).active_cycle()
+    assert cycle.adjust_due is False and cycle.adjust_notes() == []

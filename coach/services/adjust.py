@@ -14,7 +14,7 @@ from coach.llm.provider import LLMProvider
 from coach.llm.schemas import AdjustmentResponse, validate_adjustment
 from coach.plan.calendar import n_weeks, week_of
 from coach.plan.constraints import constraint_errors, planned_after_adjustment
-from coach.plan.models import Activity, Cycle, Goal, Proposal, Session
+from coach.plan.models import Activity, Cycle, Goal, Proposal, Session, clear_adjust
 from coach.plan.repo import Repo
 from coach.services.context import load_constraints, recent_history, refresh_snapshot
 from coach.services.laps import session_comparison
@@ -57,6 +57,8 @@ def ask_adjustment(
         # un objectif transmis dans `goals` (copie modifiée) n'est pas aussi à l'horizon à son ancienne date
         in_cycle = {g.id for g in goals}
         horizon = [g for g in repo.horizon_goals(cycle) if g.id not in in_cycle]
+    # changements d'objectif en attente (mise à jour à la demande) : transmis avec la note du moment
+    change_note = " ".join([*cycle.adjust_notes(), *([change_note] if change_note else [])]) or None
     current_week = week_of(cycle, today)
     upcoming = [s for s in sessions if s.status in ("todo", "exported") and s.week_index >= current_week]
     counts: dict[int, int] = {}
@@ -112,13 +114,18 @@ def ask_adjustment(
 
 
 def save_proposal(db: DbSession, adj: AdjustmentResponse) -> int:
-    """Passe les propositions en attente à `stale`, ajoute la nouvelle et renvoie son id.
+    """Passe les propositions en attente à `stale`, ajoute la nouvelle et renvoie son id ; le cycle actif
+    n'a plus de changement d'objectif en attente.
 
     Les estimations de temps sont gardées avec la proposition, appliquées à son acceptation.
     """
     for old in db.exec(select(Proposal).where(Proposal.status == "pending")).all():
         old.status = "stale"
         db.add(old)
+    # la demande a transmis les changements d'objectif en attente (`ask_adjustment`) : plus rien à lancer
+    for c in db.exec(select(Cycle).where(Cycle.status == "active")).all():
+        clear_adjust(c)
+        db.add(c)
     proposal = Proposal(
         analysis=adj.analysis,
         changes_json=json.dumps([c.model_dump() for c in adj.changes]),

@@ -357,3 +357,24 @@ def test_sync_retries_removal_of_done_cycle_sessions(repo, coach_home, fake_garm
         assert db.get(Session, s.id) is None
         assert db.get(Session, replaced.id).status == "exported"
     assert fake_garmin.workouts == {} and fake_garmin.schedules == {}
+
+
+def test_sync_does_not_propose_for_pending_goal_change(repo, coach_home, accepted_plan):
+    from tests.services.test_adjust import _pend
+
+    _pend(repo, accepted_plan.id, "L'athlète a ajouté un objectif.")
+    llm = FakeLLMProvider([])
+    r = sync(repo, FakeGarminClient(metrics=METRICS, today=date(2026, 11, 2)), llm, now=NOW)
+    assert r.proposal_id is None and llm.calls == []
+    assert repo.active_cycle().adjust_due is True
+
+
+def test_sync_proposal_consumes_pending_notes(repo, coach_home, fake_garmin, accepted_plan):
+    from tests.services.test_adjust import _pend
+
+    _pend(repo, accepted_plan.id, "L'athlète a ajouté un objectif.")
+    llm = FakeLLMProvider([adjustment_json()])
+    r = sync(repo, fake_garmin, llm, now=NOW)
+    assert r.proposal_id is not None and "L'athlète a ajouté un objectif." in llm.calls[0]
+    cycle = repo.active_cycle()
+    assert cycle.adjust_due is False and cycle.adjust_notes() == []

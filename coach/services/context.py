@@ -29,6 +29,10 @@ def zones_from_metrics(m: Metrics) -> Zones:
 def refresh_snapshot(repo: Repo, garmin: GarminPort) -> tuple[AthleteSnapshot, Zones]:
     """Lit les métriques Garmin, calcule les zones et enregistre un instantané."""
     m = garmin.metrics()
+    if m.hr_rest is None:
+        # FC repos pas encore remontée aujourd'hui : on garde la dernière connue plutôt que d'échouer.
+        last = repo.latest_snapshot()
+        m = m.model_copy(update={"hr_rest": last.hr_rest if last else None})
     zones = zones_from_metrics(m)
     snapshot = repo.add(
         AthleteSnapshot(

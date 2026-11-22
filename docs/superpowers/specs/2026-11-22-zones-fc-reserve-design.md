@@ -37,6 +37,11 @@ Les séances stockent un nom de zone (« Z2 ») ; les bpm sont résolus à parti
 (`coach/analysis/laps.py`). Les séances existantes prennent les nouvelles valeurs dès la prochaine
 synchro, sans régénération.
 
+Exceptions (pas de recalcul automatique) :
+- les workouts déjà envoyés sur la montre gardent leurs anciens bpm jusqu'au prochain envoi ;
+- les stratégies de course figent leur base (dont les zones FC) à la création : il faut cliquer
+  « rafraîchir la base » pour qu'elles prennent les nouvelles zones.
+
 ## Non-objectifs
 
 - Le « temps par zone » des activités dans les stats (`hr_zones_s`) reste celui de Garmin.
@@ -47,6 +52,8 @@ synchro, sans régénération.
 
 - Se retrouver sans zones alors qu'on en avait avant : si la FC repos manque, l'erreur actuelle
   (« FC repos inconnue : synchronise ta montre ») s'applique, comme pour le repli Karvonen actuel.
+  Pour qu'une synchro qui marchait avant ne casse pas les jours où Garmin n'a pas encore de FC
+  repos, `refresh_snapshot` reprend la FC repos du dernier instantané enregistré.
 
 ## Approches envisagées
 

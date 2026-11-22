@@ -5,7 +5,7 @@ import pytest
 from coach.garmin.port import FakeGarminClient, Metrics
 from coach.llm.provider import FakeLLMProvider, LLMInvalidResponse
 from coach.llm.schemas import GoalEstimate, PlanResponse, WeekSpec
-from coach.plan.models import ALL_DAYS, Cycle, Goal, Proposal, Session
+from coach.plan.models import ALL_DAYS, AthleteSnapshot, Cycle, Goal, Proposal, Session
 from coach.services import CoachError
 from coach.services.context import refresh_snapshot
 from coach.services.goals import GoalError
@@ -73,6 +73,14 @@ def test_refresh_snapshot_relays_real_zone_error(repo):
     with pytest.raises(CoachError, match="FC repos inconnue") as e:
         refresh_snapshot(repo, FakeGarminClient(metrics=Metrics(hr_max=190)))
     assert "FC max" not in str(e.value)
+
+
+def test_refresh_snapshot_reuses_last_known_hr_rest(repo):
+    # FC repos absente aujourd'hui (montre pas encore synchronisée) : la synchro ne doit pas échouer
+    repo.add(AthleteSnapshot(date=date(2026, 11, 1), hr_max=190, hr_rest=49))
+    snap, zones = refresh_snapshot(repo, FakeGarminClient(metrics=Metrics(hr_max=190)))
+    assert snap.hr_rest == 49
+    assert zones.hr["Z1"] == (120, 134)
 
 
 def test_generation_prompt_gives_today(repo, fake_garmin):

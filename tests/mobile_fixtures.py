@@ -101,7 +101,7 @@ def _activity(id: int, day: date, **over) -> Activity:
 
 def _zones_json(hr_max: int, hr_rest: int, threshold: int) -> str:
     zones = compute_zones(
-        threshold_pace_s_km=threshold, pred_10k_s=None, garmin_hr_zones=None, hr_max=hr_max, hr_rest=hr_rest
+        threshold_pace_s_km=threshold, pred_10k_s=None, hr_max=hr_max, hr_rest=hr_rest
     )
     return zones.model_dump_json()
 

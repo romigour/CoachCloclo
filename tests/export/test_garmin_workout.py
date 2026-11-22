@@ -12,7 +12,6 @@ FIXTURES = Path(__file__).parent.parent / "fixtures" / "garmin"
 ZONES = compute_zones(
     threshold_pace_s_km=240,
     pred_10k_s=None,
-    garmin_hr_zones=[100, 120, 140, 160, 175],
     hr_max=190,
     hr_rest=50,
 )

@@ -19,7 +19,6 @@ def zones_from_metrics(m: Metrics) -> Zones:
         return compute_zones(
             threshold_pace_s_km=m.threshold_pace_s_km,
             pred_10k_s=m.pred_10k_s,
-            garmin_hr_zones=m.hr_zones,
             hr_max=m.hr_max,
             hr_rest=m.hr_rest,
         )

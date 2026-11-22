@@ -18,7 +18,7 @@ TODAY = date(2026, 11, 4)
 
 def _zones():
     return compute_zones(
-        threshold_pace_s_km=METRICS.threshold_pace_s_km, pred_10k_s=None, garmin_hr_zones=None,
+        threshold_pace_s_km=METRICS.threshold_pace_s_km, pred_10k_s=None,
         hr_max=METRICS.hr_max, hr_rest=METRICS.hr_rest,
     )
 

@@ -28,11 +28,10 @@ def compute_zones(
     *,
     threshold_pace_s_km: int | None,
     pred_10k_s: int | None,
-    garmin_hr_zones: list[int] | None,
     hr_max: int | None,
     hr_rest: int | None,
 ) -> Zones:
-    """Calcule les zones d'allure et de FC, avec repli sur la prédiction 10 km et Karvonen."""
+    """Calcule les zones d'allure (repli sur la prédiction 10 km) et de FC (FC de réserve, Karvonen)."""
     source: list[str] = []
 
     if threshold_pace_s_km is not None:
@@ -52,20 +51,13 @@ def compute_zones(
 
     if hr_max is None:
         raise ValueError("FC max inconnue")
-    if garmin_hr_zones is not None:
-        if len(garmin_hr_zones) != 5:
-            raise ValueError("Il faut 5 bornes de zones FC Garmin")
-        bounds = [*garmin_hr_zones, hr_max]
-        hr = {name: (bounds[i], bounds[i + 1]) for i, name in enumerate(_HR_NAMES)}
-        source.append("garmin_hr_zones")
-    else:
-        if hr_rest is None:
-            raise ValueError("FC repos inconnue")
-        reserve = hr_max - hr_rest
-        hr = {
-            name: (round(hr_rest + reserve * lo), round(hr_rest + reserve * hi))
-            for name, (lo, hi) in zip(_HR_NAMES, _KARVONEN)
-        }
-        source.append("karvonen")
+    if hr_rest is None:
+        raise ValueError("FC repos inconnue")
+    reserve = hr_max - hr_rest
+    hr = {
+        name: (round(hr_rest + reserve * lo), round(hr_rest + reserve * hi))
+        for name, (lo, hi) in zip(_HR_NAMES, _KARVONEN)
+    }
+    source.append("karvonen")
 
     return Zones(pace=pace, hr=hr, source=source)

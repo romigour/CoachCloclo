@@ -12,10 +12,10 @@ from tests.llm.factories import make_session
 from tests.plan.factories import make_activity, make_cycle, make_db_session, make_goal
 
 ZONES = compute_zones(
-    threshold_pace_s_km=240, pred_10k_s=None, garmin_hr_zones=None, hr_max=190, hr_rest=50
+    threshold_pace_s_km=240, pred_10k_s=None, hr_max=190, hr_rest=50
 )
 ZONES_NO_PACE = compute_zones(
-    threshold_pace_s_km=None, pred_10k_s=None, garmin_hr_zones=None, hr_max=190, hr_rest=50
+    threshold_pace_s_km=None, pred_10k_s=None, hr_max=190, hr_rest=50
 )
 
 

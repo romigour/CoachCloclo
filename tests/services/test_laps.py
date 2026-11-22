@@ -155,7 +155,7 @@ def test_session_comparison_reasons(repo):
 def test_latest_zones(repo):
     assert latest_zones(repo) is None
     zones = compute_zones(
-        threshold_pace_s_km=300, pred_10k_s=None, garmin_hr_zones=None, hr_max=190, hr_rest=50
+        threshold_pace_s_km=300, pred_10k_s=None, hr_max=190, hr_rest=50
     )
     repo.add(AthleteSnapshot(date=date(2026, 11, 1), zones_json=zones.model_dump_json()))
     assert latest_zones(repo) == zones

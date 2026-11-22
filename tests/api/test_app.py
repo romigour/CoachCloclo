@@ -418,7 +418,7 @@ def _db_session(repo, **kw):
 
 
 def _zones() -> Zones:
-    return compute_zones(threshold_pace_s_km=300, pred_10k_s=None, garmin_hr_zones=None, hr_max=190, hr_rest=50)
+    return compute_zones(threshold_pace_s_km=300, pred_10k_s=None, hr_max=190, hr_rest=50)
 
 
 class CountingGarmin(FakeGarminClient):

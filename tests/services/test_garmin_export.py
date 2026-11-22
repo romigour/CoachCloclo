@@ -22,7 +22,7 @@ from tests.llm.factories import make_session
 from tests.plan.factories import make_db_session, make_cycle
 
 ZONES = compute_zones(
-    threshold_pace_s_km=300, pred_10k_s=None, garmin_hr_zones=None, hr_max=190, hr_rest=50
+    threshold_pace_s_km=300, pred_10k_s=None, hr_max=190, hr_rest=50
 )
 D = date(2026, 11, 10)  # mardi de la semaine 3
 
@@ -326,7 +326,7 @@ def test_proposal_on_done_or_missed_rejected(repo, fake_garmin, session_w3, stat
 def test_conversion_failure_changes_nothing(repo, cycle, fake_garmin, session_w3):
     # zones sans allure : un workout cible allure ne peut pas être converti
     no_pace = compute_zones(
-        threshold_pace_s_km=None, pred_10k_s=None, garmin_hr_zones=None, hr_max=190, hr_rest=50
+        threshold_pace_s_km=None, pred_10k_s=None, hr_max=190, hr_rest=50
     )
     assert no_pace.pace is None
     repo.add(AthleteSnapshot(date=date(2026, 11, 2), zones_json=no_pace.model_dump_json()))

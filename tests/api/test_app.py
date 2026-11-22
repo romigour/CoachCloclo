@@ -417,7 +417,7 @@ def test_export_and_unschedule(make_client, fake_garmin):
 def test_sync_returns_result(make_client):
     r = make_client().post("/api/sync")
     assert r.status_code == 200
-    assert r.json() == {"new_activities": 0, "matched": 0, "missed": 0, "proposal_id": None}
+    assert r.json() == {"new_activities": 0, "missed": 0, "proposal_id": None}
 
 
 def test_manual_match(make_client, repo):
@@ -666,6 +666,12 @@ def test_generic_llm_error_maps_to_502_on_sync(make_client, fake_garmin):
         ActivitySummary(garmin_id=1, date=date(2026, 11, 4), type_key="running",
                         duration_s=600, distance_m=2000, raw={})
     ]
+    assert client.post("/api/sync").status_code == 200  # import seul : rien à analyser
+    act = client.get("/api/activities/free?days=90").json()[0]
+    assert client.post(f"/api/activities/{act['id']}/match", json={"session_id": session["id"]}).status_code == 200
+    from coach.services.sync import add_pending_done
+
+    add_pending_done(client.app.state.repo, session["id"])  # TEMP tâche 2 : le rattachement manuel le fera
     client.app.state.llm_factory = lambda: BrokenLLM()
     r = client.post("/api/sync")
     assert r.status_code == 502 and r.json()["code"] == "llm_error"

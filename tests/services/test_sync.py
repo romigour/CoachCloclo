@@ -7,10 +7,17 @@ from sqlmodel import select
 from coach.garmin.port import ActivitySummary, FakeGarminClient, LapSummary, Metrics
 from coach.llm.provider import FakeLLMProvider, LLMUsageLimit
 from coach.llm.schemas import AdjustmentResponse, Change
-from coach.plan.models import Activity, Cycle, Event, Proposal
+from coach.plan.models import Activity, Cycle, Event, Proposal, Session
 from coach.services.events import delete_event
 from tests.llm.factories import make_session
-from coach.services.sync import SyncResult, SyncState, load_sync_state, save_sync_state, sync
+from coach.services.sync import (
+    SyncResult,
+    SyncState,
+    add_pending_done,
+    load_sync_state,
+    save_sync_state,
+    sync,
+)
 from tests.plan.factories import make_cycle, make_db_session, make_goal
 
 NOW = datetime(2026, 11, 4, 8, 0)
@@ -74,15 +81,44 @@ def draft_plan(repo):
     return _cycle_with_sessions(repo, False)
 
 
-def test_sync_matches_and_creates_proposal(repo, coach_home, fake_garmin, accepted_plan):
-    llm = FakeLLMProvider([adjustment_json(analysis="Tout va bien")])
+def _attach(repo, cycle, garmin_id=1, d=date(2026, 11, 3), index=0) -> int:
+    """Rattachement manuel tel que le fait l'API : activité reliée, séance réalisée, en attente d'analyse.
+
+    L'activité `garmin_id` est créée si elle n'est pas encore importée ; retourne l'id de la séance."""
+    sid = repo.sessions(cycle.id)[index].id
+    act = repo.activity_by_garmin_id(garmin_id)
+    if act is None:
+        act = repo.add(
+            Activity(garmin_activity_id=garmin_id, date=d, type_key="running", duration_s=2700, distance_m=9000)
+        )
+    with repo.transaction() as db:
+        a = db.get(Activity, act.id)
+        a.session_id, a.match_source = sid, "manual"
+        db.add(a)
+        s = db.get(Session, sid)
+        s.status = "done"
+        db.add(s)
+    add_pending_done(repo, sid)
+    return sid
+
+
+def test_sync_never_attaches(repo, coach_home, fake_garmin, accepted_plan):
+    llm = FakeLLMProvider([adjustment_json()])
     r = sync(repo, fake_garmin, llm, now=NOW)
     assert isinstance(r, SyncResult)
-    assert (r.new_activities, r.matched, r.missed) == (1, 1, 0)
-    done = [s for s in repo.sessions(accepted_plan.id) if s.status == "done"]
-    assert len(done) == 1
-    act = repo.activity_by_garmin_id(1)
-    assert act.session_id == done[0].id and act.match_source == "auto"
+    assert (r.new_activities, r.missed, r.proposal_id) == (1, 0, None) and llm.calls == []
+    assert repo.activity_by_garmin_id(1).session_id is None
+    assert not any(s.status == "done" for s in repo.sessions(accepted_plan.id))
+
+
+def test_sync_sends_manually_attached_session_to_claude(repo, coach_home, fake_garmin, accepted_plan):
+    sid = _attach(repo, accepted_plan)
+    llm = FakeLLMProvider([adjustment_json(analysis="Tout va bien")])
+    r = sync(repo, fake_garmin, llm, now=NOW)
+    assert (r.new_activities, r.missed) == (0, 0)
+    assert f"- prévu : {repo.session(sid).title}" in llm.calls[0]
+    assert repo.session(sid).status == "done" and repo.activity_by_garmin_id(1).match_source == "manual"
+    assert load_sync_state(repo).pending_done == []
     pending = repo.pending_proposal()
     assert r.proposal_id == pending.id
     assert pending.analysis == "Tout va bien" and json.loads(pending.changes_json) == []
@@ -90,17 +126,33 @@ def test_sync_matches_and_creates_proposal(repo, coach_home, fake_garmin, accept
 
 
 def test_sync_without_news_creates_no_proposal(repo, coach_home, fake_garmin, accepted_plan):
+    _attach(repo, accepted_plan)
     llm = FakeLLMProvider([adjustment_json()])
     sync(repo, fake_garmin, llm, now=NOW)
     r = sync(repo, fake_garmin, llm, now=NOW + timedelta(hours=1))
     assert r.proposal_id is None and len(llm.calls) == 1
-    assert (r.new_activities, r.matched, r.missed) == (0, 0, 0)
+    assert (r.new_activities, r.missed) == (0, 0)
+
+
+def test_sync_ignores_stale_pending_done(repo, coach_home, fake_garmin, accepted_plan):
+    add_pending_done(repo, repo.sessions(accepted_plan.id)[0].id)  # jamais passée « réalisée »
+    add_pending_done(repo, 99999)  # séance inexistante
+    llm = FakeLLMProvider([adjustment_json()])
+    r = sync(repo, fake_garmin, llm, now=NOW)
+    assert r.proposal_id is None and llm.calls == []
+    assert load_sync_state(repo).pending_done == []
+
+
+def test_load_sync_state_without_pending_done(repo, coach_home):
+    repo.set_state("sync", {"last_sync_at": None, "proposal_due": False})
+    assert load_sync_state(repo).pending_done == []
 
 
 def test_new_proposal_makes_previous_stale(repo, coach_home, fake_garmin, accepted_plan):
+    _attach(repo, accepted_plan)
     llm = FakeLLMProvider([adjustment_json(analysis="un"), adjustment_json(analysis="deux")])
     r1 = sync(repo, fake_garmin, llm, now=NOW)
-    fake_garmin._activities.append(run_summary(garmin_id=2, d=date(2026, 11, 4)))
+    _attach(repo, accepted_plan, garmin_id=2, d=date(2026, 11, 4), index=1)
     r2 = sync(repo, fake_garmin, llm, now=NOW + timedelta(hours=2))
     assert r2.proposal_id not in (None, r1.proposal_id)
     assert repo.pending_proposal().id == r2.proposal_id
@@ -109,29 +161,32 @@ def test_new_proposal_makes_previous_stale(repo, coach_home, fake_garmin, accept
         assert db.get(Proposal, r2.proposal_id).status == "pending"
 
 
-def test_llm_failure_keeps_matching(repo, coach_home, fake_garmin, accepted_plan):
+def test_llm_failure_keeps_pending_done(repo, coach_home, fake_garmin, accepted_plan):
+    sid = _attach(repo, accepted_plan)
     with pytest.raises(LLMUsageLimit):
         sync(repo, fake_garmin, FailingLLM(LLMUsageLimit()), now=NOW)
-    assert any(s.status == "done" for s in repo.sessions(accepted_plan.id))
-    assert repo.activity_by_garmin_id(1).session_id is not None
+    assert repo.session(sid).status == "done"
+    assert load_sync_state(repo).pending_done == [sid]
     assert load_sync_state(repo).last_sync_at == NOW
     assert repo.pending_proposal() is None
 
 
 def test_llm_failure_keeps_previous_pending(repo, coach_home, fake_garmin, accepted_plan):
+    _attach(repo, accepted_plan)
     sync(repo, fake_garmin, FakeLLMProvider([adjustment_json()]), now=NOW)
     before = repo.pending_proposal()
-    fake_garmin._activities.append(run_summary(garmin_id=2, d=date(2026, 11, 4)))
+    _attach(repo, accepted_plan, garmin_id=2, d=date(2026, 11, 4), index=1)
     with pytest.raises(LLMUsageLimit):
         sync(repo, fake_garmin, FailingLLM(LLMUsageLimit()), now=NOW + timedelta(hours=2))
     assert repo.pending_proposal().id == before.id
 
 
 def test_no_proposal_before_plan_accepted(repo, coach_home, fake_garmin, draft_plan):
+    sid = _attach(repo, draft_plan)
     llm = FakeLLMProvider([adjustment_json()])
     r = sync(repo, fake_garmin, llm, now=NOW)
     assert r.proposal_id is None and llm.calls == []
-    assert r.matched == 1 and repo.pending_proposal() is None
+    assert repo.pending_proposal() is None and load_sync_state(repo).pending_done == [sid]
 
 
 def test_duplicate_activities_not_reimported(repo, coach_home, fake_garmin, accepted_plan):
@@ -147,7 +202,7 @@ def test_missed_sessions_marked(repo, coach_home, accepted_plan):
     garmin = FakeGarminClient(metrics=METRICS, today=date(2026, 11, 10))  # semaine 1 terminée
     llm = FakeLLMProvider([adjustment_json()])
     r = sync(repo, garmin, llm, now=datetime(2026, 11, 10, 8, 0))
-    assert r.missed == 3 and r.matched == 0
+    assert r.missed == 3
     statuses = [s.status for s in repo.sessions(accepted_plan.id, week_index=1)]
     assert statuses == ["missed"] * 3
     assert r.proposal_id is not None
@@ -157,6 +212,7 @@ def test_proposal_changes_serialized(repo, coach_home, fake_garmin, accepted_pla
     target = repo.sessions(accepted_plan.id, week_index=2)[0]
     change = Change(op="remove", session_id=target.id, reason="Trop chargé")
     llm = FakeLLMProvider([adjustment_json([change])])
+    _attach(repo, accepted_plan)
     sync(repo, fake_garmin, llm, now=NOW)
     changes = json.loads(repo.pending_proposal().changes_json)
     assert changes[0]["op"] == "remove" and changes[0]["session_id"] == target.id
@@ -171,12 +227,13 @@ def test_first_sync_window_is_56_days(repo, coach_home, accepted_plan):
 
 
 def test_proposal_retried_after_llm_failure(repo, coach_home, fake_garmin, accepted_plan):
+    _attach(repo, accepted_plan)
     with pytest.raises(LLMUsageLimit):
         sync(repo, fake_garmin, FailingLLM(LLMUsageLimit()), now=NOW)
     assert load_sync_state(repo).proposal_due is True
     llm = FakeLLMProvider([adjustment_json()])
     r = sync(repo, fake_garmin, llm, now=NOW + timedelta(hours=1))
-    assert r.matched == 0 and r.proposal_id is not None and len(llm.calls) == 1
+    assert r.proposal_id is not None and len(llm.calls) == 1
     assert load_sync_state(repo).proposal_due is False
     r3 = sync(repo, fake_garmin, llm, now=NOW + timedelta(hours=2))
     assert r3.proposal_id is None and len(llm.calls) == 1
@@ -201,6 +258,7 @@ def test_pending_removal_excluded_from_week_counts(repo, coach_home, fake_garmin
     repo.update(gone)
     add = Change(op="add", session=make_session(week_index=2, order=4, title="Ajout"), reason="r")
     llm = FakeLLMProvider([adjustment_json([add])])
+    _attach(repo, accepted_plan)
     r = sync(repo, fake_garmin, llm, now=NOW)
     assert r.proposal_id is not None
     with repo.transaction() as db:
@@ -214,6 +272,7 @@ def test_exported_session_moved_to_other_week_is_retried(repo, coach_home, fake_
     repo.update(target)
     moved = Change(op="modify", session_id=target.id, session=make_session(week_index=3), reason="r")
     llm = FakeLLMProvider([adjustment_json([moved]), adjustment_json()])
+    _attach(repo, accepted_plan)
     r = sync(repo, fake_garmin, llm, now=NOW)
     assert len(llm.calls) == 2 and "exportée" in llm.calls[1]
     assert r.proposal_id is not None
@@ -232,8 +291,9 @@ def test_sync_refreshes_personal_records(repo, coach_home):
     assert [r.kind for r in repo.records()] == ["5k"]
 
 
-def test_sync_fetches_laps_of_matched_activities(repo, coach_home, accepted_plan):
-    free = run_summary(garmin_id=2, d=date(2026, 11, 1))  # hors séance : non rattachée
+def test_sync_fetches_laps_of_attached_activities(repo, coach_home, accepted_plan):
+    _attach(repo, accepted_plan)
+    free = run_summary(garmin_id=2, d=date(2026, 11, 1))  # non rattachée
     garmin = FakeGarminClient(
         metrics=METRICS,
         activities=[run_summary(), free],
@@ -247,12 +307,12 @@ def test_sync_fetches_laps_of_matched_activities(repo, coach_home, accepted_plan
 
 
 def test_sync_survives_laps_error_and_retries_next_time(repo, coach_home, accepted_plan):
+    _attach(repo, accepted_plan)
     laps = {1: [LapSummary(index=0, duration_s=600, distance_m=1800)]}
     garmin = FakeGarminClient(
         metrics=METRICS, activities=[run_summary()], today=date(2026, 11, 4), laps=laps, fail_on={"activity_laps"}
     )
-    r = sync(repo, garmin, FakeLLMProvider([adjustment_json()]), now=NOW)
-    assert r.matched == 1
+    sync(repo, garmin, FakeLLMProvider([adjustment_json()]), now=NOW)
     activity = repo.activity_by_garmin_id(1)
     assert repo.laps(activity.id) is None
 
@@ -265,20 +325,24 @@ def test_proposal_prompt_contains_step_detail(repo, coach_home, accepted_plan):
     laps = {1: [LapSummary(index=0, duration_s=600, distance_m=1800, avg_hr=140, step_order=1)]}
     garmin = FakeGarminClient(metrics=METRICS, activities=[run_summary()], today=date(2026, 11, 4), laps=laps)
     llm = FakeLLMProvider([adjustment_json()])
+    _attach(repo, accepted_plan)
     sync(repo, garmin, llm, now=NOW)
     assert "· échauffement" in llm.calls[0]
 
 
 def test_sync_skips_proposal_during_open_injury(repo, coach_home, fake_garmin, accepted_plan):
     repo.add(Event(cycle_id=accepted_plan.id, kind="injury", start_date=date(2026, 11, 3)))
+    sid = _attach(repo, accepted_plan)
     llm = FakeLLMProvider([adjustment_json()])
     r = sync(repo, fake_garmin, llm, now=NOW)
-    assert r.matched == 1 and r.proposal_id is None and llm.calls == []
-    assert load_sync_state(repo).proposal_due is True
+    assert r.proposal_id is None and llm.calls == []
+    state = load_sync_state(repo)
+    assert state.proposal_due is True and state.pending_done == [sid]
 
 
 def test_deleting_open_injury_resumes_sync_proposals(repo, coach_home, fake_garmin, accepted_plan):
     injury = repo.add(Event(cycle_id=accepted_plan.id, kind="injury", start_date=date(2026, 11, 3)))
+    _attach(repo, accepted_plan)
     assert sync(repo, fake_garmin, FakeLLMProvider([adjustment_json()]), now=NOW).proposal_id is None
     delete_event(repo, injury.id)
     r = sync(repo, fake_garmin, FakeLLMProvider([adjustment_json()]), now=NOW)
@@ -303,6 +367,7 @@ def _short_cycle(repo):
 
 def test_sync_marks_passed_secondary_done_keeps_cycle(repo, coach_home, fake_garmin, accepted_plan):
     secondary = repo.add(make_goal(race_date=date(2026, 11, 3), priority="secondaire", distance_km=10))
+    _attach(repo, accepted_plan)
     llm = FakeLLMProvider([adjustment_json()])
     r = sync(repo, fake_garmin, llm, now=NOW)
     assert secondary.id not in [g.id for g in repo.upcoming_goals()]
@@ -313,6 +378,7 @@ def test_sync_marks_passed_secondary_done_keeps_cycle(repo, coach_home, fake_gar
 
 def test_sync_closes_cycle_after_principal(repo, coach_home, fake_garmin):
     cycle = _short_cycle(repo)
+    _attach(repo, cycle)
     old = repo.add(Proposal(analysis="a", changes_json="[]", status="pending"))
     llm = FakeLLMProvider([adjustment_json()])
     r = sync(repo, fake_garmin, llm, now=NOW)
@@ -322,15 +388,8 @@ def test_sync_closes_cycle_after_principal(repo, coach_home, fake_garmin):
         assert db.get(Proposal, old.id).status == "stale"
     assert r.proposal_id is None and llm.calls == [] and repo.pending_proposal() is None
     assert [g.race_date for g in repo.upcoming_goals()] == [date(2027, 3, 7)]
-    assert load_sync_state(repo).proposal_due is False
-
-
-def test_race_day_activity_still_matched_before_close(repo, coach_home, fake_garmin):
-    cycle = _short_cycle(repo)
-    r = sync(repo, fake_garmin, FakeLLMProvider([]), now=NOW)
-    assert r.matched == 1
-    (s,) = repo.sessions(cycle.id)
-    assert s.status == "done" and repo.activity_by_garmin_id(1).session_id == s.id
+    state = load_sync_state(repo)
+    assert state.proposal_due is False and state.pending_done == []
 
 
 def test_sync_retries_removal_of_done_cycle_sessions(repo, coach_home, fake_garmin):
@@ -373,6 +432,7 @@ def test_sync_proposal_consumes_pending_notes(repo, coach_home, fake_garmin, acc
     from tests.services.test_adjust import _pend
 
     _pend(repo, accepted_plan.id, "L'athlète a ajouté un objectif.")
+    _attach(repo, accepted_plan)
     llm = FakeLLMProvider([adjustment_json()])
     r = sync(repo, fake_garmin, llm, now=NOW)
     assert r.proposal_id is not None and "L'athlète a ajouté un objectif." in llm.calls[0]

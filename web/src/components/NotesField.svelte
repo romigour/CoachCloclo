@@ -9,7 +9,7 @@
   <label>
     Précisions
     <textarea
-      rows="2"
+      rows="3"
       maxlength={NOTES_MAX}
       placeholder="Trail enneigé, 400 marches à la fin, je vise un record"
       bind:value
@@ -20,6 +20,5 @@
 
 <style>
   .notes { display: flex; flex-direction: column; gap: 4px; }
-  .notes textarea { resize: vertical; }
   .count { align-self: flex-end; }
 </style>

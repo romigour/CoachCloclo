@@ -10,6 +10,7 @@ from coach.llm.prompts import NEW_GOAL_ID
 from coach.llm.schemas import AdjustmentResponse, GoalEstimate
 from coach.plan.models import Cycle, Event, Goal, Proposal, add_adjust_note
 from coach.services.adjust import ask_adjustment, request_adjustment, save_proposal
+from coach.services.sync import load_sync_state
 from tests.services.test_goals import monday_garmin  # noqa: F401 (fixture)
 from tests.services.test_sync import METRICS, accepted_plan, adjustment_json, fake_garmin  # noqa: F401
 
@@ -237,6 +238,25 @@ def test_request_adjustment_includes_and_clears_pending_notes(repo, coach_home, 
     assert "Note A" in prompt and prompt.index("Note A") < prompt.index("Note B")
     cycle = repo.active_cycle()
     assert cycle.adjust_due is False and cycle.adjust_notes() == []
+
+
+def test_request_adjustment_sends_and_clears_pending_done(repo, coach_home, fake_garmin, accepted_plan):
+    from tests.services.test_sync import _attach
+
+    sid = _attach(repo, accepted_plan)
+    llm = FakeLLMProvider([adjustment_json()])
+    request_adjustment(repo, fake_garmin, llm, note="Imprévu déclaré")
+    assert f"- prévu : {repo.session(sid).title}" in llm.calls[0]
+    assert load_sync_state(repo).pending_done == []
+
+
+def test_request_adjustment_failure_keeps_pending_done(repo, coach_home, fake_garmin, accepted_plan):
+    from tests.services.test_sync import _attach
+
+    sid = _attach(repo, accepted_plan)
+    with pytest.raises(LLMInvalidResponse):
+        request_adjustment(repo, fake_garmin, FakeLLMProvider(["{}", "{}"]))
+    assert load_sync_state(repo).pending_done == [sid]
 
 
 def test_request_adjustment_failure_keeps_pending_notes(repo, coach_home, fake_garmin, accepted_plan):

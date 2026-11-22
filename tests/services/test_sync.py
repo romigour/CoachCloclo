@@ -438,3 +438,42 @@ def test_sync_proposal_consumes_pending_notes(repo, coach_home, fake_garmin, acc
     assert r.proposal_id is not None and "L'athlète a ajouté un objectif." in llm.calls[0]
     cycle = repo.active_cycle()
     assert cycle.adjust_due is False and cycle.adjust_notes() == []
+
+
+# --- rattachement manuel pendant une synchro en cours ---------------------------------------
+
+
+class _AttachDuringClaudeLLM:
+    """Claude simulé pendant la réponse duquel l'athlète rattache une autre sortie (autre requête)."""
+
+    def __init__(self, repo, cycle):
+        self.repo, self.cycle, self.sid = repo, cycle, None
+
+    def complete(self, system: str, prompt: str) -> str:
+        self.sid = _attach(self.repo, self.cycle, garmin_id=2, d=date(2026, 11, 4), index=1)
+        return adjustment_json()
+
+
+def test_manual_match_during_claude_call_survives_sync(repo, coach_home, fake_garmin, accepted_plan):
+    first = _attach(repo, accepted_plan)
+    llm = _AttachDuringClaudeLLM(repo, accepted_plan)
+    r = sync(repo, fake_garmin, llm, now=NOW)
+    assert r.proposal_id is not None and llm.sid != first
+    assert load_sync_state(repo).pending_done == [llm.sid]
+
+
+class _AttachDuringImportGarmin(FakeGarminClient):
+    """Garmin simulé pendant l'import duquel l'athlète rattache une sortie (autre requête)."""
+
+    def activities(self, since, until):
+        self.sid = _attach(self.repo, self.cycle, garmin_id=2, d=date(2026, 11, 4), index=1)
+        return super().activities(since, until)
+
+
+def test_manual_match_during_import_survives_sync(repo, coach_home, accepted_plan):
+    garmin = _AttachDuringImportGarmin(metrics=METRICS, activities=[run_summary()], today=date(2026, 11, 4))
+    garmin.repo, garmin.cycle = repo, accepted_plan
+    first = _attach(repo, accepted_plan)
+    r = sync(repo, garmin, FakeLLMProvider([adjustment_json()]), now=NOW)
+    assert r.proposal_id is not None and garmin.sid != first
+    assert load_sync_state(repo).pending_done == [garmin.sid]

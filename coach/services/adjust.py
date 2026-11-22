@@ -149,22 +149,23 @@ def request_adjustment(
     """Demande un ajustement à Claude, l'enregistre en proposition et renvoie son id.
 
     Porte sur le cycle actif. Les imprévus enregistrés sont transmis par `ask_adjustment` ; `note` décrit
-    ce qui vient de changer.
+    ce qui vient de changer. Les séances rattachées à la main en attente d'analyse sont transmises comme
+    réalisées et sortent de l'attente.
     """
     from coach.services.goals import GoalError  # import tardif : goals importe ce module
     from coach.services.plans import _active_cycle
-    from coach.services.sync import load_sync_state, save_sync_state  # import tardif : sync importe ce module
+    from coach.services.sync import done_pairs, load_sync_state, mark_proposed  # import tardif : sync importe ce module
 
     cycle = _active_cycle(repo)
     if not cycle.plan_accepted:
         raise GoalError("Le plan doit être validé")
     _, zones = refresh_snapshot(repo, garmin)
+    sessions = repo.sessions(cycle.id)
+    done = done_pairs(repo, sessions, load_sync_state(repo).pending_done)
     adj = ask_adjustment(
-        repo, garmin, llm, cycle, zones, repo.sessions(cycle.id), garmin.today(), missed=list(missed), change_note=note
+        repo, garmin, llm, cycle, zones, sessions, garmin.today(), done=done, missed=list(missed), change_note=note
     )
     with repo.transaction() as db:
         proposal_id = save_proposal(db, adj, cycle.adjust_notes())
-    state = load_sync_state(repo)
-    state.proposal_due = False
-    save_sync_state(repo, state)
+    mark_proposed(repo, [s.id for s, _ in done])
     return proposal_id

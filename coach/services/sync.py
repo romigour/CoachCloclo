@@ -69,15 +69,29 @@ class SyncResult(BaseModel):
     proposal_id: int | None
 
 
-def _attached_done(repo: Repo, sessions: list[Session], ids: list[int]) -> list[int]:
-    """Ids de `ids` encore réalisés dans `sessions` avec une activité rattachée, dans l'ordre d'origine."""
+def done_pairs(repo: Repo, sessions: list[Session], ids: list[int]) -> list[tuple[Session, Activity]]:
+    """(séance, activité) pour les ids de `ids` encore réalisés dans `sessions` avec une activité
+    rattachée, dans l'ordre d'origine ; les autres sont ignorés."""
     by_id = {s.id: s for s in sessions}
     with repo.transaction() as db:
-        attached = {
-            a.session_id
+        acts = {
+            a.session_id: a
             for a in db.exec(select(Activity).where(Activity.session_id.in_(ids))).all()  # type: ignore[union-attr]
-        } if ids else set()
-    return [i for i in ids if i in by_id and by_id[i].status == "done" and i in attached]
+        } if ids else {}
+    return [(by_id[i], acts[i]) for i in ids if i in by_id and by_id[i].status == "done" and i in acts]
+
+
+def _attached_done(repo: Repo, sessions: list[Session], ids: list[int]) -> list[int]:
+    return [s.id for s, _ in done_pairs(repo, sessions, ids)]
+
+
+def mark_proposed(repo: Repo, done_ids: list[int]) -> None:
+    """Après une proposition enregistrée : plus de proposition due, séances transmises retirées de
+    l'attente (relue, pour garder un rattachement fait pendant l'appel à Claude)."""
+    s = load_sync_state(repo)
+    s.proposal_due = False
+    s.pending_done = [i for i in s.pending_done if i not in done_ids]
+    save_sync_state(repo, s)
 
 
 def sync(repo: Repo, garmin: GarminPort, llm: LLMProvider, *, now: datetime) -> SyncResult:
@@ -116,10 +130,13 @@ def sync(repo: Repo, garmin: GarminPort, llm: LLMProvider, *, now: datetime) -> 
     # retraits Garmin restés en échec, y compris ceux d'un cycle terminé (plus affiché)
     retry_pending_cleanup(repo, garmin, today)
 
+    # état relu : un rattachement manuel fait pendant la synchro (autre requête) ne doit pas être perdu
+    abandoned = set(settings.pending_done) - set(done_ids)
+    settings = load_sync_state(repo)
     settings.last_sync_at = now
     settings.proposal_due = cycle is not None and (settings.proposal_due or bool(done_ids or missed_ids))
     # séances disparues ou plus réalisées abandonnées ; cycle clos : plus rien à analyser
-    settings.pending_done = done_ids if cycle is not None else []
+    settings.pending_done = [i for i in settings.pending_done if i not in abandoned] if cycle is not None else []
     save_sync_state(repo, settings)
 
     proposal_id = None
@@ -131,9 +148,7 @@ def sync(repo: Repo, garmin: GarminPort, llm: LLMProvider, *, now: datetime) -> 
         and repo.open_injury(cycle.id) is None
     ):
         proposal_id = _propose(repo, garmin, llm, cycle, zones, done_ids, missed_ids, today)
-        settings.proposal_due = False
-        settings.pending_done = []
-        save_sync_state(repo, settings)
+        mark_proposed(repo, done_ids)
     return SyncResult(
         new_activities=new_activities,
         missed=len(missed_ids),
@@ -154,12 +169,7 @@ def _propose(
     """Demande l'ajustement à Claude et enregistre la Proposal (l'ancienne passe `stale`)."""
     sessions = repo.sessions(cycle.id)
     by_id = {s.id: s for s in sessions}
-    with repo.transaction() as db:
-        acts = {
-            a.session_id: a
-            for a in db.exec(select(Activity).where(Activity.session_id.in_(done_ids))).all()  # type: ignore[union-attr]
-        } if done_ids else {}
-    done = [(by_id[sid], acts[sid]) for sid in done_ids]
+    done = done_pairs(repo, sessions, done_ids)
     missed = [by_id[sid] for sid in missed_ids]
     adj = ask_adjustment(
         repo, garmin, llm, cycle, zones, sessions, today, done=done, missed=missed

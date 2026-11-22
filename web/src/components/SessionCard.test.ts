@@ -41,14 +41,33 @@ test("Corriger lists the free runs of the last 14 days and re-matches in one cli
   expect(JSON.parse(calls[1].body!)).toEqual({ session_id: 7 });
 });
 
-test("Aucune unmatches the current activity", async () => {
+test("Détacher unmatches the current activity without opening Corriger", async () => {
   const calls = stubApi();
+  const onchanged = vi.fn();
+  render(SessionCard, { session, weekMonday: "2026-11-09", onchanged, activities: [act(1, "2026-11-10", 7)] });
+  await fireEvent.click(screen.getByRole("button", { name: "Détacher" }));
+  await waitFor(() => expect(onchanged).toHaveBeenCalled());
+  expect(calls).toHaveLength(1);
+  expect(calls[0].url).toBe("/api/activities/1/match");
+  expect(JSON.parse(calls[0].body!)).toEqual({ session_id: null });
+});
+
+test("Corriger no longer offers Aucune", async () => {
+  stubApi();
   render(SessionCard, { session, weekMonday: "2026-11-09", activities: [act(1, "2026-11-10", 7)] });
   await fireEvent.click(screen.getByRole("button", { name: "Corriger" }));
-  await fireEvent.click(await screen.findByRole("button", { name: "Aucune" }));
-  await waitFor(() => expect(calls).toHaveLength(2));
-  expect(calls[1].url).toBe("/api/activities/1/match");
-  expect(JSON.parse(calls[1].body!)).toEqual({ session_id: null });
+  await screen.findByRole("button", { name: /^mar\. 10\/11/ });
+  expect(screen.queryByRole("button", { name: "Aucune" })).toBeNull();
+});
+
+test("no Détacher without a found activity, nor read-only", async () => {
+  stubApi();
+  const { unmount } = render(SessionCard, { session, weekMonday: "2026-11-09" }); // réalisée, activité introuvable
+  expect(screen.getByRole("button", { name: "Corriger" })).toBeVisible();
+  expect(screen.queryByRole("button", { name: "Détacher" })).toBeNull();
+  unmount();
+  render(SessionCard, { session, weekMonday: "2026-11-09", activities: [act(1, "2026-11-10", 7)], readonly: true });
+  expect(screen.queryByRole("button", { name: "Détacher" })).toBeNull();
 });
 
 test("an unmatched session can be linked by hand to a free run", async () => {
@@ -59,7 +78,7 @@ test("an unmatched session can be linked by hand to a free run", async () => {
   await fireEvent.click(await screen.findByRole("button", { name: "jeu. 05/11 · 52 min · 10,2 km" }));
   await waitFor(() => expect(calls).toHaveLength(2));
   expect(JSON.parse(calls[1].body!)).toEqual({ session_id: 7 });
-  expect(screen.queryByRole("button", { name: "Aucune" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Détacher" })).toBeNull();
 });
 
 test("an empty list says no free run is available", async () => {

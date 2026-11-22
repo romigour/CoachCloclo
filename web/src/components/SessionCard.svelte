@@ -184,9 +184,14 @@
       {:else}
         <span></span>
       {/if}
-      <button class="small" onclick={toggleCorrecting} disabled={busy} aria-expanded={correcting}>
-        {matched || session.status === "done" ? "Corriger" : "Rattacher une activité"}
-      </button>
+      <span class="row tight">
+        {#if matched}
+          <button class="small" onclick={() => rematch(matched.id, null)} disabled={busy}>Détacher</button>
+        {/if}
+        <button class="small" onclick={toggleCorrecting} disabled={busy} aria-expanded={correcting}>
+          {matched || session.status === "done" ? "Corriger" : "Rattacher une activité"}
+        </button>
+      </span>
     </div>
     {#if session.status === "done" && matched}
       <details class="cmp" bind:this={detailsEl} ontoggle={(e) => e.currentTarget.open && loadComparison()}>
@@ -243,9 +248,6 @@
             {formatActivity(a)}
           </button>
         {/each}
-        {#if matched}
-          <button class="small" onclick={() => rematch(matched.id, null)} disabled={busy}>Aucune</button>
-        {/if}
         {#if !candidates.length}<span class="meta">Aucune course libre ces {FREE_DAYS} derniers jours</span>{/if}
       </div>
     {/if}

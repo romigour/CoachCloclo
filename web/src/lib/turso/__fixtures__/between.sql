@@ -51,9 +51,11 @@ CREATE TABLE cycle (
 	plan_accepted BOOLEAN NOT NULL, 
 	needs_generation BOOLEAN NOT NULL, 
 	recovery_from_goal_id INTEGER, 
+	adjust_due BOOLEAN DEFAULT '0' NOT NULL, 
+	adjust_notes_json VARCHAR DEFAULT '[]' NOT NULL, 
 	PRIMARY KEY (id)
 );
-INSERT INTO "cycle" VALUES(1,'2020-01-01 08:00:00.000000','done','2020-01-06','2020-03-01',4,'["lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche"]','samedi',0,1,0,NULL);
+INSERT INTO "cycle" VALUES(1,'2020-01-01 08:00:00.000000','done','2020-01-06','2020-03-01',4,'["lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche"]','samedi',0,1,0,NULL,0,'[]');
 CREATE TABLE event (
 	id INTEGER NOT NULL, 
 	cycle_id INTEGER NOT NULL, 

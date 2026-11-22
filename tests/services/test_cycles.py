@@ -236,7 +236,7 @@ def test_first_goal_after_finished_cycle_keeps_recovery_and_injury(repo):
     from coach.services.goals import add_goal
 
     _after_finished(repo)
-    goal, _ = add_goal(repo, _garmin(date(2027, 5, 26)), FakeLLMProvider([]), _first_input())
+    goal, _ = add_goal(repo, _garmin(date(2027, 5, 26)), _first_input())
     cycle = repo.active_cycle()
     assert (cycle.plan_start, cycle.end_date) == (date(2027, 5, 24), date(2027, 7, 4))
     principal = next(g for g in repo.past_goals() if g.race_date == RACE)
@@ -251,7 +251,7 @@ def test_first_goal_long_after_finished_cycle_has_no_recovery(repo):
     from coach.services.goals import add_goal
 
     _after_finished(repo)
-    add_goal(repo, _garmin(date(2027, 6, 20)), FakeLLMProvider([]), _first_input(race_date=date(2027, 8, 1)))
+    add_goal(repo, _garmin(date(2027, 6, 20)), _first_input(race_date=date(2027, 8, 1)))
     cycle = repo.active_cycle()
     assert cycle.plan_start == date(2027, 6, 14) and cycle.recovery_from_goal_id is None
     assert repo.open_injury(cycle.id) is not None
@@ -263,7 +263,7 @@ def test_first_goal_without_active_cycle_accepts_close_principal(repo):
     from coach.services.goals import add_goal
 
     _finished(repo)
-    add_goal(repo, _garmin(date(2027, 5, 24)), FakeLLMProvider([]), _first_input(race_date=date(2027, 9, 5)))
+    add_goal(repo, _garmin(date(2027, 5, 24)), _first_input(race_date=date(2027, 9, 5)))
     assert repo.active_cycle().end_date == date(2027, 9, 5)
     assert [g.race_date for g in repo.upcoming_goals()] == [NEXT, date(2027, 9, 5)]
 
@@ -273,7 +273,7 @@ def test_first_goal_without_active_cycle_ends_at_next_principal(repo):
     from coach.services.goals import add_goal
 
     _finished(repo)
-    add_goal(repo, _garmin(date(2027, 5, 24)), FakeLLMProvider([]),
+    add_goal(repo, _garmin(date(2027, 5, 24)),
              _first_input(race_date=date(2027, 10, 31), priority="secondaire"))
     cycle = repo.active_cycle()
     assert (cycle.plan_start, cycle.end_date) == (date(2027, 5, 24), NEXT)

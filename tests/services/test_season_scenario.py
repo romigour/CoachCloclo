@@ -52,7 +52,7 @@ GOOD = {11: DAYS[:3], 12: ["mardi", "jeudi"], 20: DAYS[:3]}
 def season(repo):
     garmin = FakeGarminClient(metrics=METRICS, today=TODAY)
     llm = FakeLLMProvider([])
-    add_goal(repo, garmin, llm, goal(
+    add_goal(repo, garmin, goal(
         distance_km=100, d_plus_m=6000, race_date=ULTRA, priority="principal", sessions_per_week=4))
     return repo, garmin
 
@@ -64,9 +64,9 @@ def test_season_close_races_are_accepted(season):
     cycle = repo.active_cycle()
     assert (cycle.plan_start, cycle.end_date, cycle.sessions_per_week) == (TODAY, ULTRA, 4)
 
-    add_goal(repo, garmin, FakeLLMProvider([]), goal())  # trail 20 km Secondaire, samedi
-    add_goal(repo, garmin, FakeLLMProvider([]), goal(distance_km=30, race_date=TRAIL_30))  # Secondaire aussi
-    add_goal(repo, garmin, FakeLLMProvider([]), goal(type="route", distance_km=21.1, d_plus_m=0, race_date=SEMI))
+    add_goal(repo, garmin, goal())  # trail 20 km Secondaire, samedi
+    add_goal(repo, garmin, goal(distance_km=30, race_date=TRAIL_30))  # Secondaire aussi
+    add_goal(repo, garmin, goal(type="route", distance_km=21.1, d_plus_m=0, race_date=SEMI))
     assert {g.race_date for g in repo.upcoming_goals()} == RACES
     prox = proximity(repo.upcoming_goals())
     semi = next(g for g in repo.upcoming_goals() if g.race_date == SEMI)
@@ -76,9 +76,9 @@ def test_season_close_races_are_accepted(season):
 
 
 def _full_season(repo, garmin):
-    add_goal(repo, garmin, FakeLLMProvider([]), goal())
-    add_goal(repo, garmin, FakeLLMProvider([]), goal(distance_km=30, race_date=TRAIL_30, priority="plaisir"))
-    add_goal(repo, garmin, FakeLLMProvider([]),
+    add_goal(repo, garmin, goal())
+    add_goal(repo, garmin, goal(distance_km=30, race_date=TRAIL_30, priority="plaisir"))
+    add_goal(repo, garmin,
              goal(type="route", distance_km=21.1, d_plus_m=0, race_date=SEMI, priority="plaisir"))
 
 

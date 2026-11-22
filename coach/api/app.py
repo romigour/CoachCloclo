@@ -211,19 +211,6 @@ def _invalid(errors: list[dict], prefix: tuple = ()) -> JSONResponse:
     ])
 
 
-class _LazyLLM:
-    """Fournisseur LLM créé au premier appel : un objectif sans effet sur le plan n'en a pas besoin."""
-
-    def __init__(self, factory: Callable[[], LLMProvider]):
-        self._factory = factory
-        self._llm: LLMProvider | None = None
-
-    def complete(self, system: str, prompt: str) -> str:
-        if self._llm is None:
-            self._llm = self._factory()
-        return self._llm.complete(system, prompt)
-
-
 def _prox(repo: Repo) -> dict[int, Proximity]:
     """Blocs et courses rapprochées des objectifs à venir et des courses des 14 derniers jours."""
     return proximity([*repo.upcoming_goals(), *repo.recent_done_goals(date.today())])
@@ -232,7 +219,12 @@ def _prox(repo: Repo) -> dict[int, Proximity]:
 def _change_dict(result: ChangeResult, goal: Goal | None = None, prox: dict[int, Proximity] | None = None) -> dict:
     """Effet d'un changement d'objectif ; `notice` signale un bloc ou des courses rapprochées."""
     notice = proximity_notice(goal, prox) if goal is not None and prox is not None else None
-    body = {"proposal_id": result.proposal_id, "needs_generation": result.needs_generation, "notice": notice}
+    body = {
+        "proposal_id": result.proposal_id,
+        "needs_generation": result.needs_generation,
+        "adjust_due": result.adjust_due,
+        "notice": notice,
+    }
     return body if goal is None else {"goal": _goal_dict(goal, prox), **body}
 
 
@@ -264,6 +256,7 @@ def _cycle_dict(cycle: Cycle) -> dict:
         "include_bike": cycle.include_bike,
         "plan_accepted": cycle.plan_accepted,
         "needs_generation": cycle.needs_generation,
+        "adjust_due": cycle.adjust_due,
     }
 
 
@@ -683,7 +676,6 @@ def create_app(
         type: Annotated[Literal["route", "trail"], Form()],
         distance_km: Annotated[float, Form()],
         race_date: Annotated[date, Form()],
-        request: Request,
         sessions_per_week: Annotated[int | None, Form()] = None,
         d_plus_m: Annotated[int, Form()] = 0,
         target_time: Annotated[str | None, Form()] = None,
@@ -716,17 +708,17 @@ def create_app(
             )
         except ValidationError as e:
             return _invalid(e.errors(), ("body",))
-        goal, result = add_goal(repo, garmin, _LazyLLM(request.app.state.llm_factory), data)
+        goal, result = add_goal(repo, garmin, data)
         return _change_dict(result, goal, _prox(repo))
 
     @api.patch("/goals/{goal_id}")
-    def patch_goal(goal_id: int, body: GoalUpdate, request: Request, repo: RepoDep, garmin: GarminDep):
-        goal, result = update_goal(repo, garmin, _LazyLLM(request.app.state.llm_factory), goal_id, body)
+    def patch_goal(goal_id: int, body: GoalUpdate, repo: RepoDep, garmin: GarminDep):
+        goal, result = update_goal(repo, garmin, goal_id, body)
         return _change_dict(result, goal, _prox(repo))
 
     @api.delete("/goals/{goal_id}")
-    def delete_goal(goal_id: int, request: Request, repo: RepoDep, garmin: GarminDep):
-        return _change_dict(remove_goal(repo, garmin, _LazyLLM(request.app.state.llm_factory), goal_id))
+    def delete_goal(goal_id: int, repo: RepoDep, garmin: GarminDep):
+        return _change_dict(remove_goal(repo, garmin, goal_id))
 
     @api.patch("/cycle")
     def patch_cycle(body: PlanSettingsUpdate, repo: RepoDep, garmin: GarminDep, llm: LLMDep):

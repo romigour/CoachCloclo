@@ -184,7 +184,7 @@ def test_accept_proposal_applies_estimates(repo, coach_home, fake_garmin, accept
 
 
 def test_add_goal_estimate_applied_on_accept(repo, coach_home, monday_garmin):
-    """Ajout d'un Secondaire sans temps : l'estimation porte l'id provisoire, enregistrée sous le vrai id."""
+    """Ajout d'un Secondaire sans temps : la mise à jour l'estime sous son id, appliquée à l'acceptation."""
     from coach.services.garmin_export import apply_proposal
     from coach.services.goals import add_goal
     from coach.llm.schemas import Change
@@ -193,15 +193,20 @@ def test_add_goal_estimate_applied_on_accept(repo, coach_home, monday_garmin):
     accepted_goal(repo, monday_garmin)
     week7 = next(s for s in repo.sessions(repo.active_cycle().id) if s.week_index == 7 and s.order == 3)
     remove = Change(op="remove", session_id=week7.id, reason="course dimanche")
-    llm = FakeLLMProvider([_estimate_json((NEW_GOAL_ID, 3000), changes=[remove])])
-    goal, result = add_goal(repo, monday_garmin, llm, other_input())
-    assert goal.target_time_s is None  # pas avant l'acceptation
+    goal, _ = add_goal(repo, monday_garmin, other_input())
+    llm = FakeLLMProvider([_estimate_json((goal.id, 3000), changes=[remove])])
+    proposal_id = request_adjustment(repo, monday_garmin, llm)
+    assert _get_goal(repo, goal.id).target_time_s is None  # pas avant l'acceptation
     with repo.transaction() as db:
-        assert json.loads(db.get(Proposal, result.proposal_id).estimates_json) == [{"goal_id": goal.id, "seconds": 3000}]
-    apply_proposal(repo, monday_garmin, result.proposal_id)
-    with repo.transaction() as db:
-        g = db.get(Goal, goal.id)
+        assert json.loads(db.get(Proposal, proposal_id).estimates_json) == [{"goal_id": goal.id, "seconds": 3000}]
+    apply_proposal(repo, monday_garmin, proposal_id)
+    g = _get_goal(repo, goal.id)
     assert (g.target_time_s, g.target_source) == (3000, "claude")
+
+
+def _get_goal(repo, goal_id: int) -> Goal:
+    with repo.transaction() as db:
+        return db.get(Goal, goal_id)
 
 
 def test_ask_adjustment_records_usage(repo, coach_home, fake_garmin, accepted_plan):

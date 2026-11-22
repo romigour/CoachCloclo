@@ -231,8 +231,14 @@ def test_patch_goal(make_client):
     body = r.json()
     assert body["goal"]["target_time_s"] == 18900 and body["goal"]["target_source"] == "user"
     assert body["goal"]["race_date"] == "2027-02-06"
-    assert isinstance(body["proposal_id"], int) and body["needs_generation"] is False
-    assert client.get("/api/proposals/pending").json()["id"] == body["proposal_id"]
+    # plus d'appel à Claude : le plan est marqué à mettre à jour, la mise à jour se lance à la demande
+    assert (body["proposal_id"], body["needs_generation"], body["adjust_due"]) == (None, False, True)
+    assert client.get("/api/proposals/pending").json() is None
+    assert client.get("/api/status").json()["cycle"]["adjust_due"] is True
+    assert client.get("/api/plan").json()["cycle"]["adjust_due"] is True
+    proposal_id = client.post("/api/cycle/adjust").json()["proposal_id"]
+    assert client.get("/api/proposals/pending").json()["id"] == proposal_id
+    assert client.get("/api/status").json()["cycle"]["adjust_due"] is False
 
 
 def test_patch_goal_invalid(make_client):
@@ -1216,7 +1222,7 @@ def test_add_and_remove_goals(make_client):
     r = client.patch(f"/api/goals/{later['id']}", json={"priority": "plaisir"})
     assert r.status_code == 200 and r.json()["goal"]["priority"] == "plaisir"
     r = client.delete(f"/api/goals/{later['id']}")
-    assert r.status_code == 200 and r.json() == {"proposal_id": None, "needs_generation": False, "notice": None}
+    assert r.status_code == 200 and r.json() == {"proposal_id": None, "needs_generation": False, "adjust_due": False, "notice": None}
     assert client.get("/api/plan").json()["horizon"] == []
     assert client.delete(f"/api/goals/{later['id']}").status_code == 422
 

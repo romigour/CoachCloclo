@@ -271,7 +271,7 @@ def _two_goals(repo, garmin) -> tuple[Goal, Goal]:
     from tests.services.test_goals import other_input
 
     principal = _goal(repo, garmin)
-    secondary, result = add_goal(repo, garmin, FakeLLMProvider([]), other_input())  # brouillon : pas d'appel
+    secondary, result = add_goal(repo, garmin, other_input())  # brouillon : pas d'appel
     assert result.needs_generation
     return principal, secondary
 

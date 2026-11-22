@@ -20,6 +20,7 @@ from coach.services.goals import (
     remove_goal,
     update_goal,
 )
+from coach.services.adjust import request_adjustment
 from coach.services.plans import accept_plan
 from coach.services.race_strategy import export_race
 from tests.plan.factories import make_db_session
@@ -64,7 +65,7 @@ def other_input(**overrides) -> GoalInput:
 
 def first_goal(repo, garmin, **overrides) -> Goal:
     """Premier objectif (crée le cycle) ; aucun appel à Claude."""
-    return add_goal(repo, garmin, FakeLLMProvider([]), goal_input(**overrides))[0]
+    return add_goal(repo, garmin, goal_input(**overrides))[0]
 
 
 def _cid(repo) -> int:
@@ -131,7 +132,7 @@ def _proposals(repo) -> list[tuple[int, str]]:
 def test_first_goal_creates_cycle_and_needs_generation(repo, fake_garmin):
     llm = FakeLLMProvider([])
     goal, result = add_goal(
-        repo, fake_garmin, llm,
+        repo, fake_garmin,
         goal_input(available_days=["mardi", "jeudi", "samedi"], long_run_day="samedi", include_bike=True,
                    priority="secondaire"),
     )
@@ -146,7 +147,7 @@ def test_first_goal_creates_cycle_and_needs_generation(repo, fake_garmin):
 
 def test_first_goal_requires_sessions_per_week(repo, fake_garmin):
     with pytest.raises(GoalError, match="Indique le nombre de séances par semaine"):
-        add_goal(repo, fake_garmin, FakeLLMProvider([]), goal_input(sessions_per_week=None))
+        add_goal(repo, fake_garmin, goal_input(sessions_per_week=None))
     assert repo.active_cycle() is None and _goals(repo) == []
 
 
@@ -199,7 +200,7 @@ def test_gpx_write_failure_saves_nothing(repo, coach_home, fake_garmin, monkeypa
     monkeypatch.setattr(type(repo), "save_gpx", boom)
     with pytest.raises(OSError):
         add_goal(
-            repo, fake_garmin, FakeLLMProvider([]),
+            repo, fake_garmin,
             other_input(race_date=date(2027, 4, 11), gpx=(FIXTURES / "climb.gpx").read_bytes()),
         )
     assert [g.id for g in _goals(repo)] == [old.id]
@@ -248,38 +249,38 @@ def test_create_goal_stores_availability_in_week_order(repo, fake_garmin):
 # --- ajout dans un cycle actif ---------------------------------------------------------------
 
 
-def test_add_secondary_in_accepted_cycle_asks_adjustment(repo, monday_garmin):
+def test_add_secondary_in_accepted_cycle_defers_adjustment(repo, monday_garmin):
     principal = accepted_goal(repo, monday_garmin)
-    llm = FakeLLMProvider([race_adjustment_json(repo, 7)])
-    goal, result = add_goal(repo, monday_garmin, llm, other_input())
-    assert result.proposal_id is not None and result.needs_generation is False
-    assert _proposals(repo) == [(result.proposal_id, "pending")]
+    goal, result = add_goal(repo, monday_garmin, other_input())
+    assert result == ChangeResult(proposal_id=None, needs_generation=False, adjust_due=True)
+    assert _proposals(repo) == []
     cycle = repo.active_cycle()
     assert cycle.end_date == date(2027, 2, 7) and cycle.plan_accepted is True
+    assert cycle.adjust_notes() == [
+        "L'athlète a ajouté l'objectif Course sur route de 10 km du 20/12/2026 (Secondaire). " + NOTE_END
+    ]
     assert [g.id for g in repo.goals_in(cycle)] == [goal.id, principal.id]
     assert (goal.priority, goal.target_source) == ("secondaire", "claude")
-    assert (
-        "L'athlète a ajouté l'objectif Course sur route de 10 km du 20/12/2026 (Secondaire). " + NOTE_END
-    ) in llm.calls[0]
     assert len(repo.sessions(_cid(repo))) == 41 and monday_garmin.calls == []
 
 
 def test_add_goal_close_to_principal_is_accepted(repo, monday_garmin):
     """Plus de règle d'écart : un Secondaire 7 jours avant le Principal est intégré à son affûtage."""
     accepted_goal(repo, monday_garmin)
-    llm = FakeLLMProvider([race_adjustment_json(repo, 13)])
-    goal, _ = add_goal(repo, monday_garmin, llm, other_input(race_date=date(2027, 1, 31)))
+    goal, _ = add_goal(repo, monday_garmin, other_input(race_date=date(2027, 1, 31)))
     assert goal.status == "active" and len(_goals(repo)) == 2
+    llm = FakeLLMProvider([race_adjustment_json(repo, 13, goal_id=goal.id)])
+    request_adjustment(repo, monday_garmin, llm)
     assert "Course sur route de 10 km (31/01) est intégré à l'affûtage de Trail de 42 km (07/02)" in llm.calls[0]
 
 
 def test_add_goal_must_be_after_today(repo, monday_garmin):
     accepted_goal(repo, monday_garmin)
     with pytest.raises(GoalError, match="après aujourd'hui"):
-        add_goal(repo, monday_garmin, FakeLLMProvider([]), other_input(race_date=date(2026, 11, 2)))
+        add_goal(repo, monday_garmin, other_input(race_date=date(2026, 11, 2)))
     # dans un cycle actif, la règle des 14 jours ne s'applique pas et les réglages sont facultatifs
     goal, _ = add_goal(
-        repo, monday_garmin, FakeLLMProvider([race_adjustment_json(repo, 1)]),
+        repo, monday_garmin,
         other_input(race_date=date(2026, 11, 8), priority="plaisir"),
     )
     assert goal.race_date == date(2026, 11, 8)
@@ -288,7 +289,7 @@ def test_add_goal_must_be_after_today(repo, monday_garmin):
 def test_add_goal_after_principal_is_horizon(repo, monday_garmin):
     accepted_goal(repo, monday_garmin)
     llm = FakeLLMProvider([])
-    goal, result = add_goal(repo, monday_garmin, llm, other_input(race_date=date(2027, 4, 11), priority="principal"))
+    goal, result = add_goal(repo, monday_garmin, other_input(race_date=date(2027, 4, 11), priority="principal"))
     assert result == ChangeResult(proposal_id=None, needs_generation=False)
     assert llm.calls == [] and _proposals(repo) == []
     cycle = repo.active_cycle()
@@ -299,9 +300,8 @@ def test_add_goal_after_principal_is_horizon(repo, monday_garmin):
 def test_add_closer_principal_shrinks_cycle(repo, monday_garmin):
     old = accepted_goal(repo, monday_garmin)
     monday_garmin.fail_on = {"delete_workout"}  # garde la trace des séances exportées à retirer
-    llm = FakeLLMProvider([race_adjustment_json(repo, 11)])
-    goal, result = add_goal(repo, monday_garmin, llm, other_input(race_date=date(2027, 1, 17), priority="principal"))
-    assert result.proposal_id is not None and result.needs_generation is False
+    goal, result = add_goal(repo, monday_garmin, other_input(race_date=date(2027, 1, 17), priority="principal"))
+    assert result == ChangeResult(proposal_id=None, needs_generation=False, adjust_due=True)
     cycle = repo.active_cycle()
     assert cycle.end_date == date(2027, 1, 17)  # 11 semaines
     assert [g.id for g in repo.goals_in(cycle)] == [goal.id]
@@ -310,6 +310,9 @@ def test_add_closer_principal_shrinks_cycle(repo, monday_garmin):
     assert [(s.week_index, s.pending_removal) for s in late] == [(13, True), (14, True)]
     assert max(s.week_index for s in repo.sessions(cycle.id) if not s.pending_removal) == 11
     assert monday_garmin.schedules == {}
+    # la mise à jour ne porte plus que sur les 11 semaines
+    llm = FakeLLMProvider([race_adjustment_json(repo, 11, goal_id=goal.id)])
+    request_adjustment(repo, monday_garmin, llm)
     assert "| semaine 11 |" in llm.calls[0] and "| semaine 12 |" not in llm.calls[0]
 
 
@@ -317,7 +320,7 @@ def test_add_far_goal_without_principal_regenerates(repo, monday_garmin):
     accepted_goal(repo, monday_garmin, priority="secondaire")
     before = [s.model_dump() for s in repo.sessions(_cid(repo))]
     llm = FakeLLMProvider([])
-    goal, result = add_goal(repo, monday_garmin, llm, other_input(race_date=date(2027, 3, 7)))
+    goal, result = add_goal(repo, monday_garmin, other_input(race_date=date(2027, 3, 7)))
     assert result == ChangeResult(proposal_id=None, needs_generation=True)
     cycle = repo.active_cycle()
     assert (cycle.end_date, cycle.plan_accepted, cycle.needs_generation) == (date(2027, 3, 7), False, True)
@@ -328,24 +331,23 @@ def test_add_far_goal_without_principal_regenerates(repo, monday_garmin):
 def test_add_goal_in_draft_marks_needs_generation(repo, monday_garmin):
     first_goal(repo, monday_garmin)
     llm = FakeLLMProvider([])
-    _, result = add_goal(repo, monday_garmin, llm, other_input())
+    _, result = add_goal(repo, monday_garmin, other_input())
     assert result == ChangeResult(proposal_id=None, needs_generation=True)
     cycle = repo.active_cycle()
     assert (cycle.end_date, cycle.plan_accepted, cycle.needs_generation) == (date(2027, 2, 7), False, True)
     assert llm.calls == []
 
 
-def test_adjust_failure_saves_nothing(repo, monday_garmin):
+def test_adjust_change_saved_without_claude(repo, monday_garmin):
+    """Ajouts dans le cycle : enregistrés aussitôt, sans Claude ; l'ancienne proposition est périmée."""
     accepted_goal(repo, monday_garmin)
     old = repo.add(Proposal(analysis="avant", changes_json="[]"))
-    before = [s.model_dump() for s in repo.sessions(_cid(repo))]
     for data in (other_input(), other_input(race_date=date(2027, 1, 17), priority="principal")):
-        with pytest.raises(LLMInvalidResponse):
-            add_goal(repo, monday_garmin, FakeLLMProvider(["{}", "{}"]), data)
-    assert len(_goals(repo)) == 1
-    assert repo.active_cycle().end_date == date(2027, 2, 7)
-    assert [s.model_dump() for s in repo.sessions(_cid(repo))] == before
-    assert _proposals(repo) == [(old.id, "pending")] and monday_garmin.calls == []
+        add_goal(repo, monday_garmin, data)
+    assert len(_goals(repo)) == 3
+    assert repo.active_cycle().end_date == date(2027, 1, 17)
+    assert len(repo.active_cycle().adjust_notes()) == 2
+    assert _proposals(repo) == [(old.id, "stale")]
 
 
 # --- modification ----------------------------------------------------------------------------
@@ -353,16 +355,15 @@ def test_adjust_failure_saves_nothing(repo, monday_garmin):
 
 def test_update_goal_target_only(repo, monday_garmin):
     goal = accepted_goal(repo, monday_garmin, target_time_s=18000)
-    llm = FakeLLMProvider([adjustment_json()])
-    saved, result = update_goal(repo, monday_garmin, llm, goal.id, GoalUpdate(target_time="5:30"))
+    saved, result = update_goal(repo, monday_garmin, goal.id, GoalUpdate(target_time="5:30"))
     g = _goals(repo)[0]
     assert (g.target_time_s, g.target_source, g.race_date) == (19800, "user", date(2027, 2, 7))
     assert (saved.target_time_s, saved.target_source) == (19800, "user")
-    assert _proposals(repo) == [(result.proposal_id, "pending")] and result.needs_generation is False
-    assert (
+    assert result == ChangeResult(proposal_id=None, needs_generation=False, adjust_due=True)
+    assert repo.active_cycle().adjust_notes() == [
         "L'athlète a modifié l'objectif Trail de 42 km du 07/02/2027 (Principal) : "
         "temps visé 5 h 30 au lieu de 5 h 00. " + NOTE_END
-    ) in llm.calls[0]
+    ]
     assert len(repo.sessions(_cid(repo))) == 41 and monday_garmin.calls == []
 
 
@@ -370,17 +371,16 @@ def test_update_goal_target_without_previous(repo, monday_garmin):
     goal = accepted_goal(repo, monday_garmin)
     with repo.transaction() as db:  # mode Claude, aucun temps encore estimé
         db.get(Goal, goal.id).target_time_s = None
-    llm = FakeLLMProvider([adjustment_json()])
-    update_goal(repo, monday_garmin, llm, goal.id, GoalUpdate(target_time="5:30"))
-    assert "temps visé 5 h 30, aucun auparavant" in llm.calls[0]
+    update_goal(repo, monday_garmin, goal.id, GoalUpdate(target_time="5:30"))
+    assert "temps visé 5 h 30, aucun auparavant" in repo.active_cycle().adjust_notes()[0]
     g = _goals(repo)[0]
     assert (g.target_time_s, g.target_source) == (19800, "user")
 
 
 def test_update_goal_earlier_date_removes_weeks(repo, monday_garmin):
     goal = accepted_goal(repo, monday_garmin)
-    llm = FakeLLMProvider([race_adjustment_json(repo, 12, goal_id=None)])
-    update_goal(repo, monday_garmin, llm, goal.id, GoalUpdate(race_date=date(2027, 1, 24)))
+    _, result = update_goal(repo, monday_garmin, goal.id, GoalUpdate(race_date=date(2027, 1, 24)))
+    assert result.adjust_due is True and result.proposal_id is None
     assert _goals(repo)[0].race_date == date(2027, 1, 24)
     assert repo.active_cycle().end_date == date(2027, 1, 24)
     # todo des semaines 13-14 supprimées ; exportées retirées de la montre puis supprimées
@@ -388,14 +388,13 @@ def test_update_goal_earlier_date_removes_weeks(repo, monday_garmin):
     assert len(repo.sessions(_cid(repo))) == 36
     assert monday_garmin.calls == ["unschedule", "delete_workout"] * 2
     assert monday_garmin.workouts == {} and monday_garmin.schedules == {} and monday_garmin.calendar == {}
-    assert "course déplacée du 07/02/2027 au 24/01/2027" in llm.calls[0]
-    assert "| semaine 12 |" in llm.calls[0] and "| semaine 13 |" not in llm.calls[0]
+    assert "course déplacée du 07/02/2027 au 24/01/2027" in repo.active_cycle().adjust_notes()[0]
 
 
 def test_update_goal_date_in_current_week(repo, monday_garmin):
     goal = accepted_goal(repo, monday_garmin)
     update_goal(
-        repo, monday_garmin, FakeLLMProvider([race_adjustment_json(repo, 1, goal_id=None)]), goal.id,
+        repo, monday_garmin, goal.id,
         GoalUpdate(race_date=date(2026, 11, 8)),
     )
     sessions = repo.sessions(_cid(repo))
@@ -407,7 +406,7 @@ def test_update_goal_removes_exported_after_race_day(repo, monday_garmin):
     goal = accepted_goal(repo, monday_garmin)
     # course le lundi 2027-01-25 (semaine 13) : la séance exportée du mardi 26 tombe après
     update_goal(
-        repo, monday_garmin, FakeLLMProvider([adjustment_json()]), goal.id,
+        repo, monday_garmin, goal.id,
         GoalUpdate(race_date=date(2027, 1, 25)),
     )
     assert repo.sessions(_cid(repo), week_index=13) == []  # les todo (mardi) tombent aussi après la course
@@ -423,7 +422,7 @@ def test_update_goal_mid_week_removes_todo_after_race_day(repo, monday_garmin):
             s.suggested_day = "dimanche" if s.order == 3 else "jeudi"
             db.add(s)
     update_goal(
-        repo, monday_garmin, FakeLLMProvider([adjustment_json()]), goal.id,
+        repo, monday_garmin, goal.id,
         GoalUpdate(race_date=date(2027, 1, 30)),
     )
     todo13 = [s.order for s in repo.sessions(_cid(repo), week_index=13) if s.status == "todo"]
@@ -433,12 +432,9 @@ def test_update_goal_mid_week_removes_todo_after_race_day(repo, monday_garmin):
 def test_update_goal_garmin_failure_keeps_edit(repo, monday_garmin):
     goal = accepted_goal(repo, monday_garmin)
     monday_garmin.fail_on = {"delete_workout"}
-    _, result = update_goal(
-        repo, monday_garmin, FakeLLMProvider([race_adjustment_json(repo, 12, goal_id=None)]), goal.id,
-        GoalUpdate(race_date=date(2027, 1, 24)),
-    )
+    _, result = update_goal(repo, monday_garmin, goal.id, GoalUpdate(race_date=date(2027, 1, 24)))
     assert _goals(repo)[0].race_date == date(2027, 1, 24)
-    assert _proposals(repo) == [(result.proposal_id, "pending")]
+    assert result.adjust_due is True and _proposals(repo) == []
     late = [s for s in repo.sessions(_cid(repo)) if s.week_index > 12]
     assert len(late) == 2
     for s in late:
@@ -451,7 +447,7 @@ def test_update_goal_garmin_failure_keeps_edit(repo, monday_garmin):
 def test_update_goal_later_date_regenerates(repo, monday_garmin):
     goal = accepted_goal(repo, monday_garmin)
     llm = FakeLLMProvider([])
-    saved, result = update_goal(repo, monday_garmin, llm, goal.id, GoalUpdate(race_date=date(2027, 2, 21)))
+    saved, result = update_goal(repo, monday_garmin, goal.id, GoalUpdate(race_date=date(2027, 2, 21)))
     assert result == ChangeResult(proposal_id=None, needs_generation=True)
     cycle = repo.active_cycle()
     assert (cycle.end_date, cycle.plan_accepted, cycle.needs_generation) == (date(2027, 2, 21), False, True)
@@ -462,26 +458,8 @@ def test_update_goal_later_date_regenerates(repo, monday_garmin):
 def test_update_goal_makes_pending_stale(repo, monday_garmin):
     goal = accepted_goal(repo, monday_garmin)
     old = repo.add(Proposal(analysis="avant", changes_json="[]"))
-    _, result = update_goal(
-        repo, monday_garmin, FakeLLMProvider([adjustment_json()]), goal.id, GoalUpdate(target_time="5:30")
-    )
-    assert _proposals(repo) == [(old.id, "stale"), (result.proposal_id, "pending")]
-
-
-def test_update_goal_llm_failure_changes_nothing(repo, monday_garmin):
-    goal = accepted_goal(repo, monday_garmin, target_time_s=18000)
-    old = repo.add(Proposal(analysis="avant", changes_json="[]"))
-    before = [s.model_dump() for s in repo.sessions(_cid(repo))]
-    with pytest.raises(LLMInvalidResponse):
-        update_goal(
-            repo, monday_garmin, FakeLLMProvider(["{}", "{}"]), goal.id,
-            GoalUpdate(race_date=date(2027, 1, 24), target_time="5:30"),
-        )
-    g = _goals(repo)[0]
-    assert (g.race_date, g.target_time_s, g.target_source) == (date(2027, 2, 7), 18000, "user")
-    assert repo.active_cycle().end_date == date(2027, 2, 7)
-    assert [s.model_dump() for s in repo.sessions(_cid(repo))] == before
-    assert _proposals(repo) == [(old.id, "pending")]
+    update_goal(repo, monday_garmin, goal.id, GoalUpdate(target_time="5:30"))
+    assert _proposals(repo) == [(old.id, "stale")]
 
 
 @pytest.mark.parametrize(
@@ -501,45 +479,41 @@ def test_update_goal_rejections(repo, monday_garmin, update, match):
     goal = accepted_goal(repo, monday_garmin, target_time_s=18000)
     llm = FakeLLMProvider([])
     with pytest.raises(GoalError, match=match):
-        update_goal(repo, monday_garmin, llm, goal.id, update)
+        update_goal(repo, monday_garmin, goal.id, update)
     assert llm.calls == []
 
 
 def test_update_goal_in_draft_and_unknown_goals(repo, monday_garmin):
     draft = first_goal(repo, monday_garmin)
     llm = FakeLLMProvider([])
-    _, result = update_goal(repo, monday_garmin, llm, draft.id, GoalUpdate(target_time="5:30"))
+    _, result = update_goal(repo, monday_garmin, draft.id, GoalUpdate(target_time="5:30"))
     assert result == ChangeResult(proposal_id=None, needs_generation=True)
     assert repo.active_cycle().needs_generation is True
-    remove_goal(repo, monday_garmin, llm, draft.id)
+    remove_goal(repo, monday_garmin, draft.id)
     for bad in (draft.id, 999):
         with pytest.raises(GoalError, match="introuvable ou archivé"):
-            update_goal(repo, monday_garmin, llm, bad, GoalUpdate(target_time="5:30"))
+            update_goal(repo, monday_garmin, bad, GoalUpdate(target_time="5:30"))
     assert llm.calls == []
 
 
 def test_update_goal_date_close_to_other_is_accepted(repo, monday_garmin):
     accepted_goal(repo, monday_garmin)
-    later, _ = add_goal(repo, monday_garmin, FakeLLMProvider([]), other_input(race_date=date(2027, 4, 11)))
+    later, _ = add_goal(repo, monday_garmin, other_input(race_date=date(2027, 4, 11)))
     llm = FakeLLMProvider([])
     # 7 jours après le Principal : course de rebond, au cycle suivant (horizon), sans appel à Claude
-    update_goal(repo, monday_garmin, llm, later.id, GoalUpdate(race_date=date(2027, 2, 14)))
+    update_goal(repo, monday_garmin, later.id, GoalUpdate(race_date=date(2027, 2, 14)))
     assert _get(repo, Goal, later.id).race_date == date(2027, 2, 14) and llm.calls == []
     assert repo.active_cycle().end_date == date(2027, 2, 7)
 
 
 def test_update_priority_to_principal_moves_end(repo, monday_garmin):
     accepted_goal(repo, monday_garmin)
-    second, _ = add_goal(
-        repo, monday_garmin, FakeLLMProvider([race_adjustment_json(repo, 11)]), other_input(race_date=date(2027, 1, 17))
-    )
-    # proposition non acceptée : semaine 11 encore pleine, objectif encore sans temps
-    llm = FakeLLMProvider([race_adjustment_json(repo, 11, goal_id=second.id)])
-    saved, result = update_goal(repo, monday_garmin, llm, second.id, GoalUpdate(priority="principal"))
-    assert saved.priority == "principal" and result.proposal_id is not None
+    second, _ = add_goal(repo, monday_garmin, other_input(race_date=date(2027, 1, 17)))
+    saved, result = update_goal(repo, monday_garmin, second.id, GoalUpdate(priority="principal"))
+    assert saved.priority == "principal" and result.adjust_due is True
     assert repo.active_cycle().end_date == date(2027, 1, 17)
-    assert "priorité Principal au lieu de Secondaire" in llm.calls[0]
-    assert max(s.week_index for s in repo.sessions(_cid(repo))) == 11
+    assert "priorité Principal au lieu de Secondaire" in repo.active_cycle().adjust_notes()[-1]
+    assert max(s.week_index for s in repo.sessions(_cid(repo)) if not s.pending_removal) == 11
 
 
 # --- retrait -------------------------------------------------------------------------------
@@ -554,7 +528,7 @@ def test_remove_last_goal_closes_cycle(repo, monday_garmin):
         db.add(done)
     old = repo.add(Proposal(analysis="avant", changes_json="[]"))
     llm = FakeLLMProvider([])
-    result = remove_goal(repo, monday_garmin, llm, goal.id)
+    result = remove_goal(repo, monday_garmin, goal.id)
     assert result == ChangeResult(proposal_id=None, needs_generation=False)
     assert repo.active_cycle() is None and _get(repo, Cycle, cycle_id).status == "done"
     assert _get(repo, Goal, goal.id).status == "archived"
@@ -565,31 +539,74 @@ def test_remove_last_goal_closes_cycle(repo, monday_garmin):
 
 def test_remove_principal_with_later_goal_regenerates(repo, monday_garmin):
     goal = accepted_goal(repo, monday_garmin)
-    later, _ = add_goal(repo, monday_garmin, FakeLLMProvider([]), other_input(race_date=date(2027, 4, 11)))
-    result = remove_goal(repo, monday_garmin, FakeLLMProvider([]), goal.id)
+    later, _ = add_goal(repo, monday_garmin, other_input(race_date=date(2027, 4, 11)))
+    result = remove_goal(repo, monday_garmin, goal.id)
     assert result == ChangeResult(proposal_id=None, needs_generation=True)
     cycle = repo.active_cycle()
     assert (cycle.end_date, cycle.plan_accepted, cycle.needs_generation) == (date(2027, 4, 11), False, True)
     assert [g.id for g in repo.goals_in(cycle)] == [later.id]
 
 
-def test_remove_goal_in_cycle_asks_adjustment(repo, monday_garmin):
+def test_remove_goal_in_cycle_defers_adjustment(repo, monday_garmin):
     accepted_goal(repo, monday_garmin)
-    second, _ = add_goal(repo, monday_garmin, FakeLLMProvider([race_adjustment_json(repo, 7)]), other_input())
-    llm = FakeLLMProvider([adjustment_json()])
-    result = remove_goal(repo, monday_garmin, llm, second.id)
-    assert result.proposal_id is not None and result.needs_generation is False
-    assert (
+    second, _ = add_goal(repo, monday_garmin, other_input())
+    result = remove_goal(repo, monday_garmin, second.id)
+    assert result == ChangeResult(proposal_id=None, needs_generation=False, adjust_due=True)
+    assert repo.active_cycle().adjust_notes()[-1] == (
         "L'athlète a retiré l'objectif Course sur route de 10 km du 20/12/2026 (Secondaire). " + NOTE_END
-    ) in llm.calls[0]
-    # l'objectif retiré n'est plus transmis à Claude comme objectif du cycle
+    )
     assert _get(repo, Goal, second.id).status == "archived"
+
+
+def test_three_adds_accumulate_one_adjustment(repo, monday_garmin):
+    """Trois ajouts d'affilée : aucun appel à Claude, puis une seule mise à jour qui les mentionne tous."""
+    accepted_goal(repo, monday_garmin)
+    for d in (date(2026, 12, 6), date(2026, 12, 20), date(2027, 1, 10)):
+        add_goal(repo, monday_garmin, other_input(race_date=d, priority="plaisir", target_time_s=2700))
+    notes = repo.active_cycle().adjust_notes()
+    assert [n.split(" du ")[1][:10] for n in notes] == ["06/12/2026", "20/12/2026", "10/01/2027"]
+    # chaque course prend la place de la séance 3 de sa semaine (5, 7 et 10)
+    removes = [
+        Change(op="remove", session_id=s.id, reason="course")
+        for w in (5, 7, 10) for s in repo.sessions(_cid(repo), week_index=w) if s.order == 3
+    ]
+    llm = FakeLLMProvider([AdjustmentResponse(analysis="Courses intégrées.", changes=removes).model_dump_json()])
+    request_adjustment(repo, monday_garmin, llm)
+    assert len(llm.calls) == 1 and all(n in llm.calls[0] for n in notes)
+    cycle = repo.active_cycle()
+    assert cycle.adjust_due is False and cycle.adjust_notes() == []
+
+
+def test_regenerate_after_pending_adjust_clears_flag(repo, monday_garmin):
+    accepted_goal(repo, monday_garmin, priority="secondaire")
+    add_goal(repo, monday_garmin, other_input())
+    _, result = add_goal(repo, monday_garmin, other_input(race_date=date(2027, 3, 7)))
+    assert result == ChangeResult(proposal_id=None, needs_generation=True)
+    cycle = repo.active_cycle()
+    assert cycle.needs_generation is True and cycle.adjust_due is False and cycle.adjust_notes() == []
+
+
+def test_goal_change_makes_pending_proposal_stale(repo, monday_garmin):
+    accepted_goal(repo, monday_garmin)
+    old = repo.add(Proposal(analysis="avant", changes_json="[]"))
+    add_goal(repo, monday_garmin, other_input())
+    assert _proposals(repo) == [(old.id, "stale")]
+
+
+def test_close_clears_pending_adjust(repo, monday_garmin):
+    goal = accepted_goal(repo, monday_garmin)
+    second, _ = add_goal(repo, monday_garmin, other_input())
+    cycle_id = _cid(repo)
+    remove_goal(repo, monday_garmin, second.id)
+    remove_goal(repo, monday_garmin, goal.id)
+    cycle = _get(repo, Cycle, cycle_id)
+    assert cycle.status == "done" and cycle.adjust_due is False and cycle.adjust_notes() == []
 
 
 def _exported_horizon_race(repo, garmin) -> Goal:
     accepted_goal(repo, garmin)
     later, _ = add_goal(
-        repo, garmin, FakeLLMProvider([]), other_input(race_date=date(2027, 4, 11), target_time_s=2700)
+        repo, garmin, other_input(race_date=date(2027, 4, 11), target_time_s=2700)
     )
     export_race(repo, garmin, later.id)
     return later
@@ -600,7 +617,7 @@ def test_remove_goal_withdraws_race_workout(repo, coach_home, monday_garmin):
     workout_id = repo.race_strategy(later.id).garmin_workout_id
     assert workout_id in monday_garmin.workouts
     llm = FakeLLMProvider([])
-    assert remove_goal(repo, monday_garmin, llm, later.id) == ChangeResult(proposal_id=None, needs_generation=False)
+    assert remove_goal(repo, monday_garmin, later.id) == ChangeResult(proposal_id=None, needs_generation=False)
     strategy = repo.race_strategy(later.id)
     assert (strategy.garmin_workout_id, strategy.garmin_schedule_id) == (None, None)
     assert workout_id not in monday_garmin.workouts
@@ -611,23 +628,23 @@ def test_remove_goal_garmin_error_keeps_goal(repo, coach_home, monday_garmin):
     later = _exported_horizon_race(repo, monday_garmin)
     monday_garmin.fail_on = {"unschedule"}
     with pytest.raises(GarminUnavailable):
-        remove_goal(repo, monday_garmin, FakeLLMProvider([]), later.id)
+        remove_goal(repo, monday_garmin, later.id)
     assert _get(repo, Goal, later.id).status == "active"
     assert repo.race_strategy(later.id).garmin_workout_id is not None
 
 
 def test_remove_unknown_goal(repo, monday_garmin):
     with pytest.raises(GoalError, match="introuvable ou archivé"):
-        remove_goal(repo, monday_garmin, FakeLLMProvider([]), 999)
+        remove_goal(repo, monday_garmin, 999)
 
 
 def test_draft_shorter_end_removes_late_sessions(repo, monday_garmin):
     goal = accepted_goal(repo, monday_garmin)
-    update_goal(repo, monday_garmin, FakeLLMProvider([]), goal.id, GoalUpdate(race_date=date(2027, 2, 21)))
+    update_goal(repo, monday_garmin, goal.id, GoalUpdate(race_date=date(2027, 2, 21)))
     assert repo.active_cycle().plan_accepted is False  # régénération en attente : brouillon
     monday_garmin.fail_on = {"delete_workout"}  # garde la trace des séances exportées à retirer
     llm = FakeLLMProvider([])
-    _, result = add_goal(repo, monday_garmin, llm, other_input(race_date=date(2027, 1, 17), priority="principal"))
+    _, result = add_goal(repo, monday_garmin, other_input(race_date=date(2027, 1, 17), priority="principal"))
     assert result == ChangeResult(proposal_id=None, needs_generation=True) and llm.calls == []
     cycle = repo.active_cycle()
     assert cycle.end_date == date(2027, 1, 17)  # 11 semaines
@@ -647,7 +664,7 @@ def test_draft_shorter_end_removes_late_sessions(repo, monday_garmin):
 def test_regenerate_change_makes_pending_stale(repo, monday_garmin):
     goal = accepted_goal(repo, monday_garmin)
     old = repo.add(Proposal(analysis="avant", changes_json="[]"))
-    _, result = update_goal(repo, monday_garmin, FakeLLMProvider([]), goal.id, GoalUpdate(race_date=date(2027, 2, 21)))
+    _, result = update_goal(repo, monday_garmin, goal.id, GoalUpdate(race_date=date(2027, 2, 21)))
     assert result.needs_generation is True
     assert _proposals(repo) == [(old.id, "stale")]
 
@@ -669,7 +686,7 @@ def test_remove_last_goal_cleans_sync_error_sessions(repo, monday_garmin):
         s.status, s.sync_error = "sync_error", "Synchronisation Garmin échouée : x"
         s.pending_old_workout_id, s.pending_old_schedule_id = 900, 901
         db.add(s)
-    remove_goal(repo, monday_garmin, FakeLLMProvider([]), goal.id)
+    remove_goal(repo, monday_garmin, goal.id)
     assert repo.sessions(cycle_id) == []
     assert monday_garmin.workouts == {} and monday_garmin.schedules == {}
 
@@ -679,7 +696,7 @@ def test_close_cycle_garmin_failure_leaves_sessions_to_retry(repo, monday_garmin
     goal = accepted_goal(repo, monday_garmin)
     cycle_id = _cid(repo)
     monday_garmin.fail_on = {"unschedule"}
-    remove_goal(repo, monday_garmin, FakeLLMProvider([]), goal.id)
+    remove_goal(repo, monday_garmin, goal.id)
     left = repo.sessions(cycle_id)
     assert len(left) == 2 and all((s.status, s.pending_removal) == ("sync_error", True) for s in left)
 
@@ -691,9 +708,7 @@ def test_legacy_cycle_end_kept_when_change_does_not_move_it(repo, monday_garmin)
     with repo.transaction() as db:
         db.add(Goal(**{**_get(repo, Goal, goal.id).model_dump(exclude={"id"}),
                        "race_date": date(2027, 2, 9), "priority": "plaisir", "distance_km": 10}))
-    _, result = update_goal(
-        repo, monday_garmin, FakeLLMProvider([adjustment_json()]), goal.id, GoalUpdate(target_time="5:30")
-    )
-    assert result.proposal_id is not None and result.needs_generation is False
+    _, result = update_goal(repo, monday_garmin, goal.id, GoalUpdate(target_time="5:30"))
+    assert result == ChangeResult(proposal_id=None, needs_generation=False, adjust_due=True)
     cycle = repo.active_cycle()
     assert cycle.end_date == date(2027, 2, 7) and cycle.plan_accepted is True

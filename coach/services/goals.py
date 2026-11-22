@@ -12,15 +12,22 @@ from sqlmodel import select
 
 from coach.analysis.gpx import GpxSummary, analyze_gpx
 from coach.garmin.port import GarminPort
-from coach.llm.prompts import NEW_GOAL_ID, fmt_duration
-from coach.llm.provider import LLMProvider
+from coach.llm.prompts import fmt_duration
 from coach.llm.schemas import Weekday
 from coach.plan import calendar
 from coach.plan.goals import cycle_end, classify_change, goal_label
-from coach.plan.models import ALL_DAYS, PRIORITY_LABELS, Cycle, Goal, Proposal, Session
+from coach.plan.models import (
+    ALL_DAYS,
+    PRIORITY_LABELS,
+    Cycle,
+    Goal,
+    Proposal,
+    Session,
+    add_adjust_note,
+    clear_adjust,
+)
 from coach.plan.repo import Repo
 from coach.services import CoachError
-from coach.services.context import refresh_snapshot
 from coach.services.garmin_export import mark_for_cleanup, sync_marked
 
 Priority = Literal["principal", "secondaire", "plaisir"]
@@ -61,10 +68,11 @@ class GoalUpdate(BaseModel):
 
 
 class ChangeResult(BaseModel):
-    """Effet d'un changement d'objectif sur le plan : proposition d'ajustement ou génération à refaire."""
+    """Effet d'un changement d'objectif sur le plan : génération à refaire ou mise à jour à lancer."""
 
     proposal_id: int | None
     needs_generation: bool
+    adjust_due: bool = False
 
 
 def normalize_days(days: list[str]) -> list[str]:
@@ -212,7 +220,6 @@ def _close_cycle(db: DbSession, c: Cycle) -> list[int]:
 def _reshape(
     repo: Repo,
     garmin: GarminPort,
-    llm: LLMProvider,
     *,
     before: Goal | None,
     after: Goal | None,
@@ -222,9 +229,9 @@ def _reshape(
     """Applique un changement d'objectif (`before` → `after`, l'un des deux absent pour un ajout ou un
     retrait) et ses effets sur le cycle actif ; `write(db)` enregistre l'objectif.
 
-    Rien n'est enregistré si Claude ou le retrait du Jour J sur Garmin échoue.
+    Claude n'est jamais appelé : avec un plan validé, le changement est noté sur le cycle (`adjust_due`)
+    pour la mise à jour à la demande. Rien n'est enregistré si le retrait du Jour J sur Garmin échoue.
     """
-    from coach.services.adjust import ask_adjustment  # import tardif : adjust importe race_strategy
     from coach.services.race_strategy import withdraw_race  # import tardif : race_strategy importe ce module
 
     # 1. objectifs actifs après le changement
@@ -261,36 +268,9 @@ def _reshape(
     saved: dict[str, Goal] = {}
 
     # 3. effets selon la nature du changement
-    if kind in ("adjust", "shrink"):
-        edited_cycle = cycle.model_copy(update={"end_date": new_end})
-        _, zones = refresh_snapshot(repo, garmin)
-        sessions = repo.sessions(cycle.id)
-        removed_ids = _removed_after(sessions, cycle, calendar.n_weeks(cycle.plan_start, new_end), new_end)
-        adj = ask_adjustment(
-            repo, garmin, llm, edited_cycle, zones, [s for s in sessions if s.id not in removed_ids],
-            garmin.today(),
-            change_note=note,
-            goals=[g for g in goals_after if cycle.plan_start <= g.race_date <= new_end],
-            horizon=[g for g in goals_after if g.race_date > new_end],
-        )
-        withdraw()
-
-        def apply(db: DbSession) -> None:
-            c = _active_in(db, cycle.id)
-            saved["goal"] = write(db)
-            c.end_date = new_end
-            db.add(c)
-            if before is None:  # ajout : l'estimation du nouvel objectif porte l'id provisoire
-                for estimate in adj.estimated_times:
-                    if estimate.goal_id == NEW_GOAL_ID:
-                        estimate.goal_id = saved["goal"].id
-
-        proposal_id = _save_change(repo, garmin, zones, adj, removed_ids, apply)
-        return saved["goal"], ChangeResult(proposal_id=proposal_id, needs_generation=False)
-
     removed_ids: set[int] = set()
-    if kind in ("regenerate", "draft") and new_end < cycle.end_date:
-        # fin avancée : séances au-delà retirées comme pour un report de date
+    if kind in ("adjust", "shrink") or (kind in ("regenerate", "draft") and new_end < cycle.end_date):
+        # fin avancée : séances au-delà retirées aussitôt (sans Claude), comme pour un report de date
         removed_ids = _removed_after(
             repo.sessions(cycle.id), cycle, calendar.n_weeks(cycle.plan_start, new_end), new_end
         )
@@ -299,19 +279,32 @@ def _reshape(
     with repo.transaction() as db:
         c = _active_in(db, cycle.id)
         saved["goal"] = write(db)
-        if kind in ("regenerate", "draft"):
+        if kind in ("adjust", "shrink"):
+            # plan validé : le changement attend « Mettre à jour l'entraînement », qui le transmettra à Claude
+            c.end_date = new_end
+            add_adjust_note(c, note)
+            db.add(c)
+            to_clean = _remove_sessions(db, removed_ids)
+            stale_pending(db)
+        elif kind in ("regenerate", "draft"):
             # les autres séances restent affichées jusqu'à « Générer » ; le brouillon est périmé
             c.end_date = new_end
             c.needs_generation = True
             c.plan_accepted = False
+            clear_adjust(c)  # la génération tiendra compte de tous les objectifs
             db.add(c)
             to_clean = _remove_sessions(db, removed_ids)
             stale_pending(db)
         elif kind == "close":
             to_clean = _close_cycle(db, c)
+            clear_adjust(c)
     if to_clean:
         sync_marked(repo, garmin, to_clean, None)  # un retrait n'a pas besoin des zones
-    return saved["goal"], ChangeResult(proposal_id=None, needs_generation=kind in ("regenerate", "draft"))
+    return saved["goal"], ChangeResult(
+        proposal_id=None,
+        needs_generation=kind in ("regenerate", "draft"),
+        adjust_due=kind in ("adjust", "shrink"),
+    )
 
 
 # --- opérations -------------------------------------------------------------------------------
@@ -389,7 +382,7 @@ def _create_first(repo: Repo, garmin: GarminPort, data: GoalInput, summary: GpxS
     return goal
 
 
-def add_goal(repo: Repo, garmin: GarminPort, llm: LLMProvider, data: GoalInput) -> tuple[Goal, ChangeResult]:
+def add_goal(repo: Repo, garmin: GarminPort, data: GoalInput) -> tuple[Goal, ChangeResult]:
     """Ajoute un objectif : crée le cycle s'il n'y en a pas, sinon l'intègre au cycle actif."""
     if data.target_time_s is not None:
         check_target_time(data.target_time_s, data.distance_km)
@@ -402,7 +395,7 @@ def add_goal(repo: Repo, garmin: GarminPort, llm: LLMProvider, data: GoalInput) 
         raise GoalError("La course doit être après aujourd'hui")
     new = _new_goal(data, summary, cycle)
     return _reshape(
-        repo, garmin, llm,
+        repo, garmin,
         before=None,
         after=new,
         note=f"L'athlète a ajouté l'objectif {_describe(new)}. {_NOTE_END}",
@@ -423,12 +416,10 @@ def _write_goal(goal_id: int, update: dict) -> Callable[[DbSession], Goal]:
     return write
 
 
-def update_goal(
-    repo: Repo, garmin: GarminPort, llm: LLMProvider, goal_id: int, data: GoalUpdate
-) -> tuple[Goal, ChangeResult]:
+def update_goal(repo: Repo, garmin: GarminPort, goal_id: int, data: GoalUpdate) -> tuple[Goal, ChangeResult]:
     """Modifie la date, le temps visé et/ou la priorité d'un objectif à venir et adapte le cycle.
 
-    Rien n'est enregistré si Claude échoue. Renvoie l'objectif enregistré et l'effet sur le plan.
+    Renvoie l'objectif enregistré et l'effet sur le plan.
     """
     goal = _get_goal(repo, goal_id)
     today = garmin.today()
@@ -455,7 +446,7 @@ def update_goal(
     if not update:
         raise GoalError("Aucune modification")
     return _reshape(
-        repo, garmin, llm,
+        repo, garmin,
         before=goal,
         after=goal.model_copy(update=update),
         note=f"L'athlète a modifié l'objectif {_describe(goal)} : {' ; '.join(notes)}. {_NOTE_END}",
@@ -463,11 +454,11 @@ def update_goal(
     )
 
 
-def remove_goal(repo: Repo, garmin: GarminPort, llm: LLMProvider, goal_id: int) -> ChangeResult:
+def remove_goal(repo: Repo, garmin: GarminPort, goal_id: int) -> ChangeResult:
     """Retire un objectif (`archived`) et adapte le cycle ; retirer le dernier objectif clôt le cycle."""
     goal = _get_goal(repo, goal_id)
     _, result = _reshape(
-        repo, garmin, llm,
+        repo, garmin,
         before=goal,
         after=None,
         note=f"L'athlète a retiré l'objectif {_describe(goal)}. {_NOTE_END}",

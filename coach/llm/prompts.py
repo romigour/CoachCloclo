@@ -6,7 +6,7 @@ from collections.abc import Sequence
 from typing import get_args
 
 from coach.analysis.laps import StepComparison, StepResult
-from coach.analysis.long_history import MONTHS, LongHistory, MonthVolume, PastRace
+from coach.analysis.long_history import LongHistory, MonthVolume, PastRace
 from coach.analysis.race_plan import RacePlan
 from coach.analysis.zones import Zones
 from coach.llm.schemas import AdjustmentResponse, PlanResponse, Weekday
@@ -220,6 +220,10 @@ def _record_line(r: PersonalRecord) -> str:
     return text + (f" ({r.date.isoformat()})" if r.date is not None else "")
 
 
+def _last_months(n: int) -> str:
+    return "dernier mois" if n == 1 else f"{n} derniers mois"
+
+
 def _long_history_text(lh: LongHistory | None) -> str | None:
     """Volume mensuel, compétitions et records ; None si rien à dire."""
     if lh is None:
@@ -227,7 +231,7 @@ def _long_history_text(lh: LongHistory | None) -> str | None:
     parts = []
     if any(m.runs or m.other_s > 0 for m in lh.months):
         parts.append(
-            f"Volume mensuel de course à pied ({MONTHS} derniers mois, plus récent d'abord) :\n"
+            f"Volume mensuel de course à pied ({_last_months(len(lh.months))}, plus récent d'abord) :\n"
             + "\n".join(_month_line(m) for m in lh.months)
         )
     if lh.races:

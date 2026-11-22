@@ -2,7 +2,7 @@
 
 from datetime import date, timedelta
 
-from coach.analysis.long_history import LongHistory, kept_records, monthly_volume, past_races, window_start
+from coach.analysis.long_history import MONTHS, LongHistory, kept_records, monthly_volume, past_races, window_start
 from coach.analysis.zones import Zones, compute_zones
 from coach.garmin.port import GarminPort, Metrics
 from coach.plan.constraints import PlanConstraints
@@ -83,9 +83,14 @@ def long_history(repo: Repo, today: date) -> LongHistory | None:
     if not repo.has_activities():
         return None
     activities = repo.all_activities()
-    start = window_start(today)
+    # pas de mois avant la plus ancienne activité en base : sans import complet (synchro seule),
+    # ils passeraient pour des mois d'arrêt
+    oldest = min(a.date for a in activities)
+    span = (today.year - oldest.year) * 12 + today.month - oldest.month + 1
+    months = max(1, min(MONTHS, span))
+    start = window_start(today, months)
     return LongHistory(
-        months=monthly_volume([a for a in activities if a.date >= start], today),
+        months=monthly_volume([a for a in activities if a.date >= start], today, months),
         races=past_races(repo.races(), {a.id: a for a in activities}),
         records=kept_records(repo.records()),
     )

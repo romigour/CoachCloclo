@@ -704,7 +704,7 @@ LONG = LongHistory(
 LONG_LINES = [
     "Historique long (pour situer le niveau de fond et la capacité de charge ; "
     "la forme actuelle reste donnée par l'historique récent) :",
-    "Volume mensuel de course à pied (12 derniers mois, plus récent d'abord) :",
+    "Volume mensuel de course à pied (2 derniers mois, plus récent d'abord) :",
     "- novembre 2026 : 2 sorties, 30 km, 3 h 00, D+ 1000 m, plus longue 20.0 km | autres sports 1 h 30",
     "- octobre 2026 : aucune course",
     "Compétitions passées (plus récentes d'abord) :",

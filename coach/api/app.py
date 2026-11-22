@@ -86,7 +86,7 @@ from coach.storage.switch import (
 )
 from coach.services.history import HistoryRunner, load_state, recover_orphan
 from coach.services.laps import fetch_laps, latest_zones, session_comparison
-from coach.services.sync import sync
+from coach.services.sync import add_pending_done, remove_pending_done, sync
 from coach.stats.normalize import stat_row
 from coach.version import app_version
 
@@ -912,15 +912,24 @@ def create_app(
             activity.match_source = "manual"
             db.add(activity)
             db.flush()
+            to_analyze = unpend = None
             if new is not None and new.status != "sync_error":
                 new.status = "done"
                 db.add(new)
+                to_analyze = new.id
             if old_id is not None and old_id != body.session_id:
                 old = db.get(Session, old_id)
                 still = db.exec(select(Activity).where(Activity.session_id == old_id)).first()
+                if still is None:
+                    unpend = old_id
                 if old is not None and old.status == "done" and still is None:
                     old.status = "exported" if old.garmin_schedule_id else "todo"
                     db.add(old)
+        # la séance réalisée sera analysée par Claude à la synchro suivante ; détachée, elle ne l'est plus
+        if unpend is not None:
+            remove_pending_done(repo, unpend)
+        if to_analyze is not None:
+            add_pending_done(repo, to_analyze)
         if body.session_id is not None and repo.laps(activity_id) is None:
             # lecture des tours hors transaction ; un Garmin déconnecté ne doit pas faire échouer le rattachement
             try:

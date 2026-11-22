@@ -19,6 +19,7 @@ from coach.garmin.port import FakeGarminClient, GarminAuthRequired, LapSummary, 
 from coach.llm.provider import FakeLLMProvider, LLMError, LLMUsageLimit
 from coach.plan.models import Activity, AthleteSnapshot, LlmUsage, Race
 from coach.services.history import HistoryState, save_state
+from coach.services.sync import load_sync_state
 from tests.llm.factories import valid_plan_json
 from coach.plan.repo import Repo, SchemaTooNew, make_engine
 from coach.storage import switch as switch_mod
@@ -438,7 +439,59 @@ def test_manual_match(make_client, repo):
     assert client.post("/api/activities/999/match", json={"session_id": None}).status_code == 404
 
 
-LAP = LapSummary(index=0, duration_s=600, distance_m=1800, avg_hr=140, step_order=1, raw={"x": 1})
+def _plan_and_activity(make_client, repo):
+    """Client avec un plan généré, les ids des deux premières séances et une activité libre."""
+    from datetime import date
+
+    client = make_client(llm=FakeLLMProvider([valid_plan_json(14, 3)]))
+    _create_goal(client)
+    client.post("/api/cycle/generate")
+    sessions = client.get("/api/plan").json()["weeks"][0]["sessions"]
+    act = repo.add(Activity(garmin_activity_id=1, date=date(2026, 11, 3), type_key="running"))
+    return client, sessions[0]["id"], sessions[1]["id"], act
+
+
+def test_manual_match_marks_pending_done(make_client, repo):
+    client, sid, _, act = _plan_and_activity(make_client, repo)
+    client.post(f"/api/activities/{act.id}/match", json={"session_id": sid})
+    assert load_sync_state(repo).pending_done == [sid]
+    client.post(f"/api/activities/{act.id}/match", json={"session_id": sid})  # pas de doublon
+    assert load_sync_state(repo).pending_done == [sid]
+
+
+def test_manual_detach_removes_pending_done(make_client, repo):
+    client, sid, _, act = _plan_and_activity(make_client, repo)
+    client.post(f"/api/activities/{act.id}/match", json={"session_id": sid})
+    client.post(f"/api/activities/{act.id}/match", json={"session_id": None})
+    assert load_sync_state(repo).pending_done == []
+
+
+def test_manual_rematch_moves_pending_done(make_client, repo):
+    client, first, second, act = _plan_and_activity(make_client, repo)
+    client.post(f"/api/activities/{act.id}/match", json={"session_id": first})
+    client.post(f"/api/activities/{act.id}/match", json={"session_id": second})
+    assert load_sync_state(repo).pending_done == [second]
+
+
+def test_manual_match_of_missed_session_is_pending(make_client, repo):
+    client, sid, _, act = _plan_and_activity(make_client, repo)
+    s = repo.session(sid)
+    s.status = "missed"
+    repo.update(s)
+    client.post(f"/api/activities/{act.id}/match", json={"session_id": sid})
+    assert repo.session(sid).status == "done" and load_sync_state(repo).pending_done == [sid]
+
+
+def test_manual_match_on_sync_error_not_pending(make_client, repo):
+    client, sid, _, act = _plan_and_activity(make_client, repo)
+    s = repo.session(sid)
+    s.status = "sync_error"
+    repo.update(s)
+    client.post(f"/api/activities/{act.id}/match", json={"session_id": sid})
+    assert repo.session(sid).status == "sync_error" and load_sync_state(repo).pending_done == []
+
+
+LAP =LapSummary(index=0, duration_s=600, distance_m=1800, avg_hr=140, step_order=1, raw={"x": 1})
 
 
 def _db_session(repo, **kw):
@@ -669,9 +722,6 @@ def test_generic_llm_error_maps_to_502_on_sync(make_client, fake_garmin):
     assert client.post("/api/sync").status_code == 200  # import seul : rien à analyser
     act = client.get("/api/activities/free?days=90").json()[0]
     assert client.post(f"/api/activities/{act['id']}/match", json={"session_id": session["id"]}).status_code == 200
-    from coach.services.sync import add_pending_done
-
-    add_pending_done(client.app.state.repo, session["id"])  # TEMP tâche 2 : le rattachement manuel le fera
     client.app.state.llm_factory = lambda: BrokenLLM()
     r = client.post("/api/sync")
     assert r.status_code == 502 and r.json()["code"] == "llm_error"

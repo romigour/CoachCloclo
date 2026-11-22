@@ -77,47 +77,66 @@
 </script>
 
 {#if view}
-  <section class="card stack">
-    <h2>Stockage des données</h2>
-    {#if view.mode === "turso"}
-      <p>Tes données sont stockées dans le cloud : <code>{view.turso_url}</code></p>
-      {#if error}<p class="error" role="alert">{error}</p>{/if}
-      <div class="row">
+  {#if view.mode === "turso"}
+    <div class="set-row">
+      <div class="set-label">
+        <h3>Stockage des données</h3>
+        <p>Tes données sont stockées dans le cloud : <code>{view.turso_url}</code></p>
+        {#if error}<p class="error" role="alert">{error}</p>{/if}
+      </div>
+      <div class="set-ctl">
         <button type="button" disabled={busy} onclick={disable}>Revenir au stockage local</button>
+      </div>
+    </div>
+    <div class="set-row danger-zone">
+      <div class="set-label">
+        <h3>Effacer les données du cloud</h3>
+        <p>Supprime définitivement la base cloud.</p>
+      </div>
+      <div class="set-ctl">
         <button type="button" class="danger" disabled={busy} onclick={wipe}>Effacer mes données du cloud</button>
       </div>
-    {:else}
-      <p>
-        Tes données sont stockées sur ce PC. Tu peux les mettre dans une base cloud pour les retrouver sur tous tes PC.
-        <a href={GUIDE} target="_blank" rel="noopener noreferrer">Lire le guide</a>
-      </p>
+    </div>
+  {:else}
+    <div class="set-row">
+      <div class="set-label">
+        <h3>Stockage des données</h3>
+        <p>
+          Tes données sont stockées sur ce PC. Tu peux les mettre dans une base cloud pour les retrouver sur tous tes PC.
+          <a href={GUIDE} target="_blank" rel="noopener noreferrer">Lire le guide</a>
+        </p>
+      </div>
       <form
-        class="stack"
+        class="set-extra boxed"
         onsubmit={(e) => {
           e.preventDefault();
           enable();
         }}
       >
-        <label>
-          URL de la base
-          <input type="text" autocomplete="off" placeholder="libsql://ma-base.turso.io" bind:value={url} required />
-        </label>
-        <label>
-          Jeton d'accès
-          <input type="password" autocomplete="off" bind:value={token} required />
-        </label>
+        <div class="form-grid">
+          <label>
+            URL de la base
+            <input type="text" autocomplete="off" placeholder="libsql://ma-base.turso.io" bind:value={url} required />
+          </label>
+          <label>
+            Jeton d'accès
+            <input type="password" autocomplete="off" bind:value={token} required />
+          </label>
+        </div>
         {#if error}<p class="error" role="alert">{error}</p>{/if}
-        <div class="row">
+        <div class="row end">
           <button class="primary" disabled={busy}>
             {busy ? "Transfert en cours…" : "Stocker mes données dans le cloud"}
           </button>
         </div>
       </form>
-    {/if}
-  </section>
+    </div>
+  {/if}
 {:else if pcOnly}
-  <section class="card stack">
-    <h2>Stockage des données</h2>
-    <p>Disponible uniquement sur le PC</p>
-  </section>
+  <div class="set-row">
+    <div class="set-label">
+      <h3>Stockage des données</h3>
+      <p>Disponible uniquement sur le PC</p>
+    </div>
+  </div>
 {/if}

@@ -2,8 +2,8 @@
   import { api, ApiError } from "../lib/api";
   import ErrorBanner from "./ErrorBanner.svelte";
 
-  /** Formulaire de connexion Garmin (e-mail, mot de passe, MFA éventuel). `onconnected` est appelé une fois connecté. */
-  let { onconnected }: { onconnected?: () => void | Promise<void> } = $props();
+  /** Formulaire de connexion Garmin (e-mail, mot de passe, MFA éventuel). `onconnected` est appelé une fois connecté ; `oncancel` ajoute un bouton Annuler. */
+  let { onconnected, oncancel }: { onconnected?: () => void | Promise<void>; oncancel?: () => void } = $props();
 
   let email = $state("");
   let password = $state("");
@@ -73,7 +73,10 @@
       Mot de passe
       <input type="password" bind:value={password} autocomplete="current-password" required />
     </label>
-    <div class="row"><button class="primary" disabled={busy}>Se connecter</button></div>
+    <div class="row">
+      <button class="primary" disabled={busy}>Se connecter</button>
+      {#if oncancel}<button type="button" class="ghost" onclick={oncancel}>Annuler</button>{/if}
+    </div>
   </form>
 {/if}
 {#if loginMessage}<p class="error" role="alert">{loginMessage}</p>{/if}

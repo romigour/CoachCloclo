@@ -655,9 +655,10 @@ def test_activities_of_plan_week_include_matched_from_other_weeks(make_client, r
     _accepted_goal(client)
     plan = client.get("/api/plan").json()
     monday = date.fromisoformat(plan["cycle"]["plan_start"])
-    s1 = plan["weeks"][0]["sessions"][0]["id"]
+    s1, s2 = (s["id"] for s in plan["weeks"][0]["sessions"][:2])
+    # une activité par séance : `before` n'entre que par son rattachement, `inside` par sa date ET son rattachement
     before = repo.add(make_activity(garmin_activity_id=21, date=monday - timedelta(days=1), session_id=s1))
-    inside = repo.add(make_activity(garmin_activity_id=22, date=monday + timedelta(days=2), session_id=s1))
+    inside = repo.add(make_activity(garmin_activity_id=22, date=monday + timedelta(days=2), session_id=s2))
     other = repo.add(make_db_session(plan["cycle"]["id"] + 999, week_index=1))
     repo.add(make_activity(garmin_activity_id=23, date=monday - timedelta(days=3), session_id=other.id))
 

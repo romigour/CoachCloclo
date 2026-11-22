@@ -876,10 +876,8 @@ def create_app(
         monday = calendar.week_monday(cycle, week)
         sunday = monday + timedelta(days=6)
         rows = {a.id: a for a in repo.activities_since(monday) if a.date <= sunday}
-        for s in repo.sessions(cycle.id, week):
-            matched = repo.activity_of_session(s.id)
-            if matched is not None:
-                rows[matched.id] = matched
+        session_ids = [s.id for s in repo.sessions(cycle.id, week)]
+        rows.update({a.id: a for a in repo.activities_of_sessions(session_ids)})
         return [_activity_row(a) for a in sorted(rows.values(), key=lambda a: (a.date, a.id))]
 
     @api.get("/activities/free")

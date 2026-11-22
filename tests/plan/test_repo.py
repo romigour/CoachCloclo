@@ -191,6 +191,15 @@ def test_activity_of_session(repo):
     assert repo.activity_of_session(7).id == a.id and repo.activity_of_session(8) is None
 
 
+def test_activities_of_sessions(repo):
+    a = repo.add(make_activity(garmin_activity_id=1, session_id=7))
+    b = repo.add(make_activity(garmin_activity_id=2, session_id=8))
+    repo.add(make_activity(garmin_activity_id=3, session_id=9))
+    repo.add(make_activity(garmin_activity_id=4))
+    assert sorted(x.id for x in repo.activities_of_sessions([7, 8])) == [a.id, b.id]
+    assert repo.activities_of_sessions([]) == []
+
+
 def _old_schema_db(path):
     """Base à l'ancien schéma : table goal sans les colonnes du temps visé, stratégie avec temps."""
     con = sqlite3.connect(path)

@@ -332,6 +332,14 @@ class Repo:
         with self._open() as db:
             return db.exec(stmt).first()
 
+    def activities_of_sessions(self, session_ids: list[int]) -> list[Activity]:
+        """Activités rattachées à l'une des séances `session_ids`, en une seule requête."""
+        if not session_ids:
+            return []
+        stmt = select(Activity).where(Activity.session_id.in_(session_ids))
+        with self._open() as db:
+            return list(db.exec(stmt))
+
     def laps(self, activity_id: int) -> list[LapSummary] | None:
         """Tours enregistrés de l'activité ; `None` s'ils n'ont jamais été récupérés."""
         stmt = select(ActivityLaps).where(ActivityLaps.activity_id == activity_id)

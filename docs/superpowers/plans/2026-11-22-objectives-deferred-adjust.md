@@ -40,7 +40,7 @@ aussi. Côté front, le composant `AdjustBanner` appelle l'existant `POST /cycle
 
 ---
 
-### Tâche 1 : indicateur sur le cycle et sa consommation
+### Task 1: indicateur sur le cycle et sa consommation
 
 **Fichiers :**
 - Modifier : `coach/plan/models.py` (classe `Cycle`)
@@ -110,7 +110,7 @@ Résultat attendu : SUCCÈS.
 
 ---
 
-### Tâche 2 : les changements d'objectif n'appellent plus Claude
+### Task 2: les changements d'objectif n'appellent plus Claude
 
 **Fichiers :**
 - Modifier : `coach/services/goals.py` (`ChangeResult`, `_reshape`, `add_goal`, `update_goal`, `remove_goal`)
@@ -199,7 +199,7 @@ proposition doit maintenant appeler `request_adjustment` explicitement.
 
 ---
 
-### Tâche 3 : bandeau « Mettre à jour l'entraînement »
+### Task 3: bandeau « Mettre à jour l'entraînement »
 
 **Fichiers :**
 - Créer : `web/src/components/AdjustBanner.svelte`, `web/src/components/AdjustBanner.test.ts`
@@ -268,7 +268,7 @@ Résultat attendu : SUCCÈS, aucune erreur de type.
 
 ---
 
-### Tâche 4 : documentation et vérification de bout en bout
+### Task 4: documentation et vérification de bout en bout
 
 **Fichiers :**
 - Modifier : `README.md` et `docs/guide/index.html`, seulement là où ils décrivent ce qui se passe après

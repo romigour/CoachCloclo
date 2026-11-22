@@ -72,9 +72,14 @@
     const secs = week?.sessions.map((s) => totalSeconds(s.steps)) ?? [];
     return secs.length && secs.every((s) => s != null) ? formatDuration(secs.reduce<number>((a, b) => a + (b ?? 0), 0)) : null;
   });
-  const lastActivity = $derived(
-    isCurrent ? ([...activities].sort((a, b) => b.date.localeCompare(a.date))[0] ?? null) : null,
-  );
+  // la semaine renvoie aussi les sorties rattachées à ses séances mais datées d'une autre semaine : on les écarte
+  const lastActivity = $derived.by(() => {
+    if (!isCurrent || !week) return null;
+    const monday = week.week_monday;
+    const sunday = addDays(monday, 6);
+    const ofWeek = activities.filter((a) => a.date >= monday && a.date <= sunday);
+    return ofWeek.sort((a, b) => b.date.localeCompare(a.date))[0] ?? null;
+  });
 
   const heading = $derived.by(() => {
     if (!week || !current) return "";

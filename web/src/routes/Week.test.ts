@@ -113,6 +113,21 @@ test("the week summary counts the sessions done", async () => {
   expect(summary).toHaveTextContent("1/2 séances faites");
 });
 
+test("la dernière activité ignore une sortie d'une autre semaine rattachée à une séance", async () => {
+  const before = {
+    id: 9, date: "2026-10-25", type_key: "running", duration_s: 2580, distance_m: 10000, d_plus_m: 0,
+    avg_hr: 162, session_id: 1, match_source: "auto",
+  };
+  vi.stubGlobal("fetch", vi.fn(async (url: string) =>
+    new Response(JSON.stringify(url.startsWith("/api/plan") ? plan : url.startsWith("/api/activities") ? [before] : []), { status: 200 })));
+  render(Week, { today: "2026-10-30" });
+  // la séance du lundi retrouve sa sortie du dimanche précédent (activités chargées)
+  await fireEvent.click(await screen.findByRole("button", { name: /Endurance 50 min/ }));
+  expect(await within(focus()).findByText(/dim\. 25\/10/)).toBeVisible();
+  const card = screen.getByRole("region", { name: "Dernière activité" });
+  expect(within(card).getByText("Aucune activité cette semaine.")).toBeVisible();
+});
+
 // --- propositions et imprévus -----------------------------------------------------------------
 
 test("a pending proposal shows as a banner linking to it", async () => {

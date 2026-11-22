@@ -12,7 +12,7 @@ from coach.analysis.zones import Zones
 from coach.llm.schemas import AdjustmentResponse, PlanResponse, Weekday
 from coach.plan.calendar import week_of
 from coach.plan.constraints import PlanConstraints
-from coach.plan.goals import MIN_GAP_DAYS, RaceBlock, block_label, goal_key, goal_label, proximity
+from coach.plan.goals import MIN_GAP_DAYS, RaceBlock, block_label, goal_key, goal_label, one_line, proximity
 from coach.plan.models import PRIORITY_LABELS, Activity, Cycle, Event, Goal, PersonalRecord, Session
 
 HISTORY_WEEKS = 8
@@ -268,7 +268,7 @@ def _notes_text(goal: Goal) -> str:
     """« Précisions de l'athlète : « … ». » précédé d'une espace, sur une ligne ; vide sans précisions."""
     if not goal.notes:
         return ""
-    return f" Précisions de l'athlète : « {' '.join(goal.notes.splitlines())} »."
+    return f" Précisions de l'athlète : « {one_line(goal.notes)} »."
 
 
 def _single_goal_text(goal: Goal, *, generation: bool = False, plan_start: dt.date | None = None) -> str:

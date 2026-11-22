@@ -775,3 +775,16 @@ def test_update_goal_notes_too_long(repo, monday_garmin):
     with pytest.raises(GoalError, match="Précisions trop longues"):
         update_goal(repo, monday_garmin, goal.id, GoalUpdate(notes="x" * 281))
     assert _goals(repo)[0].notes == "A"
+
+
+def test_clean_notes_normalizes_line_breaks():
+    assert clean_notes("a\r\nb\rc") == "a\nb\nc"
+    text = "x" * 139 + "\r\n" + "x" * 140  # 280 caractères une fois le saut de ligne normalisé
+    assert clean_notes(text) == "x" * 139 + "\n" + "x" * 140
+
+
+def test_update_goal_notes_change_note_is_single_line(repo, monday_garmin):
+    goal = accepted_goal(repo, monday_garmin, notes="C\nD")
+    update_goal(repo, monday_garmin, goal.id, GoalUpdate(notes="Neige\n\npuis marches"))
+    note = repo.active_cycle().adjust_notes()[0]
+    assert "précisions « Neige puis marches » au lieu de « C D »" in note and "\n" not in note

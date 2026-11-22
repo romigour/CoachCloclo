@@ -15,7 +15,7 @@ from coach.garmin.port import GarminPort
 from coach.llm.prompts import fmt_duration
 from coach.llm.schemas import Weekday
 from coach.plan import calendar
-from coach.plan.goals import cycle_end, classify_change, goal_label
+from coach.plan.goals import cycle_end, classify_change, goal_label, one_line
 from coach.plan.models import (
     ALL_DAYS,
     PRIORITY_LABELS,
@@ -106,7 +106,8 @@ def parse_target_time(text: str) -> int:
 
 def clean_notes(text: str | None) -> str | None:
     """Précisions sans espaces autour, `None` si vides ; refuse un texte de plus de `NOTES_MAX` caractères."""
-    cleaned = (text or "").strip()
+    # les navigateurs envoient les retours à la ligne d'un formulaire en \r\n : un seul caractère, comme à l'écran
+    cleaned = (text or "").replace("\r\n", "\n").replace("\r", "\n").strip()
     if len(cleaned) > NOTES_MAX:
         raise GoalError(f"Précisions trop longues ({NOTES_MAX} caractères maximum)")
     return cleaned or None
@@ -465,9 +466,9 @@ def update_goal(repo: Repo, garmin: GarminPort, goal_id: int, data: GoalUpdate) 
             if text is None:
                 notes.append("précisions retirées")
             elif goal.notes is None:
-                notes.append(f"précisions « {text} », aucune auparavant")
+                notes.append(f"précisions « {one_line(text)} », aucune auparavant")
             else:
-                notes.append(f"précisions « {text} » au lieu de « {goal.notes} »")
+                notes.append(f"précisions « {one_line(text)} » au lieu de « {one_line(goal.notes)} »")
     if not update:
         raise GoalError("Aucune modification")
     return _reshape(

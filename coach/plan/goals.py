@@ -20,6 +20,11 @@ def goal_label(goal: Goal) -> str:
     return f"{prefix} de {distance} km"
 
 
+def one_line(text: str) -> str:
+    """Texte sur une seule ligne (retours à la ligne et espaces répétés réduits à une espace), pour les prompts."""
+    return " ".join(text.split())
+
+
 def cycle_end(goals: list[Goal]) -> date | None:
     """Fin du cycle : bloc du premier Principal, ou bloc affûté de son groupe rapproché s'il est plus
     tardif ; sans Principal, fin du dernier bloc."""

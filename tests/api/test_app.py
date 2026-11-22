@@ -647,6 +647,25 @@ def test_activities_of_plan_week(make_client, repo):
     assert goal["id"]
 
 
+def test_activities_of_plan_week_include_matched_from_other_weeks(make_client, repo):
+    """Une sortie rattachée à une séance de la semaine reste visible, même datée d'une autre semaine."""
+    from datetime import timedelta
+
+    client = make_client(llm=FakeLLMProvider([valid_plan_json(14, 3)]))
+    _accepted_goal(client)
+    plan = client.get("/api/plan").json()
+    monday = date.fromisoformat(plan["cycle"]["plan_start"])
+    s1 = plan["weeks"][0]["sessions"][0]["id"]
+    before = repo.add(make_activity(garmin_activity_id=21, date=monday - timedelta(days=1), session_id=s1))
+    inside = repo.add(make_activity(garmin_activity_id=22, date=monday + timedelta(days=2), session_id=s1))
+    other = repo.add(make_db_session(plan["cycle"]["id"] + 999, week_index=1))
+    repo.add(make_activity(garmin_activity_id=23, date=monday - timedelta(days=3), session_id=other.id))
+
+    ids = [r["id"] for r in client.get("/api/activities?week=1").json()]
+    assert ids == [before.id, inside.id]  # sans doublon, triées, autre cycle exclu
+    assert client.get("/api/activities?week=2").json() == []
+
+
 def test_free_activities_of_last_days(make_client, repo):
     from datetime import date, timedelta
 

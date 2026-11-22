@@ -232,6 +232,29 @@ test("after a regeneration from the plan settings, the goals page reloads and sh
   expect(onchanged).toHaveBeenCalled();
 });
 
+test("a failed regeneration from the plan settings closes the dialog and shows the error above the Générer banner", async () => {
+  location.hash = "#/goal";
+  let failed = false;
+  const cycle = mkCycle({ plan_accepted: true });
+  const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+    if (init?.method === "PATCH") {
+      failed = true;
+      return new Response(JSON.stringify({ code: "llm_error", detail: "Claude indisponible" }), { status: 502 });
+    }
+    const c = failed ? { ...cycle, plan_accepted: false, needs_generation: true, sessions_per_week: 5 } : cycle;
+    return new Response(JSON.stringify(mkPlan(mkGoal(), c)), { status: 200 });
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  render(Goal, { onchanged: vi.fn() });
+  await fireEvent.click(await screen.findByRole("button", { name: "Réglages du plan" }));
+  const dialog = within(screen.getByRole("dialog", { name: "Réglages du plan" }));
+  await fireEvent.click(dialog.getByRole("radio", { name: "5" }));
+  await fireEvent.click(dialog.getByRole("button", { name: "Enregistrer" }));
+  expect(await screen.findByRole("button", { name: "Générer" })).toBeVisible();
+  expect(screen.getByText("Claude indisponible")).toBeVisible();
+  expect(screen.queryByRole("dialog")).toBeNull();
+});
+
 // --- plusieurs objectifs -------------------------------------------------------------------
 
 const json = (b: unknown, status = 200) => new Response(JSON.stringify(b), { status });

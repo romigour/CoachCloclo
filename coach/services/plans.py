@@ -153,7 +153,7 @@ class PlanSettingsUpdate(BaseModel):
 
 
 def _regenerate_with(repo: Repo, garmin: GarminPort, llm: LLMProvider, cycle_id: int, update: dict) -> Cycle:
-    """Enregistre les réglages (plan à recalculer), puis régénère la suite du plan.
+    """Enregistre les réglages (plan à recalculer, plus validé), puis régénère la suite du plan.
 
     Si Claude échoue, les réglages restent enregistrés et le plan reste à recalculer.
     """
@@ -164,6 +164,7 @@ def _regenerate_with(repo: Repo, garmin: GarminPort, llm: LLMProvider, cycle_id:
         for key, value in update.items():
             setattr(c, key, value)
         c.needs_generation = True
+        c.plan_accepted = False  # ni export, ni imprévu, ni proposition sur l'ancien plan
         db.add(c)
     generate_plan(repo, garmin, llm)
     return _active_cycle(repo)

@@ -108,3 +108,25 @@ test("le nombre choisi fixe le minimum de jours", async () => {
   expect(screen.getByText("Coche au moins 6 jours")).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Enregistrer" })).toBeDisabled();
 });
+
+test("un échec de la régénération ferme le dialogue via onfailed (réglages déjà enregistrés)", async () => {
+  mock(502, { code: "llm_error", detail: "Claude indisponible" });
+  const onsaved = vi.fn();
+  const onfailed = vi.fn();
+  open({ onsaved, onfailed });
+  await fireEvent.click(screen.getByRole("radio", { name: "5" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Enregistrer" }));
+  await waitFor(() => expect(onfailed).toHaveBeenCalled());
+  expect(onsaved).not.toHaveBeenCalled();
+  expect(screen.queryByText("Claude indisponible")).toBeNull(); // affichée par la page, pas par le dialogue
+});
+
+test("un refus du serveur (422) garde le dialogue ouvert même si le nombre change", async () => {
+  mock(422, { detail: "Il faut au moins 5 jours possibles pour 5 séances par semaine" });
+  const onfailed = vi.fn();
+  open({ onfailed });
+  await fireEvent.click(screen.getByRole("radio", { name: "5" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Enregistrer" }));
+  expect(await screen.findByText(/au moins 5 jours possibles/)).toBeVisible();
+  expect(onfailed).not.toHaveBeenCalled();
+});

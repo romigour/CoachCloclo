@@ -1,6 +1,6 @@
 <script lang="ts">
   import { untrack } from "svelte";
-  import { api, type Cycle, type PlanSettingsInput } from "../lib/api";
+  import { api, ApiError, type Cycle, type PlanSettingsInput } from "../lib/api";
   import AvailabilityFields, { availabilityValid } from "./AvailabilityFields.svelte";
   import ErrorBanner from "./ErrorBanner.svelte";
 
@@ -8,11 +8,14 @@
     cycle,
     onclose,
     onsaved,
+    onfailed,
   }: {
     cycle: Cycle;
     onclose?: () => void;
     /** `null` : nombre de séances changé, la suite du plan a été régénérée (pas de proposition). */
     onsaved?: (proposalId: number | null) => void;
+    /** Régénération en échec : les réglages sont déjà enregistrés, la page affiche l'erreur et « Générer ». */
+    onfailed?: (error: unknown) => void;
   } = $props();
 
   // instantané des valeurs de départ : le formulaire ne suit pas les changements de `cycle`
@@ -46,7 +49,9 @@
       const r = await api.updatePlanSettings(body);
       onsaved?.(r.proposal_id);
     } catch (e) {
-      error = e;
+      const refused = e instanceof ApiError && e.status === 422; // rien n'a été enregistré
+      if (perWeekChanged && !refused) onfailed?.(e);
+      else error = e;
     } finally {
       busy = false;
     }

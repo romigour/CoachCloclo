@@ -276,6 +276,7 @@ def test_update_plan_settings_sessions_per_week_keeps_settings_when_claude_fails
         )
     c = repo.active_cycle()
     assert c.sessions_per_week == 4 and c.needs_generation
+    assert not c.plan_accepted  # plan à recalculer : plus considéré comme validé (export, imprévus, synchro)
     assert [(s.id, s.status) for s in repo.sessions(c.id)] == before
 
 

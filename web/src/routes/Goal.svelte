@@ -220,6 +220,14 @@
     }
   }
 
+  /** Régénération en échec : réglages enregistrés, plan à recalculer (bandeau « Générer »). */
+  async function settingsFailed(err: unknown) {
+    editingSettings = false;
+    onchanged?.();
+    await load().catch(() => {});
+    error = err;
+  }
+
   /** Fermeture sans enregistrer : relecture (après un échec de régénération, le plan est à recalculer). */
   function settingsClosed() {
     editingSettings = false;
@@ -399,7 +407,7 @@
 {/if}
 
 {#if editingSettings && cycle}
-  <PlanSettingsDialog {cycle} onclose={settingsClosed} onsaved={settingsSaved} />
+  <PlanSettingsDialog {cycle} onclose={settingsClosed} onsaved={settingsSaved} onfailed={settingsFailed} />
 {/if}
 
 <style>

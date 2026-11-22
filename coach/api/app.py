@@ -581,7 +581,7 @@ def create_app(
                 "past_goals": [],
                 "last_cycle": None,
                 "has_activities": False,
-                "history": {"status": "idle", "imported": 0, "error": None, "total": 0, "finished_at": None},
+                "history": {"status": "idle", "imported": 0, "error": None, "total": None, "finished_at": None},
                 "storage": {"code": code, "detail": detail},
             }
         cycle = repo.active_cycle()

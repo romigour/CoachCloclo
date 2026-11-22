@@ -25,6 +25,7 @@
   import Records from "../components/stats/Records.svelte";
   import Races from "../components/stats/Races.svelte";
   import { READONLY } from "../lib/mode";
+  import { importBanner } from "../lib/history";
 
   let { history, onimport, version = 0 }: { history: HistoryState | null; onimport: () => void; version?: number } =
     $props();
@@ -164,7 +165,7 @@
   </header>
 
   {#if history?.status === "running"}
-    <p class="banner info busy" role="status">Import de l'historique : {history.imported} activités…</p>
+    <p class="banner info busy" role="status">{importBanner(history.imported)}</p>
   {:else if history?.status === "error"}
     <div class="banner warning import-error" role="alert">
       <span>Import de l'historique interrompu : {history.error ?? "erreur inconnue"}</span>

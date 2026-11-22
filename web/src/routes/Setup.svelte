@@ -10,7 +10,7 @@
   import ClaudeUsage from "../components/ClaudeUsage.svelte";
   import DiagnosticSettings from "../components/DiagnosticSettings.svelte";
   import Icon from "../components/Icon.svelte";
-  import { activityCount, lastImport, newCount } from "../lib/history";
+  import { lastImport, newCount, totalLabel } from "../lib/history";
 
   let { onchanged, onconnected }: { onchanged?: () => void; onconnected?: () => void } = $props();
 
@@ -261,7 +261,7 @@
               <p class="error">Import interrompu : {status.history.error ?? "erreur inconnue"}</p>
             {:else}
               {@const last = lastImport(status.history)}
-              <p>{activityCount(status.history.total)}</p>
+              <p>{totalLabel(status.history.total)}</p>
               {#if last}<p class="meta">{last}</p>{/if}
             {/if}
           </div>

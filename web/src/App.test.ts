@@ -121,7 +121,7 @@ test("polls status while history runs, stops when done, and reloads the stats", 
   vi.useFakeTimers();
   const { unmount } = render(App);
   await vi.advanceTimersByTimeAsync(100);
-  expect(screen.getByText("Import de l'historique : 3 activités…")).toBeTruthy();
+  expect(screen.getByText("Import de l'historique en cours… (3 nouvelles)")).toBeTruthy();
   const baseline = statsCalls;
   const statusCalls = () => calls.filter((c) => c.url === "/api/status").length;
   const before = statusCalls();

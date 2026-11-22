@@ -19,3 +19,13 @@ export function lastImport(h: HistoryState): string | null {
   if (!h.finished_at) return null;
   return `dernier import le ${formatDate(h.finished_at.slice(0, 10))}, ${newCount(h.imported)}`;
 }
+
+/** Total en base pour les Réglages ; jamais un faux « 0 » quand la base est injoignable. */
+export function totalLabel(total: number | null): string {
+  return total === null ? "Nombre d'activités indisponible" : activityCount(total);
+}
+
+/** Bandeau des Statistiques pendant un import : `imported` compte les ajouts, pas un total. */
+export function importBanner(imported: number): string {
+  return `Import de l'historique en cours… (${newCount(imported)})`;
+}

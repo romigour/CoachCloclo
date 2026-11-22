@@ -201,9 +201,9 @@ export type HistoryState = {
   /** Activités ajoutées par le dernier import (0 si tout était déjà en base). */
   imported: number;
   error: string | null;
-  /** Nombre d'activités en base. */
-  total: number;
-  /** Fin du dernier import réussi (ISO), nul s'il n'y en a jamais eu. */
+  /** Nombre d'activités en base ; nul si la base est indisponible (inconnu, pas zéro). */
+  total: number | null;
+  /** Fin de l'import courant s'il a abouti (ISO) ; nul pendant un import, après une erreur ou s'il n'y en a jamais eu. */
   finished_at: string | null;
 };
 

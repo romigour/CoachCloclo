@@ -1644,7 +1644,7 @@ def test_startup_with_unreachable_cloud_then_recovers(storage_client, cloud):
     status = client.get("/api/status")
     assert status.status_code == 200
     assert status.json()["storage"]["code"] == "cloud_unreachable"
-    assert status.json()["history"] == {"status": "idle", "imported": 0, "error": None, "total": 0, "finished_at": None}
+    assert status.json()["history"] == {"status": "idle", "imported": 0, "error": None, "total": None, "finished_at": None}
     r = client.get("/api/plan")
     assert r.status_code == 503 and r.json()["code"] == "cloud_unreachable"
     cloud.fail = None

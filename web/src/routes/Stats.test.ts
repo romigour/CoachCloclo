@@ -85,7 +85,7 @@ test("no call to action once activities exist", async () => {
 
 test("history running banner", async () => {
   render(Stats, { history: { status: "running", imported: 42, error: null, total: 0, finished_at: null }, onimport: () => {} });
-  expect(await screen.findByText("Import de l'historique : 42 activités…")).toBeInTheDocument();
+  expect(await screen.findByText("Import de l'historique en cours… (42 nouvelles)")).toBeInTheDocument();
 });
 
 test("history error banner calls onimport", async () => {

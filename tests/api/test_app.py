@@ -491,7 +491,7 @@ def test_manual_match_on_sync_error_not_pending(make_client, repo):
     assert repo.session(sid).status == "sync_error" and load_sync_state(repo).pending_done == []
 
 
-LAP =LapSummary(index=0, duration_s=600, distance_m=1800, avg_hr=140, step_order=1, raw={"x": 1})
+LAP = LapSummary(index=0, duration_s=600, distance_m=1800, avg_hr=140, step_order=1, raw={"x": 1})
 
 
 def _db_session(repo, **kw):

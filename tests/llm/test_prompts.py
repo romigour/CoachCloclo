@@ -682,3 +682,89 @@ def test_race_day_rule_in_every_prompt():
     for p in cases:
         assert p.count(RACE_DAY_RULE) == 1
         assert p.count("jour d'une course") == 1
+
+
+# --- historique long ------------------------------------------------------------------------------
+
+from coach.analysis.long_history import LongHistory, MonthVolume, PastRace  # noqa: E402
+from coach.llm.prompts import _fmt_time  # noqa: E402
+from coach.plan.models import PersonalRecord  # noqa: E402
+
+LONG = LongHistory(
+    months=[
+        MonthVolume(date(2026, 11, 1), runs=2, run_km=30.0, run_s=10800, d_plus_m=1000, longest_km=20.0, other_s=5400),
+        MonthVolume(date(2026, 10, 1)),
+    ],
+    races=[PastRace(date(2026, 10, 12), "Trail des Crêtes", 32.0, 1450, 15125, 85, 420)],
+    records=[
+        PersonalRecord(kind="10k", value=2535, date=date(2025, 4, 6)),
+        PersonalRecord(kind="longest_run", value=32400, date=date(2025, 10, 19)),
+    ],
+)
+LONG_LINES = [
+    "Historique long (pour situer le niveau de fond et la capacité de charge ; "
+    "la forme actuelle reste donnée par l'historique récent) :",
+    "Volume mensuel de course à pied (12 derniers mois, plus récent d'abord) :",
+    "- novembre 2026 : 2 sorties, 30 km, 3 h 00, D+ 1000 m, plus longue 20.0 km | autres sports 1 h 30",
+    "- octobre 2026 : aucune course",
+    "Compétitions passées (plus récentes d'abord) :",
+    "- 2026-10-12 : Trail des Crêtes, 32.0 km, D+ 1450 m, 4:12:05, classement 85/420",
+    "Records personnels :",
+    "- 10 km : 42:15 (2025-04-06)",
+    "- Plus longue sortie : 32.4 km (2025-10-19)",
+]
+
+
+def _gen_long(**kw):
+    return build_generation_prompt(make_cycle(), [make_goal()], [], ZONES, [], n_weeks=8, gpx_texts=[], **kw)
+
+
+def _adj_long(**kw):
+    return build_adjustment_prompt(
+        make_cycle(), [make_goal()], [], ZONES, 4, done=[], missed=[], upcoming=[], history=[], **kw
+    )
+
+
+def test_long_history_block_format():
+    lines = _gen_long(long_history=LONG).splitlines()
+    for line in LONG_LINES:
+        assert line in lines
+
+
+def test_long_history_block_omits_empty_parts():
+    lh = LongHistory(
+        months=[MonthVolume(date(2026, 11, 1))],
+        races=[PastRace(date(2026, 5, 1), None, 10.0, None, 2400, None, None)],
+        records=[],
+    )
+    p = _gen_long(long_history=lh)
+    assert "- 2026-05-01 : 10.0 km, 40:00" in p.splitlines()
+    assert "Volume mensuel" not in p and "Records personnels" not in p
+
+
+def test_long_history_single_run_and_other_sports_on_empty_month():
+    lh = LongHistory(
+        months=[MonthVolume(date(2026, 11, 1), runs=1, run_km=8.4, run_s=2700, longest_km=8.4),
+                MonthVolume(date(2026, 10, 1), other_s=7200)],
+        races=[], records=[],
+    )
+    lines = _gen_long(long_history=lh).splitlines()
+    assert "- novembre 2026 : 1 sortie, 8 km, 0 h 45, D+ 0 m, plus longue 8.4 km" in lines
+    assert "- octobre 2026 : aucune course | autres sports 2 h 00" in lines
+
+
+def test_long_history_absent_by_default():
+    assert "Historique long" not in _gen_long()
+    assert "Historique long" not in _adj_long()
+    empty = LongHistory(months=[MonthVolume(date(2026, 11, 1))], races=[], records=[])
+    assert _gen_long(long_history=empty) == _gen_long()
+
+
+def test_adjustment_prompt_includes_long_history():
+    p = _adj_long(long_history=LONG)
+    assert p.index("Historique récent") < p.index("Historique long")
+
+
+def test_fmt_time():
+    assert _fmt_time(2535) == "42:15"
+    assert _fmt_time(5712) == "1:35:12"

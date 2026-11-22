@@ -110,13 +110,14 @@ CREATE TABLE goal (
 	long_run_day VARCHAR, 
 	include_bike BOOLEAN NOT NULL, 
 	priority VARCHAR NOT NULL, 
+	notes VARCHAR, 
 	PRIMARY KEY (id)
 );
-INSERT INTO "goal" VALUES(1,'2026-03-01 08:00:00.000000','route',21.1,300,'2026-03-15',3,NULL,'{"distance_km": 21.1, "d_plus_m": 300}','active','2026-03-02',1,6600,'user','["lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche"]',NULL,0,'principal');
-INSERT INTO "goal" VALUES(2,'2026-03-01 08:00:00.000000','trail',42.0,2000,'2026-03-22',3,NULL,NULL,'active','2026-03-02',1,NULL,'claude','["lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche"]',NULL,0,'secondaire');
-INSERT INTO "goal" VALUES(3,'2026-03-01 08:00:00.000000','trail',80.0,5000,'2026-09-06',3,NULL,NULL,'active','2026-03-02',0,NULL,NULL,'["lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche"]',NULL,0,'principal');
-INSERT INTO "goal" VALUES(4,'2026-03-01 08:00:00.000000','route',10.0,0,'2025-11-02',3,NULL,NULL,'done','2026-03-02',1,2700,'user','["lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche"]',NULL,0,'plaisir');
-INSERT INTO "goal" VALUES(5,'2026-03-01 08:00:00.000000','trail',42.0,2000,'2026-04-12',3,NULL,NULL,'archived','2026-03-02',1,NULL,NULL,'["lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche"]',NULL,0,'principal');
+INSERT INTO "goal" VALUES(1,'2026-03-01 08:00:00.000000','route',21.1,300,'2026-03-15',3,NULL,'{"distance_km": 21.1, "d_plus_m": 300}','active','2026-03-02',1,6600,'user','["lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche"]',NULL,0,'principal',NULL);
+INSERT INTO "goal" VALUES(2,'2026-03-01 08:00:00.000000','trail',42.0,2000,'2026-03-22',3,NULL,NULL,'active','2026-03-02',1,NULL,'claude','["lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche"]',NULL,0,'secondaire',NULL);
+INSERT INTO "goal" VALUES(3,'2026-03-01 08:00:00.000000','trail',80.0,5000,'2026-09-06',3,NULL,NULL,'active','2026-03-02',0,NULL,NULL,'["lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche"]',NULL,0,'principal',NULL);
+INSERT INTO "goal" VALUES(4,'2026-03-01 08:00:00.000000','route',10.0,0,'2025-11-02',3,NULL,NULL,'done','2026-03-02',1,2700,'user','["lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche"]',NULL,0,'plaisir',NULL);
+INSERT INTO "goal" VALUES(5,'2026-03-01 08:00:00.000000','trail',42.0,2000,'2026-04-12',3,NULL,NULL,'archived','2026-03-02',1,NULL,NULL,'["lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche"]',NULL,0,'principal',NULL);
 CREATE TABLE gpxfile (
 	goal_id INTEGER NOT NULL, 
 	data BLOB NOT NULL, 

@@ -94,9 +94,10 @@ CREATE TABLE goal (
 	long_run_day VARCHAR, 
 	include_bike BOOLEAN NOT NULL, 
 	priority VARCHAR NOT NULL, 
+	notes VARCHAR, 
 	PRIMARY KEY (id)
 );
-INSERT INTO "goal" VALUES(1,'2026-03-01 08:00:00.000000','trail',50.0,1000,'2099-06-01',3,NULL,NULL,'active','2099-03-02',0,NULL,NULL,'["lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche"]',NULL,0,'principal');
+INSERT INTO "goal" VALUES(1,'2026-03-01 08:00:00.000000','trail',50.0,1000,'2099-06-01',3,NULL,NULL,'active','2099-03-02',0,NULL,NULL,'["lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche"]',NULL,0,'principal',NULL);
 CREATE TABLE gpxfile (
 	goal_id INTEGER NOT NULL, 
 	data BLOB NOT NULL, 

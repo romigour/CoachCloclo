@@ -17,7 +17,7 @@ from coach.plan.goals import block_label, goal_label, race_blocks
 from coach.plan.constraints import constraint_errors, planned_from_plan
 from coach.plan.models import Cycle, Goal, Session, clear_adjust
 from coach.plan.repo import Repo
-from coach.services.context import load_constraints, recent_history, refresh_snapshot
+from coach.services.context import load_constraints, long_history, recent_history, refresh_snapshot
 from coach.services.goals import (
     _NO_PLAN,
     _NOT_FOUND,
@@ -98,6 +98,7 @@ def generate_plan(repo: Repo, garmin: GarminPort, llm: LLMProvider) -> PlanRespo
         race_texts=race_texts, constraints=constraints, first_week=first_week, fixed=fixed,
         recovery_note=_recovery_note(repo, cycle),
         recent=repo.recent_done_goals(today),
+        long_history=long_history(repo, today),
     )
     pace_available = zones.pace is not None
     # chaque objectif du cycle en mode `claude` est (ré)estimé, au-dessus de l'allure plancher

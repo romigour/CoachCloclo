@@ -266,3 +266,14 @@ def test_note_added_during_adjustment_is_kept(repo, coach_home, fake_garmin, acc
     assert "Note B" in llm.calls[0] and "Note C" not in llm.calls[0]
     cycle = repo.active_cycle()
     assert cycle.adjust_due is True and cycle.adjust_notes() == ["Note C"]
+
+
+def test_ask_adjustment_prompt_has_long_history(repo, coach_home, fake_garmin, accepted_plan):
+    from tests.plan.factories import make_activity
+
+    repo.add(make_activity(garmin_activity_id=902, date=date(2026, 9, 14), type_key="trail_running"))
+    llm = FakeLLMProvider([adjustment_json()])
+    ask_adjustment(
+        repo, fake_garmin, llm, accepted_plan, _zones(), repo.sessions(accepted_plan.id), TODAY,
+    )
+    assert "- septembre 2026 : 1 sortie," in llm.calls[0]

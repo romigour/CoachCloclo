@@ -6,13 +6,14 @@ from collections.abc import Sequence
 from typing import get_args
 
 from coach.analysis.laps import StepComparison, StepResult
+from coach.analysis.long_history import LongHistory, MonthVolume, PastRace
 from coach.analysis.race_plan import RacePlan
 from coach.analysis.zones import Zones
 from coach.llm.schemas import AdjustmentResponse, PlanResponse, Weekday
 from coach.plan.calendar import week_of
 from coach.plan.constraints import PlanConstraints
 from coach.plan.goals import MIN_GAP_DAYS, RaceBlock, block_label, goal_key, goal_label, proximity
-from coach.plan.models import PRIORITY_LABELS, Activity, Cycle, Event, Goal, Session
+from coach.plan.models import PRIORITY_LABELS, Activity, Cycle, Event, Goal, PersonalRecord, Session
 
 HISTORY_WEEKS = 8
 HISTORY_MAX_LINES = 60
@@ -173,6 +174,76 @@ def _history_text(history: list[Activity]) -> str:
     recent = sorted((a for a in history if a.date > cutoff), key=lambda a: a.date, reverse=True)
     lines = [_activity_line(a) for a in recent[:HISTORY_MAX_LINES]]
     return f"Historique récent ({HISTORY_WEEKS} dernières semaines, plus récent d'abord) :\n" + "\n".join(lines)
+
+
+_RECORD_LABELS = {"5k": "5 km", "10k": "10 km", "half": "Semi", "marathon": "Marathon"}
+
+
+def _fmt_time(s: float) -> str:
+    """« 42:15 » sous l'heure, « 1:35:12 » au-delà."""
+    m, sec = divmod(round(s), 60)
+    h, m = divmod(m, 60)
+    return f"{h}:{m:02d}:{sec:02d}" if h else f"{m}:{sec:02d}"
+
+
+def _month_line(m: MonthVolume) -> str:
+    label = f"{_MONTHS[m.month.month - 1]} {m.month.year}"
+    if m.runs:
+        text = (
+            f"- {label} : {m.runs} sortie{'s' if m.runs > 1 else ''}, {round(m.run_km)} km, "
+            f"{fmt_duration(m.run_s)}, D+ {round(m.d_plus_m)} m, plus longue {m.longest_km:.1f} km"
+        )
+    else:
+        text = f"- {label} : aucune course"
+    if m.other_s > 0:
+        text += f" | autres sports {fmt_duration(m.other_s)}"
+    return text
+
+
+def _race_line(r: PastRace) -> str:
+    fields = [
+        r.name,
+        f"{r.distance_km:.1f} km" if r.distance_km is not None else None,
+        f"D+ {round(r.d_plus_m)} m" if r.d_plus_m is not None else None,
+        _fmt_time(r.time_s) if r.time_s is not None else None,
+        f"classement {r.overall_rank}/{r.overall_total}"
+        if r.overall_rank is not None and r.overall_total is not None else None,
+    ]
+    return f"- {r.date.isoformat()} : " + ", ".join(f for f in fields if f)
+
+
+def _record_line(r: PersonalRecord) -> str:
+    if r.kind == "longest_run":
+        text = f"- Plus longue sortie : {r.value / 1000:.1f} km"
+    else:
+        text = f"- {_RECORD_LABELS[r.kind]} : {_fmt_time(r.value)}"
+    return text + (f" ({r.date.isoformat()})" if r.date is not None else "")
+
+
+def _last_months(n: int) -> str:
+    return "dernier mois" if n == 1 else f"{n} derniers mois"
+
+
+def _long_history_text(lh: LongHistory | None) -> str | None:
+    """Volume mensuel, compétitions et records ; None si rien à dire."""
+    if lh is None:
+        return None
+    parts = []
+    if any(m.runs or m.other_s > 0 for m in lh.months):
+        parts.append(
+            f"Volume mensuel de course à pied ({_last_months(len(lh.months))}, plus récent d'abord) :\n"
+            + "\n".join(_month_line(m) for m in lh.months)
+        )
+    if lh.races:
+        parts.append("Compétitions passées (plus récentes d'abord) :\n" + "\n".join(_race_line(r) for r in lh.races))
+    if lh.records:
+        parts.append("Records personnels :\n" + "\n".join(_record_line(r) for r in lh.records))
+    if not parts:
+        return None
+    return (
+        "Historique long (pour situer le niveau de fond et la capacité de charge ; "
+        "la forme actuelle reste donnée par l'historique récent) :\n" + "\n".join(parts)
+    )
 
 
 NEW_GOAL_ID = 0  # id provisoire d'un objectif pas encore enregistré (ajout), dans le prompt et les estimations
@@ -500,6 +571,7 @@ def build_generation_prompt(
     fixed: list[Session] = (),
     recovery_note: str | None = None,
     recent: Sequence[Goal] = (),
+    long_history: LongHistory | None = None,
 ) -> str:
     """Prompt de génération du plan du cycle ; `today` situe le jour courant dans la semaine `first_week`.
 
@@ -533,6 +605,7 @@ def build_generation_prompt(
     parts += [
         _zones_text(zones),
         _history_text(history),
+        *([t] if (t := _long_history_text(long_history)) else []),
     ]
     parts += ["Profil du parcours (GPX) :\n" + t for t in gpx_texts if t]
     parts += [t for t in race_texts if t]
@@ -578,6 +651,7 @@ def build_adjustment_prompt(
     change_note: str | None = None,
     constraints: PlanConstraints | None = None,
     recent: Sequence[Goal] = (),
+    long_history: LongHistory | None = None,
 ) -> str:
     """Prompt de proposition d'ajustements après une synchronisation.
 
@@ -611,6 +685,7 @@ def build_adjustment_prompt(
         f"respecter le maximum de {cycle.sessions_per_week} séances par semaine et viser la semaine "
         f"{current_week} ou une suivante.",
         _history_text(history),
+        *([t] if (t := _long_history_text(long_history)) else []),
     ]
     parts += [t for t in race_texts if t]
     parts.append("Schéma JSON attendu :\n" + _schema_text(AdjustmentResponse))

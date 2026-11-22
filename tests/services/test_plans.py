@@ -11,6 +11,7 @@ from coach.services.context import refresh_snapshot
 from coach.services.goals import GoalError
 from coach.services.plans import PlanSettingsUpdate, accept_plan, generate_plan, update_plan_settings
 from tests.llm.factories import make_plan, make_session, valid_plan_json
+from tests.plan.factories import make_activity
 from tests.services.test_goals import METRICS, _proposals, first_goal, monday_garmin  # noqa: F401 (fixture)
 from tests.services.test_goals import accepted_goal as _accepted_goal
 from tests.services.test_sync import adjustment_json
@@ -407,3 +408,31 @@ def test_generate_clears_pending_adjust(repo, fake_garmin):
     generate_plan(repo, fake_garmin, FakeLLMProvider([valid_plan_json(n_weeks=14, per_week=3)]))
     cycle = repo.active_cycle()
     assert cycle.adjust_due is False and cycle.adjust_notes() == []
+
+
+def test_generation_prompt_has_long_history(repo, fake_garmin):
+    _goal(repo, fake_garmin)
+    repo.add(make_activity(garmin_activity_id=901, date=date(2026, 10, 5)))
+    llm = FakeLLMProvider([valid_plan_json(n_weeks=14, per_week=3)])
+    generate_plan(repo, fake_garmin, llm)
+    assert "- octobre 2026 : 1 sortie," in llm.calls[0]
+
+
+def test_generation_prompt_unchanged_without_stored_activities(repo, fake_garmin):
+    _goal(repo, fake_garmin)
+    assert not repo.has_activities()
+    llm = FakeLLMProvider([valid_plan_json(n_weeks=14, per_week=3)])
+    generate_plan(repo, fake_garmin, llm)
+    assert "Historique long" not in llm.calls[0]
+
+
+def test_long_history_months_start_at_oldest_stored_activity(repo, fake_garmin):
+    """Base remplie par la synchro seule (pas d'import complet) : pas de faux mois d'arrêt."""
+    _goal(repo, fake_garmin)
+    repo.add(make_activity(garmin_activity_id=903, date=date(2026, 10, 5)))
+    llm = FakeLLMProvider([valid_plan_json(n_weeks=14, per_week=3)])
+    generate_plan(repo, fake_garmin, llm)
+    p = llm.calls[0]
+    assert "Volume mensuel de course à pied (2 derniers mois, plus récent d'abord) :" in p
+    assert "- novembre 2026 : aucune course" in p
+    assert "septembre 2026" not in p

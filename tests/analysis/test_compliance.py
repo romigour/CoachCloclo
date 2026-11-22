@@ -4,14 +4,10 @@ from coach.analysis.compliance import (
     CYCLING_TYPES,
     RUNNING_TYPES,
     activity_types_for,
-    estimate_duration_min,
     hard_session_warnings,
     mark_missed,
-    match_activities,
 )
-from coach.llm.schemas import RepeatSpec, StepSpec
-from tests.llm.factories import make_session
-from tests.plan.factories import make_activity, make_db_session, make_cycle
+from tests.plan.factories import make_db_session, make_cycle
 
 TUE = date(2026, 11, 10)  # semaine 3 : 2026-11-09 .. 2026-11-15
 WED = date(2026, 11, 11)
@@ -26,79 +22,6 @@ def _session(id_, status="exported", scheduled=TUE, week=3, **kw):
     return s
 
 
-def _act(id_, d=TUE, **kw):
-    a = make_activity(garmin_activity_id=id_, date=d, **kw)
-    a.id = id_
-    return a
-
-
-def test_exported_session_matches_adjacent_day():
-    s = _session(1, scheduled=TUE)
-    a = _act(10, d=WED)
-    assert match_activities([s], [a]) == [(1, 10)]
-
-
-def test_cycling_ignored():
-    s = _session(1)
-    a = _act(10, type_key="cycling")
-    assert match_activities([s], [a]) == []
-
-
-def test_two_runs_same_day_pick_closest_duration():
-    s = _session(1)
-    short = _act(10, duration_s=20 * 60)
-    long_ = _act(11, duration_s=50 * 60)
-    assert match_activities([s], [short, long_]) == [(1, 11)]
-
-
-def test_todo_session_never_matched_automatically():
-    s = _session(1, status="todo", scheduled=None)
-    assert match_activities([s], [_act(10, d=date(2026, 11, 14))]) == []
-
-
-def test_duration_outside_tolerance_not_matched():
-    s = _session(1)  # 45 min prévues : 31,5 à 58,5 min acceptées
-    assert match_activities([s], [_act(10, duration_s=30 * 60)]) == []
-    assert match_activities([s], [_act(11, duration_s=60 * 60)]) == []
-    assert match_activities([s], [_act(12, duration_s=32 * 60)]) == [(1, 12)]
-    assert match_activities([s], [_act(13, duration_s=58 * 60)]) == [(1, 13)]
-
-
-def test_activity_without_duration_not_matched():
-    s = _session(1)
-    assert match_activities([s], [_act(10, duration_s=None)]) == []
-
-
-def test_manually_detached_activity_not_rematched():
-    s = _session(1)
-    a = _act(10)
-    a.match_source = "manual"
-    assert match_activities([s], [a]) == []
-
-
-def test_activity_used_once():
-    s1 = _session(1, scheduled=TUE)
-    s2 = _session(2, scheduled=TUE)
-    a = _act(10)
-    pairs = match_activities([s1, s2], [a])
-    assert len(pairs) == 1
-    assert pairs[0][1] == 10
-
-
-def test_already_attached_activity_ignored():
-    s = _session(1)
-    a = _act(10)
-    a.session_id = 99
-    assert match_activities([s], [a]) == []
-
-
-def test_estimate_falls_back_when_est_missing():
-    s = _session(1)
-    s.est_duration_min = None
-    a = _act(10, duration_s=600)
-    assert match_activities([s], [a]) == [(1, 10)]
-
-
 def test_mark_missed_only_finished_weeks():
     cycle = make_cycle()
     old = _session(1, status="todo", scheduled=None, week=2)
@@ -107,25 +30,6 @@ def test_mark_missed_only_finished_weeks():
     done = _session(4, status="done", scheduled=None, week=2)
     missed = mark_missed([old, old_exported, current, done], cycle, date(2026, 11, 11))
     assert sorted(missed) == [1, 2]
-
-
-def test_estimate_duration_min():
-    spec = make_session(
-        steps=[
-            StepSpec(kind="warmup", duration_s=600, zone="Z2"),
-            RepeatSpec(
-                repeat=3,
-                steps=[
-                    StepSpec(kind="active", duration_s=120, zone="Z4"),
-                    StepSpec(kind="recovery", distance_m=500, zone="Z1"),
-                ],
-            ),
-        ]
-    )
-    s = make_db_session(1, steps=spec.steps)
-    assert s.est_duration_min is None
-    # 600 + 3 * (120 + 500 m * 0.36 s/m = 180) = 1500 s = 25 min
-    assert estimate_duration_min(s) == 25.0
 
 
 def test_warning_consecutive_hard_days():
@@ -143,18 +47,6 @@ def test_warning_ignores_same_session():
     assert not hard_session_warnings(vma, TUE, [vma])
 
 
-def test_sync_error_session_with_date_matches_like_exported():
-    s = _session(1, status="sync_error")
-    a = _act(10)
-    assert match_activities([s], [a]) == [(1, 10)]
-
-
-def test_sync_error_pending_removal_not_matched():
-    s = _session(1, status="sync_error")
-    s.pending_removal = True
-    assert match_activities([s], [_act(10)]) == []
-
-
 def test_mark_missed_includes_sync_error_but_not_pending_removal():
     cycle = make_cycle()
     err = _session(1, status="sync_error", scheduled=date(2026, 11, 3), week=2)
@@ -163,12 +55,11 @@ def test_mark_missed_includes_sync_error_but_not_pending_removal():
     assert mark_missed([err, removing], cycle, date(2026, 11, 11)) == [1]
 
 
-def test_sync_error_awaiting_cleanup_neither_matched_nor_missed():
+def test_sync_error_awaiting_cleanup_never_missed():
     # d'anciens ids Garmin restent à nettoyer : la synchro (sans écriture Garmin) n'y touche pas
     cycle = make_cycle()
     s = _session(1, status="sync_error", scheduled=date(2026, 11, 3), week=2)
     s.pending_old_workout_id = 1000
-    assert match_activities([s], [_act(10, d=date(2026, 11, 3))]) == []
     assert mark_missed([s], cycle, date(2026, 11, 11)) == []
     s.pending_old_workout_id, s.pending_old_schedule_id = None, 5000
     assert mark_missed([s], cycle, date(2026, 11, 11)) == []
@@ -180,17 +71,6 @@ def test_warning_counts_scheduled_sync_error_as_exported():
     assert hard_session_warnings(vma, WED, [err])
     err.pending_removal = True
     assert not hard_session_warnings(vma, WED, [err])
-
-
-def test_road_biking_activity_matches_exported_bike_session():
-    s = _session(1, sport="bike")
-    a = _act(10, type_key="road_biking")
-    assert match_activities([s], [a]) == [(1, 10)]
-
-
-def test_run_not_matched_to_bike_session_and_vice_versa():
-    assert match_activities([_session(1, sport="bike")], [_act(10, type_key="running")]) == []
-    assert match_activities([_session(1)], [_act(10, type_key="road_biking")]) == []
 
 
 def test_activity_types_for_sport():

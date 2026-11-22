@@ -7,7 +7,7 @@ from datetime import date, timedelta
 from pathlib import Path
 
 from pydantic import TypeAdapter
-from sqlalchemy import inspect, text
+from sqlalchemy import func, inspect, text
 from sqlalchemy.engine import Engine
 from sqlmodel import Session as DbSession
 from sqlmodel import SQLModel, create_engine, delete, select
@@ -309,6 +309,10 @@ class Repo:
         stmt = select(Activity).order_by(Activity.date, Activity.id)
         with self._open() as db:
             return list(db.exec(stmt))
+
+    def count_activities(self) -> int:
+        with self._open() as db:
+            return db.exec(select(func.count()).select_from(Activity)).one()
 
     def has_activities(self) -> bool:
         with self._open() as db:

@@ -68,7 +68,7 @@ test("Ma semaine : imprévus visibles, aucune action, proposition renvoyée vers
 });
 
 test("Stats : aucune action d'import ni de compétition", async () => {
-  render(Stats, { history: { status: "error", imported: 3, error: "x" }, onimport: () => {} });
+  render(Stats, { history: { status: "error", imported: 3, error: "x", total: 0, finished_at: null }, onimport: () => {} });
   expect(await screen.findByText("Semi de test")).toBeInTheDocument();
   expect(actions()).toEqual([]);
 });
@@ -88,7 +88,7 @@ test("App sans identifiants : renvoie vers la connexion", async () => {
 
 test("Stats sans activité : pas de bouton d'import", async () => {
   over.stats = { activities: [] };
-  render(Stats, { history: { status: "idle", imported: 0, error: null }, onimport: () => {} });
+  render(Stats, { history: { status: "idle", imported: 0, error: null, total: 0, finished_at: null }, onimport: () => {} });
   expect(await screen.findByText("Aucune activité pour l'instant")).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: /Importer mon historique/ })).toBeNull();
 });

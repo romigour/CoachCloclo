@@ -96,10 +96,12 @@ export async function zones(db: Db): Promise<Zones | null> {
   return r ? (JSON.parse(String(r.zones_json)) as Zones) : null;
 }
 
-const idle = (): HistoryState => ({ status: "idle", imported: 0, error: null });
+type StoredHistory = Omit<HistoryState, "total">;
+
+const idle = (): StoredHistory => ({ status: "idle", imported: 0, error: null, finished_at: null });
 
 /** Port de `load_state` : absent ou invalide → valeurs par défaut. */
-async function loadHistory(db: Db): Promise<HistoryState> {
+async function loadHistory(db: Db): Promise<StoredHistory> {
   const r = await first(db, "SELECT value_json FROM appstate WHERE key = ?", ["history"]);
   if (!r) return idle();
   try {
@@ -116,7 +118,9 @@ async function loadHistory(db: Db): Promise<HistoryState> {
     ) {
       return idle();
     }
-    return { status: s as HistoryState["status"], imported, error: error as string | null };
+    // finished_at illisible : on le perd, sans invalider le reste de l'état
+    const finished_at = typeof raw.finished_at === "string" ? raw.finished_at : null;
+    return { status: s as HistoryState["status"], imported, error: error as string | null, finished_at };
   } catch {
     return idle();
   }
@@ -145,7 +149,10 @@ export async function status(db: Db, today: string): Promise<Status> {
     past_goals: await pastGoals(db),
     last_cycle: last,
     has_activities: (await first(db, "SELECT id FROM activity LIMIT 1")) !== undefined,
-    history: await loadHistory(db),
+    history: {
+      ...(await loadHistory(db)),
+      total: Number((await first(db, "SELECT COUNT(*) AS n FROM activity"))?.n ?? 0),
+    },
     storage: null,
   };
 }

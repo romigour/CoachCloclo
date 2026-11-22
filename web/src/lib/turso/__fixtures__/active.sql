@@ -37,7 +37,7 @@ CREATE TABLE appstate (
 	PRIMARY KEY ("key")
 );
 INSERT INTO "appstate" VALUES('schema_version','{"v": 2}');
-INSERT INTO "appstate" VALUES('history','{"status": "done", "imported": 42, "error": null}');
+INSERT INTO "appstate" VALUES('history','{"status": "done", "imported": 42, "error": null, "finished_at": "2026-11-10T08:00:00Z"}');
 CREATE TABLE athletesnapshot (
 	id INTEGER NOT NULL, 
 	date DATE NOT NULL, 

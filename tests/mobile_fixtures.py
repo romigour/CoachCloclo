@@ -192,7 +192,8 @@ def _build_active(repo: Repo) -> None:
         PersonalRecord(id=1, kind="5k", value=1350.0, garmin_activity_id=9001, date=date(2026, 3, 3)),
         PersonalRecord(id=2, kind="longest_run", value=21100.0, garmin_activity_id=None, date=None),
     ])
-    repo.set_state("history", {"status": "done", "imported": 42, "error": None})
+    repo.set_state("history", {"status": "done", "imported": 42, "error": None,
+                               "finished_at": "2026-11-10T08:00:00Z"})
 
 
 def _build_between(repo: Repo) -> None:

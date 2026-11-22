@@ -171,6 +171,13 @@ def test_has_activities(repo):
         repo.activity(999)
 
 
+def test_count_activities(repo):
+    assert repo.count_activities() == 0
+    repo.add(Activity(garmin_activity_id=1, date=date(2026, 1, 1), type_key="running"))
+    repo.add(Activity(garmin_activity_id=2, date=date(2026, 1, 2), type_key="running"))
+    assert repo.count_activities() == 2
+
+
 def test_laps_absent_then_saved_then_replaced(repo):
     assert repo.laps(1) is None
     repo.save_laps(1, [LapSummary(index=0, duration_s=60, distance_m=200, raw={"x": 1})])

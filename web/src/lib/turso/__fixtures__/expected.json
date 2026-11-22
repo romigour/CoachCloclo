@@ -721,8 +721,10 @@
       "has_activities": true,
       "history": {
         "error": null,
+        "finished_at": "2026-11-10T08:00:00Z",
         "imported": 42,
-        "status": "done"
+        "status": "done",
+        "total": 10
       },
       "last_cycle": null,
       "next_goal": {
@@ -845,8 +847,10 @@
       "has_activities": false,
       "history": {
         "error": null,
+        "finished_at": null,
         "imported": 0,
-        "status": "idle"
+        "status": "idle",
+        "total": 0
       },
       "last_cycle": {
         "adjust_due": false,

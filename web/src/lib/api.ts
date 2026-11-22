@@ -198,8 +198,13 @@ export type PersonalRecord = {
 
 export type HistoryState = {
   status: "idle" | "running" | "done" | "error";
+  /** Activités ajoutées par le dernier import (0 si tout était déjà en base). */
   imported: number;
   error: string | null;
+  /** Nombre d'activités en base. */
+  total: number;
+  /** Fin du dernier import réussi (ISO), nul s'il n'y en a jamais eu. */
+  finished_at: string | null;
 };
 
 export type Week = { week_index: number; week_monday: string; sessions: Session[] };

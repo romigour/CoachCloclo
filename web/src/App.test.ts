@@ -11,7 +11,7 @@ let syncFails = false;
 let afterSync: (() => void) | null = null;
 let setupBody: Record<string, unknown> | null = null; // null : 404, comme sous `coach start`
 
-const idle = { status: "idle", imported: 0, error: null };
+const idle = { status: "idle", imported: 0, error: null, total: 0, finished_at: null };
 
 const cycle = {
   id: 1, status: "active", plan_start: "2026-11-09", end_date: "2027-02-07", sessions_per_week: 3,
@@ -116,7 +116,7 @@ test("auto-sync runs without a goal and says Garmin", async () => {
 
 test("polls status while history runs, stops when done, and reloads the stats", async () => {
   syncInstant = true;
-  statusBody = { ...statusBody, has_activities: true, history: { status: "running", imported: 3, error: null } };
+  statusBody = { ...statusBody, has_activities: true, history: { status: "running", imported: 3, error: null, total: 0, finished_at: null } };
   location.hash = "#/stats";
   vi.useFakeTimers();
   const { unmount } = render(App);
@@ -126,7 +126,7 @@ test("polls status while history runs, stops when done, and reloads the stats", 
   const statusCalls = () => calls.filter((c) => c.url === "/api/status").length;
   const before = statusCalls();
 
-  statusBody = { ...statusBody, history: { status: "done", imported: 9, error: null } };
+  statusBody = { ...statusBody, history: { status: "done", imported: 9, error: null, total: 0, finished_at: null } };
   await vi.advanceTimersByTimeAsync(5000);
   expect(statusCalls()).toBe(before + 1);
   expect(statsCalls).toBe(baseline + 1); // import terminé : activités rechargées
@@ -138,7 +138,7 @@ test("polls status while history runs, stops when done, and reloads the stats", 
 
 test("status polling is cleaned up on unmount", async () => {
   syncInstant = true;
-  statusBody = { ...statusBody, history: { status: "running", imported: 0, error: null } };
+  statusBody = { ...statusBody, history: { status: "running", imported: 0, error: null, total: 0, finished_at: null } };
   location.hash = "#/stats";
   vi.useFakeTimers();
   const { unmount } = render(App);
@@ -202,7 +202,7 @@ test("a failed sync after the first Garmin login stays on settings with its erro
 test("status polling keeps the error banner", async () => {
   syncInstant = true;
   syncFails = true;
-  statusBody = { ...statusBody, has_activities: true, history: { status: "running", imported: 3, error: null } };
+  statusBody = { ...statusBody, has_activities: true, history: { status: "running", imported: 3, error: null, total: 0, finished_at: null } };
   location.hash = "#/stats";
   await new Promise((r) => setTimeout(r, 0)); // laisse passer le hashchange (il efface l'erreur)
   vi.useFakeTimers();
@@ -216,13 +216,13 @@ test("status polling keeps the error banner", async () => {
 
 test("an import ending in error also reloads the stats", async () => {
   syncInstant = true;
-  statusBody = { ...statusBody, has_activities: true, history: { status: "running", imported: 3, error: null } };
+  statusBody = { ...statusBody, has_activities: true, history: { status: "running", imported: 3, error: null, total: 0, finished_at: null } };
   location.hash = "#/stats";
   vi.useFakeTimers();
   const { unmount } = render(App);
   await vi.advanceTimersByTimeAsync(100);
   const baseline = statsCalls;
-  statusBody = { ...statusBody, history: { status: "error", imported: 5, error: "Garmin coupé" } };
+  statusBody = { ...statusBody, history: { status: "error", imported: 5, error: "Garmin coupé", total: 0, finished_at: null } };
   await vi.advanceTimersByTimeAsync(5000);
   expect(statsCalls).toBe(baseline + 1);
   unmount();

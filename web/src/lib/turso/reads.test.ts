@@ -34,3 +34,15 @@ describe.each(["active", "between"] as const)("lectures (%s)", (s) => {
     expect(rest).toEqual(expected[s].status);
   });
 });
+
+it("status : finished_at non chaîne → null sans invalider le reste", async () => {
+  const db = await loadFixtureDb("active");
+  await db.execute({
+    sql: "UPDATE appstate SET value_json = ? WHERE key = 'history'",
+    args: ['{"status":"done","imported":1,"error":null,"finished_at":12}'],
+  });
+  const { history } = await status(db, "2026-11-14");
+  expect(history.finished_at).toBeNull();
+  expect(history.imported).toBe(1);
+  expect(history.status).toBe("done");
+});

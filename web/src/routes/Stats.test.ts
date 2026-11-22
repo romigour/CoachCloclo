@@ -71,26 +71,26 @@ test("empty period shows explicit empty state", async () => {
 test("no activity and no import yet: call to action imports the history", async () => {
   activities = [];
   const onimport = vi.fn();
-  render(Stats, { history: { status: "idle", imported: 0, error: null }, onimport });
+  render(Stats, { history: { status: "idle", imported: 0, error: null, total: 0, finished_at: null }, onimport });
   await fireEvent.click(await screen.findByRole("button", { name: "Importer mon historique Garmin" }));
   expect(onimport).toHaveBeenCalledOnce();
   expect(screen.queryByRole("group", { name: "Séances" })).toBeNull();
 });
 
 test("no call to action once activities exist", async () => {
-  render(Stats, { history: { status: "idle", imported: 0, error: null }, onimport: () => {} });
+  render(Stats, { history: { status: "idle", imported: 0, error: null, total: 0, finished_at: null }, onimport: () => {} });
   await kpi("Séances");
   expect(screen.queryByRole("button", { name: "Importer mon historique Garmin" })).toBeNull();
 });
 
 test("history running banner", async () => {
-  render(Stats, { history: { status: "running", imported: 42, error: null }, onimport: () => {} });
+  render(Stats, { history: { status: "running", imported: 42, error: null, total: 0, finished_at: null }, onimport: () => {} });
   expect(await screen.findByText("Import de l'historique : 42 activités…")).toBeInTheDocument();
 });
 
 test("history error banner calls onimport", async () => {
   const onimport = vi.fn();
-  render(Stats, { history: { status: "error", imported: 3, error: "Import interrompu" }, onimport });
+  render(Stats, { history: { status: "error", imported: 3, error: "Import interrompu", total: 0, finished_at: null }, onimport });
   expect(await screen.findByText(/Import interrompu/)).toBeInTheDocument();
   await fireEvent.click(screen.getByRole("button", { name: "Reprendre" }));
   expect(onimport).toHaveBeenCalledTimes(1);

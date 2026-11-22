@@ -52,7 +52,7 @@ function minimalStatus(code: string, detail: string): Status {
     past_goals: [],
     last_cycle: null,
     has_activities: false,
-    history: { status: "idle", imported: 0, error: null },
+    history: { status: "idle", imported: 0, error: null, total: 0, finished_at: null },
     storage: { code, detail },
   };
 }

@@ -1,7 +1,7 @@
 import logging
 import sqlite3
 import threading
-from datetime import date
+from datetime import date, datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -921,12 +921,24 @@ def test_status_has_activities_and_history(make_client, repo):
     client = make_client()
     body = client.get("/api/status").json()
     assert body["has_activities"] is False
-    assert body["history"] == {"status": "done", "imported": 0, "error": None}
+    assert body["history"] == {"status": "done", "imported": 0, "error": None, "total": 0, "finished_at": None}
     _add_activity(repo, 1, "2026-01-01")
     save_state(repo, HistoryState(status="error", imported=5, error="boum"))
     body = client.get("/api/status").json()
     assert body["has_activities"] is True
-    assert body["history"] == {"status": "error", "imported": 5, "error": "boum"}
+    assert body["history"] == {"status": "error", "imported": 5, "error": "boum", "total": 1, "finished_at": None}
+
+
+def test_status_history_total_after_empty_reimport(make_client, repo):
+    client = make_client()
+    _add_activity(repo, 1, "2026-01-01")
+    _add_activity(repo, 2, "2026-01-02")
+    save_state(repo, HistoryState(status="done", imported=0,
+                                  finished_at=datetime(2026, 11, 20, 10, 0, tzinfo=timezone.utc)))
+    h = client.get("/api/status").json()["history"]
+    assert h["imported"] == 0
+    assert h["total"] == 2
+    assert h["finished_at"] == repo.get_state("history")["finished_at"]
 
 
 def test_status_reports_running_when_runner_running(make_client, repo):
@@ -1632,6 +1644,7 @@ def test_startup_with_unreachable_cloud_then_recovers(storage_client, cloud):
     status = client.get("/api/status")
     assert status.status_code == 200
     assert status.json()["storage"]["code"] == "cloud_unreachable"
+    assert status.json()["history"] == {"status": "idle", "imported": 0, "error": None, "total": 0, "finished_at": None}
     r = client.get("/api/plan")
     assert r.status_code == 503 and r.json()["code"] == "cloud_unreachable"
     cloud.fail = None

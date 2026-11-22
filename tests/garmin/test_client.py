@@ -22,7 +22,7 @@ from coach.garmin.port import (
 
 FIXTURES = Path(__file__).parent.parent / "fixtures" / "garmin"
 FIXTURE_EXPECTED_THRESHOLD = 286  # round(1000 / 3.5)
-FIXTURE_EXPECTED_REST = 48
+FIXTURE_EXPECTED_REST = 49
 
 
 def load(name):
@@ -84,7 +84,7 @@ def test_metrics_parsing_from_fixtures():
     assert m.hr_max == 187
     assert m.pred_10k_s == 2880
     assert (m.pred_5k_s, m.pred_10k_s, m.pred_half_s, m.pred_marathon_s) == (1380, 2880, 6400, 13500)
-    assert m.hr_zones == [118, 132, 146, 160, 174]
+    assert not hasattr(m, "hr_zones")
 
 
 def test_metrics_pace_with_speed_in_m_per_s():
@@ -110,7 +110,19 @@ def test_metrics_tolerates_odd_shapes():
         }
     )
     m = GarminClient(lib).metrics()
-    assert m.hr_zones is None and m.threshold_pace_s_km is None and m.pred_10k_s is None
+    assert m.hr_rest is None and m.threshold_pace_s_km is None and m.pred_10k_s is None
+
+
+def test_hr_rest_falls_back_to_daily_value():
+    lib = full_lib()
+    lib.responses["get_heart_rates"] = {"restingHeartRate": 48, "lastSevenDaysAvgRestingHeartRate": None}
+    assert GarminClient(lib).metrics().hr_rest == 48
+
+
+def test_hr_rest_ignores_odd_seven_day_average():
+    lib = full_lib()
+    lib.responses["get_heart_rates"] = {"restingHeartRate": 48, "lastSevenDaysAvgRestingHeartRate": "x"}
+    assert GarminClient(lib).metrics().hr_rest == 48
 
 
 def test_metrics_missing_endpoint_gives_none():
@@ -119,7 +131,7 @@ def test_metrics_missing_endpoint_gives_none():
             raise GarminConnectNotFoundError("404")
 
     m = GarminClient(NotFoundLib(full_lib().responses)).metrics()
-    assert m.threshold_hr is None and m.hr_rest == 48
+    assert m.threshold_hr is None and m.hr_rest == FIXTURE_EXPECTED_REST
 
 
 def test_activities_parsing():

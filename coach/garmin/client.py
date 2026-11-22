@@ -298,19 +298,18 @@ class GarminClient:
 
         lt = _first_dict(lactate.get("speed_and_heart_rate")) if isinstance(lactate, dict) else {}
         hr = hr if isinstance(hr, dict) else {}
-        floors = [_int(zones.get(f"zone{i}Floor")) for i in range(1, 6)]
         return Metrics(
             vo2max=_num(_first_dict(max_metrics.get("generic")).get("vo2MaxPreciseValue")),
             # FC max : réglage utilisateur (zones) sinon max du jour (moins fiable).
             hr_max=_int(zones.get("maxHeartRateUsed")) or _int(hr.get("maxHeartRate")),
-            hr_rest=_int(hr.get("restingHeartRate")),
+            # FC repos : moyenne 7 jours (zones stables d'un jour à l'autre), sinon valeur du jour.
+            hr_rest=_int(hr.get("lastSevenDaysAvgRestingHeartRate")) or _int(hr.get("restingHeartRate")),
             threshold_hr=_int(lt.get("heartRate")),
             threshold_pace_s_km=_pace_s_km(lt.get("speed")),
             pred_5k_s=_int(preds.get("time5K")),
             pred_10k_s=_int(preds.get("time10K")),
             pred_half_s=_int(preds.get("timeHalfMarathon")),
             pred_marathon_s=_int(preds.get("timeMarathon")),
-            hr_zones=floors if all(f is not None for f in floors) else None,
         )
 
     def activities(self, start: date, end: date) -> list[ActivitySummary]:

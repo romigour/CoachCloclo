@@ -32,7 +32,6 @@ class Metrics(BaseModel):
     pred_10k_s: int | None = None
     pred_half_s: int | None = None
     pred_marathon_s: int | None = None
-    hr_zones: list[int] | None = None
 
 
 class ActivitySummary(BaseModel):

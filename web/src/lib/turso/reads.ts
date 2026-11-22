@@ -83,10 +83,14 @@ export async function activities(db: Db, week: number): Promise<Activity[]> {
   if (!cycle) return [];
   const monday = weekMonday(cycle, week);
   const sunday = addDays(monday, 6);
+  // comme l'API : aussi les activités rattachées à une séance de la semaine, même datées d'une autre semaine
   const rows = await all(
     db,
-    `SELECT ${ACTIVITY_COLS} FROM activity WHERE date >= ? AND date <= ? ORDER BY date, id`,
-    [monday, sunday],
+    `SELECT ${ACTIVITY_COLS} FROM activity
+     WHERE (date >= ? AND date <= ?)
+        OR session_id IN (SELECT id FROM session WHERE cycle_id = ? AND week_index = ?)
+     ORDER BY date, id`,
+    [monday, sunday, cycle.id, week],
   );
   return rows.map(activityRow);
 }

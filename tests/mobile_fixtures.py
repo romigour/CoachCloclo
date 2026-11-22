@@ -181,6 +181,8 @@ def _build_active(repo: Repo) -> None:
         _activity(9, date(2026, 3, 18), raw_json=json.dumps(zone_s)),
         _activity(10, date(2026, 3, 19),
                   raw_json=json.dumps({k: v for k, v in zone_s.items() if k != "hrTimeInZone_5"})),
+        # dimanche de la semaine 1, rattachée au Fartlek de la semaine 2 : listée dans les deux semaines
+        _activity(11, date(2026, 3, 8), session_id=6, match_source="manual"),
     ]
     for a in activities:
         repo.add(a)

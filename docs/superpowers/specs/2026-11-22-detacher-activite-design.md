@@ -12,7 +12,7 @@ Une séance peut afficher « Activité : rattachée » sans détail : l'activit�
 ## Non-objectifs
 
 - Pas de nouveau circuit de détachement côté serveur : `POST /activities/{id}/match` avec `session_id` nul fait déjà tout (statut repassé « à faire » / « envoyée », retrait de `pending_done`).
-- Rien sur le mobile (lecture seule) au-delà de l'affichage du détail, qui profite du même correctif.
+- Rien sur le mobile (lecture seule) au-delà de l'affichage du détail. Le mobile lit la base directement (`web/src/lib/turso/reads.ts`) : sa lecture des activités de la semaine reçoit le même ajout que l'API, vérifié par les fixtures de parité.
 
 ## Anti-objectifs
 

@@ -10,6 +10,7 @@
   import ClaudeUsage from "../components/ClaudeUsage.svelte";
   import DiagnosticSettings from "../components/DiagnosticSettings.svelte";
   import Icon from "../components/Icon.svelte";
+  import { activityCount, lastImport, newCount } from "../lib/history";
 
   let { onchanged, onconnected }: { onchanged?: () => void; onconnected?: () => void } = $props();
 
@@ -255,11 +256,13 @@
             {#if !status}
               <p>Chargement…</p>
             {:else if status.history.status === "running"}
-              <p class="busy" role="status">Import en cours… ({status.history.imported} activités)</p>
+              <p class="busy" role="status">Import en cours… ({newCount(status.history.imported)})</p>
             {:else if status.history.status === "error"}
               <p class="error">Import interrompu : {status.history.error ?? "erreur inconnue"}</p>
             {:else}
-              <p>{status.history.imported} activités importées</p>
+              {@const last = lastImport(status.history)}
+              <p>{activityCount(status.history.total)}</p>
+              {#if last}<p class="meta">{last}</p>{/if}
             {/if}
           </div>
           {#if status}

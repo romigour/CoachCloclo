@@ -241,6 +241,24 @@ def test_patch_goal(make_client):
     assert client.get("/api/status").json()["cycle"]["adjust_due"] is False
 
 
+def test_post_goal_with_notes(make_client):
+    r = _create_goal(make_client(), notes="Escaliers")
+    assert r.status_code == 200 and r.json()["goal"]["notes"] == "Escaliers"
+
+
+def test_post_goal_notes_too_long(make_client):
+    r = _create_goal(make_client(), notes="x" * 281)
+    assert r.status_code == 422
+
+
+def test_patch_goal_notes(make_client):
+    client = make_client(llm=FakeLLMProvider([valid_plan_json(14, 3)]))
+    goal = _accepted_goal(client)
+    r = client.patch(f"/api/goals/{goal['id']}", json={"notes": "Neige"})
+    assert r.status_code == 200
+    assert r.json()["goal"]["notes"] == "Neige" and r.json()["adjust_due"] is True
+
+
 def test_patch_goal_invalid(make_client):
     client = make_client(llm=FakeLLMProvider([valid_plan_json(14, 3)]))
     goal = _accepted_goal(client)

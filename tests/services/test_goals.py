@@ -16,6 +16,7 @@ from coach.services.goals import (
     GoalInput,
     GoalUpdate,
     add_goal,
+    clean_notes,
     parse_target_time,
     remove_goal,
     update_goal,
@@ -712,3 +713,65 @@ def test_legacy_cycle_end_kept_when_change_does_not_move_it(repo, monday_garmin)
     assert result == ChangeResult(proposal_id=None, needs_generation=False, adjust_due=True)
     cycle = repo.active_cycle()
     assert cycle.end_date == date(2027, 2, 7) and cycle.plan_accepted is True
+
+
+# --- précisions --------------------------------------------------------------------------------
+
+
+def test_clean_notes():
+    assert clean_notes(None) is None
+    assert clean_notes("   ") is None
+    assert clean_notes("  neige  ") == "neige"
+    assert clean_notes("x" * 280) == "x" * 280
+    assert clean_notes(" " * 5 + "x" * 280 + " " * 5) == "x" * 280
+    with pytest.raises(GoalError, match=r"Précisions trop longues \(280 caractères maximum\)"):
+        clean_notes("x" * 281)
+
+
+def test_add_goal_keeps_notes(repo, monday_garmin):
+    add_goal(repo, monday_garmin, goal_input(notes="  escaliers "))
+    assert _goals(repo)[0].notes == "escaliers"
+
+
+def test_add_goal_notes_too_long(repo, monday_garmin):
+    with pytest.raises(GoalError, match="Précisions trop longues"):
+        add_goal(repo, monday_garmin, goal_input(notes="x" * 281))
+    assert _goals(repo) == []
+
+
+def test_update_goal_notes_first_time(repo, monday_garmin):
+    goal = accepted_goal(repo, monday_garmin)
+    _, result = update_goal(repo, monday_garmin, goal.id, GoalUpdate(notes="Neige, je vise un record"))
+    assert _goals(repo)[0].notes == "Neige, je vise un record"
+    assert result == ChangeResult(proposal_id=None, needs_generation=False, adjust_due=True)
+    assert repo.active_cycle().adjust_notes() == [
+        "L'athlète a modifié l'objectif Trail de 42 km du 07/02/2027 (Principal) : "
+        "précisions « Neige, je vise un record », aucune auparavant. " + NOTE_END
+    ]
+
+
+def test_update_goal_notes_replaced(repo, monday_garmin):
+    goal = accepted_goal(repo, monday_garmin, notes="A")
+    update_goal(repo, monday_garmin, goal.id, GoalUpdate(notes="B"))
+    assert _goals(repo)[0].notes == "B"
+    assert "précisions « B » au lieu de « A »" in repo.active_cycle().adjust_notes()[0]
+
+
+def test_update_goal_notes_cleared(repo, monday_garmin):
+    goal = accepted_goal(repo, monday_garmin, notes="A")
+    update_goal(repo, monday_garmin, goal.id, GoalUpdate(notes=""))
+    assert _goals(repo)[0].notes is None
+    assert "précisions retirées" in repo.active_cycle().adjust_notes()[0]
+
+
+def test_update_goal_same_notes_is_no_change(repo, monday_garmin):
+    goal = accepted_goal(repo, monday_garmin, notes="A")
+    with pytest.raises(GoalError, match="Aucune modification"):
+        update_goal(repo, monday_garmin, goal.id, GoalUpdate(notes=" A "))
+
+
+def test_update_goal_notes_too_long(repo, monday_garmin):
+    goal = accepted_goal(repo, monday_garmin, notes="A")
+    with pytest.raises(GoalError, match="Précisions trop longues"):
+        update_goal(repo, monday_garmin, goal.id, GoalUpdate(notes="x" * 281))
+    assert _goals(repo)[0].notes == "A"

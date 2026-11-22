@@ -38,6 +38,7 @@ _NO_PLAN = "Aucun plan en cours"
 _NOTE_END = "Adapte les séances à venir en conséquence."
 MIN_PACE_S_KM = 150
 TOO_FAST = "Temps visé invraisemblable : allure moyenne plus rapide que 2:30/km (format attendu h:mm, ex. 3:45)"
+NOTES_MAX = 280  # précisions d'un objectif : courtes, pour garder un prompt léger
 _TARGET_TIME = re.compile(r"^(\d{1,2}):(\d{2})(?::(\d{2}))?$")
 
 
@@ -59,12 +60,14 @@ class GoalInput(BaseModel):
     long_run_day: Weekday | None = None
     include_bike: bool = False
     priority: Priority = "principal"
+    notes: str | None = None
 
 
 class GoalUpdate(BaseModel):
     race_date: date | None = None
     target_time: str | None = None
     priority: Priority | None = None
+    notes: str | None = None  # "" efface les précisions
 
 
 class ChangeResult(BaseModel):
@@ -99,6 +102,14 @@ def parse_target_time(text: str) -> int:
         if mn <= 59 and sec <= 59 and total > 0:
             return total
     raise GoalError("Temps visé invalide : format attendu h:mm, ex. 3:45")
+
+
+def clean_notes(text: str | None) -> str | None:
+    """Précisions sans espaces autour, `None` si vides ; refuse un texte de plus de `NOTES_MAX` caractères."""
+    cleaned = (text or "").strip()
+    if len(cleaned) > NOTES_MAX:
+        raise GoalError(f"Précisions trop longues ({NOTES_MAX} caractères maximum)")
+    return cleaned or None
 
 
 def check_target_time(seconds: int, distance_km: float) -> None:
@@ -322,6 +333,7 @@ def _new_goal(data: GoalInput, summary: GpxSummary | None, cycle: Cycle) -> Goal
         d_plus_m=d_plus,
         race_date=data.race_date,
         priority=data.priority,
+        notes=data.notes,
         target_time_s=data.target_time_s,
         target_source="user" if data.target_time_s else "claude",
         gpx_summary_json=summary.model_dump_json() if summary is not None else None,
@@ -386,6 +398,7 @@ def _create_first(repo: Repo, garmin: GarminPort, data: GoalInput, summary: GpxS
 
 def add_goal(repo: Repo, garmin: GarminPort, data: GoalInput) -> tuple[Goal, ChangeResult]:
     """Ajoute un objectif : crée le cycle s'il n'y en a pas, sinon l'intègre au cycle actif."""
+    data = data.model_copy(update={"notes": clean_notes(data.notes)})
     if data.target_time_s is not None:
         check_target_time(data.target_time_s, data.distance_km)
     summary = analyze_gpx(data.gpx) if data.gpx is not None else None
@@ -419,7 +432,7 @@ def _write_goal(goal_id: int, update: dict) -> Callable[[DbSession], Goal]:
 
 
 def update_goal(repo: Repo, garmin: GarminPort, goal_id: int, data: GoalUpdate) -> tuple[Goal, ChangeResult]:
-    """Modifie la date, le temps visé et/ou la priorité d'un objectif à venir et adapte le cycle.
+    """Modifie la date, le temps visé, la priorité et/ou les précisions d'un objectif à venir et adapte le cycle.
 
     Renvoie l'objectif enregistré et l'effet sur le plan.
     """
@@ -445,6 +458,16 @@ def update_goal(repo: Repo, garmin: GarminPort, goal_id: int, data: GoalUpdate) 
     if data.priority is not None and data.priority != goal.priority:
         update["priority"] = data.priority
         notes.append(f"priorité {PRIORITY_LABELS[data.priority]} au lieu de {PRIORITY_LABELS[goal.priority]}")
+    if data.notes is not None:
+        text = clean_notes(data.notes)
+        if text != goal.notes:
+            update["notes"] = text
+            if text is None:
+                notes.append("précisions retirées")
+            elif goal.notes is None:
+                notes.append(f"précisions « {text} », aucune auparavant")
+            else:
+                notes.append(f"précisions « {text} » au lieu de « {goal.notes} »")
     if not update:
         raise GoalError("Aucune modification")
     return _reshape(

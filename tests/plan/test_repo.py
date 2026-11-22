@@ -330,6 +330,7 @@ def test_migrate_adds_sport_and_include_bike_to_0_5_0_db(tmp_path):
     con.close()
     repo = Repo(make_engine(path))
     assert repo.upcoming_goals()[0].include_bike is False
+    assert repo.upcoming_goals()[0].notes is None
     assert repo.sessions(1)[0].sport == "run"
 
 

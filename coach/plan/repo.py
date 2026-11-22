@@ -112,6 +112,8 @@ def _migrate(engine: Engine) -> None:
         _add_columns(conn, "goal", {"include_bike": "BOOLEAN NOT NULL DEFAULT 0"})
         # priorité des objectifs
         _add_columns(conn, "goal", {"priority": "VARCHAR NOT NULL DEFAULT 'principal'"})
+        # précisions de l'objectif
+        _add_columns(conn, "goal", {"notes": "VARCHAR"})
         # temps estimés portés par une proposition d'ajustement
         _add_columns(conn, "proposal", {"estimates_json": "VARCHAR NOT NULL DEFAULT '[]'"})
         # changements d'objectif en attente de mise à jour de l'entraînement

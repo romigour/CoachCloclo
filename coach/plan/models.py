@@ -55,6 +55,7 @@ class Goal(SQLModel, table=True):
     long_run_day: str | None = None
     include_bike: bool = False
     priority: str = "principal"  # "principal" | "secondaire" | "plaisir"
+    notes: str | None = None  # précisions de l'athlète, transmises à Claude
     # Les champs de plan ci-dessus (plan_start, sessions_per_week, plan_accepted, available_days_json,
     # long_run_day, include_bike) sont écrits à la création (copie du cycle) mais plus lus : la source est `Cycle`.
 

@@ -239,6 +239,7 @@ def _goal_dict(goal: Goal, prox: dict[int, Proximity] | None = None) -> dict:
         "status": goal.status,
         "target_time_s": goal.target_time_s,
         "target_source": goal.target_source,
+        "notes": goal.notes,
         "gpx_summary": json.loads(goal.gpx_summary_json) if goal.gpx_summary_json else None,
         "proximity_label": proximity_label(goal, prox) if prox is not None else None,
     }
@@ -685,6 +686,7 @@ def create_app(
         long_run_day: Annotated[str | None, Form()] = None,
         include_bike: Annotated[bool, Form()] = False,
         priority: Annotated[Literal["principal", "secondaire", "plaisir"], Form()] = "principal",
+        notes: Annotated[str | None, Form()] = None,
         gpx: Annotated[UploadFile | None, File()] = None,
     ):
         target_time_s = parse_target_time(target_time) if target_time else None
@@ -707,6 +709,7 @@ def create_app(
                 sessions_per_week=sessions_per_week,
                 gpx=raw,
                 target_time_s=target_time_s,
+                notes=notes,
             )
         except ValidationError as e:
             return _invalid(e.errors(), ("body",))

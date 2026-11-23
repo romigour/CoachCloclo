@@ -73,6 +73,22 @@ def test_export_schedules_on_chosen_day(repo, fake_garmin, session_w3):
     assert fake_garmin.schedules[s.garmin_schedule_id] == (s.garmin_workout_id, D)
 
 
+def test_export_stores_hr_zones(repo, fake_garmin, session_w3):
+    export_session(repo, fake_garmin, session_w3.id, D)
+    stored = json.loads(repo.session(session_w3.id).export_hr_zones_json)
+    assert stored == {k: list(v) for k, v in ZONES.model_dump()["hr"].items()}
+
+
+def test_replace_stores_hr_zones(repo, fake_garmin, exported_session):
+    s = repo.session(exported_session.id)
+    s.export_hr_zones_json = None
+    repo.update(s)
+    p = proposal_of(repo, modify(exported_session.id))
+    assert apply_proposal(repo, fake_garmin, p.id) == []
+    stored = json.loads(repo.session(exported_session.id).export_hr_zones_json)
+    assert stored == {k: list(v) for k, v in ZONES.model_dump()["hr"].items()}
+
+
 def test_export_outside_week_rejected(repo, fake_garmin, session_w3):
     with pytest.raises(ExportError, match="semaine"):
         export_session(repo, fake_garmin, session_w3.id, date(2026, 11, 16))

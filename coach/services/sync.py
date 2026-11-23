@@ -1,5 +1,6 @@
 """Synchro Garmin : import des activités, séances manquées, proposition (rattachement manuel uniquement)."""
 
+import logging
 from datetime import date, datetime, timedelta
 
 from pydantic import BaseModel
@@ -7,7 +8,7 @@ from sqlmodel import select
 
 from coach.analysis.compliance import mark_missed
 from coach.analysis.zones import Zones
-from coach.garmin.port import GarminPort
+from coach.garmin.port import GarminAuthRequired, GarminPort, GarminRateLimited, GarminUnavailable
 from coach.llm.provider import LLMProvider
 from coach.plan.models import Activity, Cycle, Session
 from coach.plan.repo import Repo
@@ -18,6 +19,9 @@ from coach.services.cycles import close_passed
 from coach.services.garmin_export import retry_pending_cleanup
 from coach.services.history import refresh_records
 from coach.services.laps import fetch_missing_laps
+from coach.services.rezone import resend_for_zones
+
+_log = logging.getLogger(__name__)
 
 FIRST_SYNC_DAYS = 56
 OVERLAP_DAYS = 2
@@ -67,6 +71,8 @@ class SyncResult(BaseModel):
     new_activities: int
     missed: int
     proposal_id: int | None
+    resent: int = 0  # séances renvoyées à la montre avec les nouvelles zones FC
+    hr_rest: int | None = None  # FC repos retenue pour l'instantané de cette synchro
 
 
 def done_pairs(repo: Repo, sessions: list[Session], ids: list[int]) -> list[tuple[Session, Activity]]:
@@ -99,7 +105,7 @@ def sync(repo: Repo, garmin: GarminPort, llm: LLMProvider, *, now: datetime) -> 
 
     La synchro ne rattache jamais d'activité : les séances rattachées à la main depuis la dernière
     proposition (`pending_done`) sont transmises à Claude comme réalisées."""
-    _, zones = refresh_snapshot(repo, garmin)
+    snapshot, zones = refresh_snapshot(repo, garmin)
     today = garmin.today()
     settings = load_sync_state(repo)
     if settings.last_sync_at is not None:
@@ -129,6 +135,13 @@ def sync(repo: Repo, garmin: GarminPort, llm: LLMProvider, *, now: datetime) -> 
         cycle = None  # cycle clos : plus de proposition jusqu'au cycle suivant
     # retraits Garmin restés en échec, y compris ceux d'un cycle terminé (plus affiché)
     retry_pending_cleanup(repo, garmin, today)
+    # zones FC changées : les séances à venir déjà sur la montre sont remplacées (activité du jour connue)
+    resent = 0
+    if cycle is not None:
+        try:
+            resent = resend_for_zones(repo, garmin, zones, today).resent
+        except (GarminUnavailable, GarminAuthRequired, GarminRateLimited):
+            _log.exception("Renvoi des séances après changement de zones FC échoué")
 
     # état relu : un rattachement manuel fait pendant la synchro (autre requête) ne doit pas être perdu
     abandoned = set(settings.pending_done) - set(done_ids)
@@ -153,6 +166,8 @@ def sync(repo: Repo, garmin: GarminPort, llm: LLMProvider, *, now: datetime) -> 
         new_activities=new_activities,
         missed=len(missed_ids),
         proposal_id=proposal_id,
+        resent=resent,
+        hr_rest=snapshot.hr_rest,
     )
 
 

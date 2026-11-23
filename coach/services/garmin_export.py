@@ -8,6 +8,7 @@ synchro) ou retirer (nettoie ids actuels et anciens). La synchro des activités 
 que d'anciens ids restent à nettoyer (voir `compliance._awaiting_cleanup`) : aucun orphelin Garmin.
 """
 
+import json
 from datetime import date
 
 from pydantic import TypeAdapter
@@ -99,15 +100,20 @@ def _warnings(repo: Repo, session: Session, d: date) -> list[str]:
     return warnings
 
 
-def _name(session: Session) -> str:
+def workout_name(session: Session) -> str:
     return f"S{session.week_index} – {session.title}"
+
+
+def hr_zones_json(zones: Zones) -> str:
+    """Zones FC d'un envoi, enregistrées avec la séance (nom de zone -> [basse, haute])."""
+    return json.dumps(zones.model_dump()["hr"])
 
 
 def _upload_and_schedule(
     garmin: GarminPort, session: Session, zones: Zones, d: date, state: dict | None = None
 ) -> tuple[int, int]:
     """Upload puis planifie ; si la planification échoue, supprime le workout téléversé."""
-    workout = session_to_workout_json(session.to_spec(), zones, name=_name(session))
+    workout = session_to_workout_json(session.to_spec(), zones, name=workout_name(session))
     workout_id = garmin.upload_workout(workout)
     if state is not None:
         state["wrote"] = True
@@ -145,6 +151,7 @@ def export_session(repo: Repo, garmin: GarminPort, session_id: int, d: date) -> 
     session.scheduled_date = d
     session.garmin_workout_id = workout_id
     session.garmin_schedule_id = schedule_id
+    session.export_hr_zones_json = hr_zones_json(zones)
     session.sync_error = None
     repo.update(session)
     return warnings
@@ -219,6 +226,7 @@ def _sync(repo: Repo, garmin: GarminPort, session_id: int, zones: Zones | None, 
             session.garmin_workout_id, session.garmin_schedule_id = _upload_and_schedule(
                 garmin, session, zones, session.scheduled_date, state
             )
+            session.export_hr_zones_json = hr_zones_json(zones)
             session = repo.update(session)
         # retrait : les ids actuels éventuels (séance en `sync_error` à la clôture d'un cycle) partent aussi
         for schedule_attr, workout_attr in _ID_PAIRS if session.pending_removal else _ID_PAIRS[1:]:

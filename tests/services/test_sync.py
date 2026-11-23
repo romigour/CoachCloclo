@@ -477,3 +477,43 @@ def test_manual_match_during_import_survives_sync(repo, coach_home, accepted_pla
     r = sync(repo, garmin, FakeLLMProvider([adjustment_json()]), now=NOW)
     assert r.proposal_id is not None and garmin.sid != first
     assert load_sync_state(repo).pending_done == [garmin.sid]
+
+
+def test_sync_reports_resent(repo, coach_home):
+    """La FC repos saisie passe de 55 à 47 : la séance FC à venir est renvoyée avec les nouvelles zones."""
+    from coach.analysis.zones import hr_zones
+    from coach.plan.models import AthleteSnapshot
+    from coach.services.garmin_export import export_session
+    from coach.services.rest_hr import save_manual
+    from tests.services.test_rezone import zones_rest
+
+    g = FakeGarminClient(metrics=Metrics(hr_max=182, hr_rest=55, threshold_pace_s_km=300), today=date(2026, 11, 4))
+    repo.add(AthleteSnapshot(date=date(2026, 11, 1), hr_rest=55, zones_json=zones_rest(55).model_dump_json()))
+    cycle = repo.add(make_cycle(plan_start=date(2026, 11, 2), plan_accepted=False))
+    sid = repo.add(make_db_session(cycle.id, week_index=1, order=1)).id
+    export_session(repo, g, sid, date(2026, 11, 5))
+    old_workout = repo.session(sid).garmin_workout_id
+    save_manual(repo, 47)
+    result = sync(repo, g, FakeLLMProvider([]), now=NOW)
+    assert (result.resent, result.hr_rest) == (1, 47)
+    s = repo.session(sid)
+    assert s.status == "exported" and s.garmin_workout_id != old_workout and old_workout not in g.workouts
+    assert json.loads(s.export_hr_zones_json)["Z2"] == list(hr_zones(182, 47)["Z2"])
+
+
+def test_sync_resend_failure_does_not_fail_sync(repo, coach_home):
+    from coach.plan.models import AthleteSnapshot
+    from coach.services.garmin_export import export_session
+    from coach.services.rest_hr import save_manual
+    from tests.services.test_rezone import zones_rest
+
+    g = FakeGarminClient(metrics=Metrics(hr_max=182, hr_rest=55, threshold_pace_s_km=300), today=date(2026, 11, 4))
+    repo.add(AthleteSnapshot(date=date(2026, 11, 1), hr_rest=55, zones_json=zones_rest(55).model_dump_json()))
+    cycle = repo.add(make_cycle(plan_start=date(2026, 11, 2), plan_accepted=False))
+    sid = repo.add(make_db_session(cycle.id, week_index=1, order=1)).id
+    export_session(repo, g, sid, date(2026, 11, 5))
+    save_manual(repo, 47)
+    g.fail_on = {"upload_workout"}
+    result = sync(repo, g, FakeLLMProvider([]), now=NOW)
+    assert (result.resent, result.hr_rest) == (0, 47)
+    assert repo.session(sid).status == "sync_error"

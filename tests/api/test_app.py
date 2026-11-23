@@ -418,7 +418,7 @@ def test_export_and_unschedule(make_client, fake_garmin):
 def test_sync_returns_result(make_client):
     r = make_client().post("/api/sync")
     assert r.status_code == 200
-    assert r.json() == {"new_activities": 0, "missed": 0, "proposal_id": None}
+    assert r.json() == {"new_activities": 0, "missed": 0, "proposal_id": None, "resent": 0, "hr_rest": 50}
 
 
 def test_manual_match(make_client, repo):

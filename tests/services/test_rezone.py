@@ -154,3 +154,25 @@ def test_resend_failure_leaves_sync_error(repo, g, sid):
 
 def test_no_active_cycle_resends_nothing(repo, g):
     assert resend_for_zones(repo, g, zones_rest(47), T) == Rezone(resent=0, failed=[])
+
+
+def test_malformed_steps_keeps_export(repo, g, sid, caplog):
+    """Des étapes illisibles ne font pas échouer le renvoi : l'envoi existant est gardé, avec un avertissement."""
+    s = repo.session(sid)
+    s.steps_json = "[{"
+    repo.update(s)
+    old_workout = s.garmin_workout_id
+    with caplog.at_level("WARNING", logger="coach.services.rezone"):
+        assert resend_for_zones(repo, g, zones_rest(47), T) == Rezone(resent=0, failed=[])
+    assert repo.session(sid).garmin_workout_id == old_workout
+    assert any(r.levelname == "WARNING" for r in caplog.records)
+
+
+def test_unconvertible_session_logs_warning(repo, g, sid, caplog, monkeypatch):
+    def boom(*a, **kw):
+        raise ValueError("zone inconnue")
+
+    monkeypatch.setattr("coach.services.rezone.session_to_workout_json", boom)
+    with caplog.at_level("WARNING", logger="coach.services.rezone"):
+        assert not needs_resend(repo.session(sid), zones_rest(47))
+    assert any(r.levelname == "WARNING" for r in caplog.records)

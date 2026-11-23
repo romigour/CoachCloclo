@@ -15,6 +15,8 @@ _log = logging.getLogger(__name__)
 NIGHTS_KEY = "rest_nights"
 # AppState : {"value": int | None}
 MANUAL_KEY = "rest_hr_manual"
+# une nuit sans FC de ces derniers jours est relue : la montre peut se synchroniser avec retard
+RECHECK_DAYS = 5
 
 
 def load_manual(repo: Repo) -> int | None:
@@ -43,8 +45,10 @@ def cached_nights(repo: Repo) -> list[NightRecord]:
 def refresh_nights(repo: Repo, garmin: GarminPort) -> list[NightRecord]:
     """Complète le cache des nuits de la fenêtre et renvoie ses nuits.
 
-    Lit les jours absents du cache, plus aujourd'hui et hier toujours (leur nuit peut remonter tard).
-    Un jour où Garmin est indisponible ou limite les appels est sauté, sans être mis en cache ;
+    Lit les jours absents du cache, plus aujourd'hui et hier toujours (leur nuit peut remonter tard),
+    et les nuits sans FC des `RECHECK_DAYS` derniers jours (montre synchronisée en retard).
+    Un jour où Garmin est indisponible est sauté, sans être mis en cache ; si Garmin limite les appels,
+    la lecture des nuits s'arrête pour cette synchro (jours restants relus à la suivante).
     GarminAuthRequired remonte. Le cache ne garde que les jours de la fenêtre.
     """
     today = garmin.today()
@@ -53,15 +57,25 @@ def refresh_nights(repo: Repo, garmin: GarminPort) -> list[NightRecord]:
     cache = {d.isoformat(): old[d.isoformat()] for d in days if d.isoformat() in old}
     for day in days:
         key = day.isoformat()
-        if key in cache and day < today - timedelta(days=1):
+        if key in cache and not _to_reread(day, cache[key], today):
             continue
         try:
             night = garmin.night_rest(day)
-        except (GarminUnavailable, GarminRateLimited):
+        except GarminRateLimited:
+            _log.warning("Garmin limite les appels : lecture des nuits interrompue au %s", key)
+            break  # jours restants relus à la prochaine synchro
+        except GarminUnavailable:
             continue  # jour sauté : relu à la prochaine synchro
         cache[key] = {"hr_rest": night.hr_rest, "slept": night.slept}
     repo.set_state(NIGHTS_KEY, cache)
     return _records(cache)
+
+
+def _to_reread(day: date, cached: dict, today: date) -> bool:
+    """Une nuit en cache est-elle à relire ? Aujourd'hui et hier toujours, sinon une nuit récente sans FC."""
+    if day >= today - timedelta(days=1):
+        return True
+    return cached["hr_rest"] is None and day > today - timedelta(days=RECHECK_DAYS)
 
 
 def resolve_rest_hr(repo: Repo, nights: list[NightRecord], today: date, garmin_value: int | None) -> RestHr:

@@ -6,6 +6,7 @@ ses bornes bougent d'au moins `RESEND_MIN_BPM` bpm.
 """
 
 import json
+import logging
 from datetime import date
 
 from pydantic import BaseModel
@@ -16,6 +17,8 @@ from coach.garmin.port import GarminPort
 from coach.plan.models import Session
 from coach.plan.repo import Repo
 from coach.services.garmin_export import mark_for_cleanup, sync_marked, workout_name
+
+_log = logging.getLogger(__name__)
 
 RESEND_MIN_BPM = 2
 _HR_TARGET_KEY = "heart.rate.zone"
@@ -44,11 +47,14 @@ def _has_hr_target(node: dict | list) -> bool:
 
 def needs_resend(session: Session, zones: Zones) -> bool:
     """Le workout envoyé à la montre est-il assez différent de celui des zones actuelles ?"""
-    spec, name = session.to_spec(), workout_name(session)
+    name = workout_name(session)
     try:
+        spec = session.to_spec()
         current = session_to_workout_json(spec, zones, name=name)
     except ValueError:
-        return False  # séance non convertible avec les zones actuelles : on garde l'envoi existant
+        # étapes illisibles ou séance non convertible avec les zones actuelles : on garde l'envoi existant
+        _log.warning("Séance %s non renvoyée : workout impossible à recalculer", session.id, exc_info=True)
+        return False
     stored = _stored_hr(session)
     if stored is None:
         # export ancien : zones inconnues, comparé à un workout sans cible FC

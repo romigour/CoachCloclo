@@ -5,7 +5,7 @@ import pytest
 
 from coach.analysis.rest_hr import WINDOW_DAYS, NightRecord
 from coach.analysis.zones import Zones, hr_zones
-from coach.garmin.port import FakeGarminClient, GarminAuthRequired, Metrics, NightRest
+from coach.garmin.port import FakeGarminClient, GarminAuthRequired, GarminRateLimited, Metrics, NightRest
 from coach.plan.models import AthleteSnapshot
 from coach.services.context import refresh_snapshot
 from coach.services.garmin_export import export_session
@@ -81,13 +81,14 @@ def test_resolve_rest_hr_uses_last_nights_snapshot(repo):
     assert (rest.value, rest.source) == (47, "last_good")
 
 
-def test_nights_cached_then_only_today_and_yesterday_reread(repo):
+def test_nights_cached_then_only_today_yesterday_and_recent_empty_reread(repo):
     g = fake(THREE_WORN_NIGHTS)
     refresh_nights(repo, g)
     assert len(g.night_calls) == WINDOW_DAYS
     g.night_calls.clear()
     refresh_nights(repo, g)
-    assert sorted(g.night_calls) == [T - timedelta(days=1), T]
+    # T-2 portée reste en cache ; T-3 et T-4 sans FC sont relues ; au-delà, plus rien
+    assert sorted(g.night_calls) == [T - timedelta(days=i) for i in (4, 3, 1, 0)]
 
 
 def test_refresh_nights_returns_window_records(repo):
@@ -117,6 +118,37 @@ def test_night_auth_required_propagates(repo):
 
     with pytest.raises(GarminAuthRequired):
         refresh_nights(repo, AuthFake(today=T, metrics=METRICS))
+
+
+def test_night_rate_limited_stops_reading(repo):
+    """Garmin limite les appels : on arrête de lire les nuits pour cette synchro, sans rien mettre en cache."""
+
+    class LimitedFake(FakeGarminClient):
+        def night_rest(self, day: date) -> NightRest:
+            self.night_calls.append(day)
+            raise GarminRateLimited("trop de requêtes")
+
+    g = LimitedFake(today=T, metrics=METRICS)
+    assert refresh_nights(repo, g) == []
+    assert g.night_calls == [T] and cached_nights(repo) == []
+    snap, _ = refresh_snapshot(repo, LimitedFake(today=T, metrics=METRICS))
+    assert (snap.hr_rest, snap.hr_rest_source) == (55, "garmin")
+
+
+def test_recent_nights_without_value_reread(repo):
+    """Une nuit sans FC des 5 derniers jours est relue (montre synchronisée en retard), pas au-delà."""
+    empty = {"hr_rest": None, "slept": False}
+    repo.set_state(
+        NIGHTS_KEY,
+        {
+            **{(T - timedelta(days=i)).isoformat(): empty for i in range(WINDOW_DAYS)},
+            (T - timedelta(days=3)).isoformat(): {"hr_rest": 47, "slept": True},
+        },
+    )
+    g = fake({T - timedelta(days=4): NightRest(hr_rest=49, slept=True)})
+    refresh_nights(repo, g)
+    assert sorted(g.night_calls) == [T - timedelta(days=i) for i in (4, 2, 1, 0)]
+    assert repo.get_state(NIGHTS_KEY)[(T - timedelta(days=4)).isoformat()] == {"hr_rest": 49, "slept": True}
 
 
 def _cache_nights(repo, nights: dict[date, NightRest]) -> None:

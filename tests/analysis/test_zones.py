@@ -1,6 +1,6 @@
 import pytest
 
-from coach.analysis.zones import compute_zones
+from coach.analysis.zones import compute_zones, hr_zones
 
 
 def test_pace_zones_from_threshold():
@@ -41,3 +41,7 @@ def test_missing_hr_max_raises():
 def test_missing_hr_rest_raises():
     with pytest.raises(ValueError, match="FC repos inconnue"):
         compute_zones(threshold_pace_s_km=240, pred_10k_s=None, hr_max=190, hr_rest=None)
+
+
+def test_hr_zones_matches_compute_zones():
+    assert hr_zones(182, 49)["Z2"] == (129, 142)

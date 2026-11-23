@@ -24,6 +24,15 @@ class Zones(BaseModel):
     source: list[str]
 
 
+def hr_zones(hr_max: int, hr_rest: int) -> dict[HrZoneName, tuple[int, int]]:
+    """Zones de FC par la méthode de Karvonen (FC de réserve)."""
+    reserve = hr_max - hr_rest
+    return {
+        name: (round(hr_rest + reserve * lo), round(hr_rest + reserve * hi))
+        for name, (lo, hi) in zip(_HR_NAMES, _KARVONEN)
+    }
+
+
 def compute_zones(
     *,
     threshold_pace_s_km: int | None,
@@ -53,11 +62,7 @@ def compute_zones(
         raise ValueError("FC max inconnue")
     if hr_rest is None:
         raise ValueError("FC repos inconnue")
-    reserve = hr_max - hr_rest
-    hr = {
-        name: (round(hr_rest + reserve * lo), round(hr_rest + reserve * hi))
-        for name, (lo, hi) in zip(_HR_NAMES, _KARVONEN)
-    }
+    hr = hr_zones(hr_max, hr_rest)
     source.append("karvonen")
 
     return Zones(pace=pace, hr=hr, source=source)

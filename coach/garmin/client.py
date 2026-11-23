@@ -38,6 +38,7 @@ from coach.garmin.port import (  # noqa: E402
     GarminUnavailable,
     LapSummary,
     Metrics,
+    NightRest,
     PersonalRecordSummary,
 )
 
@@ -310,6 +311,18 @@ class GarminClient:
             pred_10k_s=_int(preds.get("time10K")),
             pred_half_s=_int(preds.get("timeHalfMarathon")),
             pred_marathon_s=_int(preds.get("timeMarathon")),
+        )
+
+    def night_rest(self, day: date) -> NightRest:
+        """FC repos du jour et présence de sommeil (montre portée) pour `day`."""
+        iso = day.isoformat()
+        hr = self._optional(self._api.get_heart_rates, iso)
+        sleep = self._optional(self._api.get_sleep_data, iso)
+        hr = hr if isinstance(hr, dict) else {}
+        dto = _first_dict(sleep.get("dailySleepDTO")) if isinstance(sleep, dict) else {}
+        return NightRest(
+            hr_rest=_int(hr.get("restingHeartRate")),
+            slept=(_num(dto.get("sleepTimeSeconds")) or 0) > 0,
         )
 
     def activities(self, start: date, end: date) -> list[ActivitySummary]:

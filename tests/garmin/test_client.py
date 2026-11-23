@@ -18,6 +18,7 @@ from coach.garmin.port import (
     GarminRateLimited,
     GarminUnavailable,
     Metrics,
+    NightRest,
 )
 
 FIXTURES = Path(__file__).parent.parent / "fixtures" / "garmin"
@@ -543,3 +544,21 @@ def test_response_body_keys_are_masked(coach_home):
     GarminClient(FakeLib({"get_activities": [{"oauth2_token": "SECRET-TOK", "ok": 1}]})).activities_page(0, 1)
     log = garmin_log(coach_home)
     assert "SECRET-TOK" not in log and "oauth2_token" in log
+
+
+def test_night_rest_worn_night():
+    lib = FakeLib({"get_heart_rates": {"restingHeartRate": 46},
+                   "get_sleep_data": {"dailySleepDTO": {"sleepTimeSeconds": 27000}}})
+    assert GarminClient(lib).night_rest(date(2026, 11, 20)) == NightRest(hr_rest=46, slept=True)
+    assert ("get_heart_rates", ("2026-11-20",), {}) in lib.seen
+
+
+def test_night_rest_no_sleep():
+    lib = FakeLib({"get_heart_rates": {"restingHeartRate": 58},
+                   "get_sleep_data": {"dailySleepDTO": {"sleepTimeSeconds": None}}})
+    assert GarminClient(lib).night_rest(date(2026, 11, 20)) == NightRest(hr_rest=58, slept=False)
+
+
+def test_night_rest_missing_data():
+    lib = FakeLib({"get_heart_rates": None, "get_sleep_data": None})
+    assert GarminClient(lib).night_rest(date(2026, 11, 20)) == NightRest()

@@ -34,6 +34,13 @@ class Metrics(BaseModel):
     pred_marathon_s: int | None = None
 
 
+class NightRest(BaseModel):
+    """Une nuit vue par la montre : FC repos du jour et présence de sommeil."""
+
+    hr_rest: int | None = None
+    slept: bool = False  # sommeil mesuré : la montre était portée
+
+
 class ActivitySummary(BaseModel):
     garmin_id: int
     date: date
@@ -66,6 +73,7 @@ class LapSummary(BaseModel):
 class GarminPort(Protocol):
     def today(self) -> date: ...
     def metrics(self) -> Metrics: ...
+    def night_rest(self, day: date) -> NightRest: ...
     def activities(self, start: date, end: date) -> list[ActivitySummary]: ...
     def activities_page(self, offset: int, limit: int) -> list[ActivitySummary]: ...
     def personal_records(self) -> list[PersonalRecordSummary]: ...
@@ -88,12 +96,15 @@ class FakeGarminClient:
         personal_records: list[PersonalRecordSummary] | None = None,
         fail_on: set[str] | None = None,
         laps: dict[int, list[LapSummary]] | None = None,
+        nights: dict[date, NightRest] | None = None,
     ):
         self._metrics = metrics or Metrics()
         self._activities = list(activities or [])
         self._today = today
         self._personal_records = list(personal_records or [])
         self._laps = dict(laps or {})
+        self._nights = dict(nights or {})
+        self.night_calls: list[date] = []  # jours lus via `night_rest`
         self.fail_on: set[str] = set(fail_on or ())
         self.workouts: dict[int, dict] = {}
         self.calendar: dict[date, list[int]] = {}  # jour -> ids planifiés
@@ -114,6 +125,11 @@ class FakeGarminClient:
     def metrics(self) -> Metrics:
         self._check("metrics")
         return self._metrics
+
+    def night_rest(self, day: date) -> NightRest:
+        self.night_calls.append(day)
+        self._check("night_rest")
+        return self._nights.get(day, NightRest())
 
     def activities(self, start: date, end: date) -> list[ActivitySummary]:
         self._check("activities")

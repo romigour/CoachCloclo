@@ -105,11 +105,12 @@ def apply_manual(repo: Repo, garmin: GarminPort, value: int | None) -> dict:
     last = repo.latest_snapshot()
     if last is None:
         return {**rest_hr_view(repo, today), "resent": 0, "failed": [], "applied": False}
-    # valeur Garmin connue seulement si le dernier instantané la tenait de Garmin
-    garmin_value = last.hr_rest if last.hr_rest_source in ("garmin", None) else None
+    # pas de lecture Garmin : la valeur Garmin est celle du dernier instantané qui la tenait de Garmin
+    garmin_snap = repo.latest_garmin_rest_snapshot()
+    garmin_value = garmin_snap.hr_rest if garmin_snap else None
     rest = resolve_rest_hr(repo, cached_nights(repo), today, garmin_value)
     if rest.value is None:
-        # rien de mieux : on garde la dernière FC repos connue
+        # aucune valeur Garmin connue : on garde la dernière FC repos
         rest = RestHr(value=last.hr_rest, source="garmin")
     zones = Zones.model_validate_json(last.zones_json)
     if last.hr_max is not None and rest.value is not None:

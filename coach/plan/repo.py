@@ -321,6 +321,16 @@ class Repo:
         with self._open() as db:
             return db.exec(stmt).first()
 
+    def latest_garmin_rest_snapshot(self) -> AthleteSnapshot | None:
+        """Dernier instantané dont la FC repos vient de Garmin (provenance "garmin" ou inconnue)."""
+        stmt = (
+            select(AthleteSnapshot)
+            .where((AthleteSnapshot.hr_rest_source == "garmin") | (AthleteSnapshot.hr_rest_source.is_(None)))
+            .order_by(AthleteSnapshot.date.desc(), AthleteSnapshot.id.desc())
+        )
+        with self._open() as db:
+            return db.exec(stmt).first()
+
     def all_activities(self) -> list[Activity]:
         stmt = select(Activity).order_by(Activity.date, Activity.id)
         with self._open() as db:

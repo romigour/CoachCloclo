@@ -870,13 +870,9 @@ def create_app(
         return zones.model_dump() if zones else None
 
     @api.get("/rest-hr")
-    def get_rest_hr(request: Request, repo: RepoDep):
-        """FC repos retenue, saisie manuelle et moyenne automatique des nuits ; lisible Garmin déconnecté."""
-        try:
-            today = request.app.state.garmin_factory().today()
-        except GarminAuthRequired:
-            today = date.today()
-        return rest_hr_view(repo, today)
+    def get_rest_hr(repo: RepoDep):
+        """FC repos retenue, saisie manuelle et moyenne automatique des nuits ; sans appel à Garmin."""
+        return rest_hr_view(repo, date.today())
 
     @api.put("/rest-hr")
     def put_rest_hr(body: RestHrBody, repo: RepoDep, garmin: GarminDep):

@@ -600,6 +600,16 @@ def test_latest_nights_snapshot(repo):
     assert repo.latest_nights_snapshot().hr_rest == 47
 
 
+def test_latest_garmin_rest_snapshot(repo):
+    assert repo.latest_garmin_rest_snapshot() is None
+    repo.add(AthleteSnapshot(date=date(2026, 11, 19), hr_rest=50))  # instantané d'avant la provenance
+    assert repo.latest_garmin_rest_snapshot().hr_rest == 50
+    repo.add(AthleteSnapshot(date=date(2026, 11, 20), hr_rest=55, hr_rest_source="garmin"))
+    repo.add(AthleteSnapshot(date=date(2026, 11, 21), hr_rest=47, hr_rest_source="nights", hr_rest_nights=4))
+    repo.add(AthleteSnapshot(date=date(2026, 11, 22), hr_rest=44, hr_rest_source="manual"))
+    assert repo.latest_garmin_rest_snapshot().hr_rest == 55
+
+
 def test_has_activity_on(repo):
     repo.add(make_activity(date=date(2026, 11, 20)))
     assert repo.has_activity_on(date(2026, 11, 20)) is True

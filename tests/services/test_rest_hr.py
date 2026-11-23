@@ -197,12 +197,19 @@ def test_clear_manual_without_nights_keeps_garmin_value(repo):
     assert Zones.model_validate_json(repo.latest_snapshot().zones_json).hr == hr_zones(182, 55)
 
 
-def test_clear_manual_without_any_value_keeps_last(repo):
-    # valeur Garmin inconnue (dernier instantané manuel), pas de nuits : la dernière FC repos est gardée
+def test_clear_manual_returns_to_last_garmin_value(repo):
+    # dernier instantané manuel, pas de nuits : la FC repos Garmin du dernier instantané Garmin revient
     _garmin_snapshot(repo)
     apply_manual(repo, fake({}), 44)
     result = apply_manual(repo, fake({}), None)
-    assert (result["value"], result["source"], result["manual"]) == (44, "garmin", None)
+    assert (result["value"], result["source"], result["manual"]) == (55, "garmin", None)
+    assert Zones.model_validate_json(repo.latest_snapshot().zones_json).hr == hr_zones(182, 55)
+
+
+def test_clear_manual_without_garmin_snapshot_keeps_last(repo):
+    _garmin_snapshot(repo, hr_rest=44, hr_rest_source="manual")
+    result = apply_manual(repo, fake({}), None)
+    assert (result["value"], result["source"]) == (44, "garmin")
 
 
 def test_apply_manual_without_hr_max_keeps_zones(repo):

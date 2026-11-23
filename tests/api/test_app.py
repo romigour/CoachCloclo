@@ -15,7 +15,7 @@ from coach.analysis.zones import Zones, compute_zones, hr_zones
 from coach.api.deps import hash_pin, valid_pin, verify_pin
 from coach.config import db_path, load_settings, save_settings
 from coach.version import app_version
-from coach.garmin.port import FakeGarminClient, GarminAuthRequired, LapSummary, Metrics
+from coach.garmin.port import FakeGarminClient, GarminAuthRequired, GarminUnavailable, LapSummary, Metrics
 from coach.llm.provider import FakeLLMProvider, LLMError, LLMUsageLimit
 from coach.plan.models import Activity, AthleteSnapshot, LlmUsage, Race
 from coach.services.history import HistoryState, save_state
@@ -92,6 +92,8 @@ def make_client(repo, fake_garmin):
         def garmin_factory():
             if garmin == "auth":
                 raise GarminAuthRequired("pas de jetons")
+            if garmin == "down":
+                raise GarminUnavailable("hors ligne")
             return garmin or fake_garmin
 
         app = create_app(
@@ -562,12 +564,14 @@ def test_zones_from_latest_snapshot(make_client, repo):
     assert body["hr"]["Z2"] == [134, 148]
 
 
-def _rest_hr_setup(repo, fake_garmin) -> int:
-    """Instantané Garmin (FC max 182, repos 55), 3 nuits portées en cache (47) et une séance FC exportée demain."""
+def _rest_hr_setup(repo) -> FakeGarminClient:
+    """Garmin daté d'aujourd'hui (date lue par GET /api/rest-hr), instantané Garmin (FC max 182, repos 55),
+    3 nuits portées en cache (47) et une séance FC exportée demain."""
     from coach.services.garmin_export import export_session
     from coach.services.rest_hr import NIGHTS_KEY
 
-    today = fake_garmin.today()
+    today = date.today()
+    g = FakeGarminClient(metrics=METRICS, today=today)
     repo.add(
         AthleteSnapshot(
             date=today, hr_max=182, hr_rest=55, hr_rest_source="garmin", zones_json=zones_rest(55).model_dump_json()
@@ -580,15 +584,14 @@ def _rest_hr_setup(repo, fake_garmin) -> int:
             for i, hr in enumerate((46, 48, 47))
         },
     )
-    cycle = repo.add(make_cycle(plan_start=date(2026, 11, 2)))
+    cycle = repo.add(make_cycle(plan_start=today - timedelta(days=today.weekday()), end_date=today + timedelta(days=90)))
     sid = repo.add(make_db_session(cycle.id, week_index=1, order=1)).id
-    export_session(repo, fake_garmin, sid, today + timedelta(days=1))
-    return sid
+    export_session(repo, g, sid, today + timedelta(days=1))
+    return g
 
 
-def test_put_rest_hr_applies_and_resends(make_client, repo, fake_garmin):
-    _rest_hr_setup(repo, fake_garmin)
-    client = make_client()
+def test_put_rest_hr_applies_and_resends(make_client, repo):
+    client = make_client(garmin=_rest_hr_setup(repo))
     r = client.put("/api/rest-hr", json={"manual": 44})
     body = r.json()
     assert r.status_code == 200 and body["value"] == 44 and body["source"] == "manual" and body["resent"] == 1
@@ -607,29 +610,29 @@ def test_put_rest_hr_without_snapshot(make_client):
     assert r.status_code == 200 and r.json()["applied"] is False and r.json()["manual"] == 44
 
 
-def test_clear_manual_returns_to_auto(make_client, repo, fake_garmin):
-    _rest_hr_setup(repo, fake_garmin)
-    client = make_client()
+def test_clear_manual_returns_to_auto(make_client, repo):
+    client = make_client(garmin=_rest_hr_setup(repo))
     client.put("/api/rest-hr", json={"manual": 44})
     r = client.put("/api/rest-hr", json={"manual": None})
     assert (r.json()["value"], r.json()["source"], r.json()["nights"]) == (47, "nights", 3)
 
 
-def test_get_rest_hr_shows_auto_value_while_manual(make_client, repo, fake_garmin):
-    _rest_hr_setup(repo, fake_garmin)
-    client = make_client()
+def test_get_rest_hr_shows_auto_value_while_manual(make_client, repo):
+    client = make_client(garmin=_rest_hr_setup(repo))
     client.put("/api/rest-hr", json={"manual": 44})
     body = client.get("/api/rest-hr").json()
     assert (body["value"], body["source"]) == (44, "manual")
     assert (body["manual"], body["auto_value"], body["auto_nights"]) == (44, 47, 3)
 
 
-def test_get_rest_hr_without_garmin_connection(make_client, repo):
+def test_get_rest_hr_without_garmin(make_client, repo):
+    """La vue ne dépend pas de Garmin : ni connexion requise, ni Garmin indisponible ne la bloquent."""
     from coach.services.rest_hr import save_manual
 
     save_manual(repo, 44)
-    r = make_client(garmin="auth").get("/api/rest-hr")
-    assert r.status_code == 200 and (r.json()["value"], r.json()["manual"]) == (None, 44)
+    for garmin in ("auth", "down"):
+        r = make_client(garmin=garmin).get("/api/rest-hr")
+        assert r.status_code == 200 and (r.json()["value"], r.json()["manual"]) == (None, 44)
 
 
 def test_put_rest_hr_garmin_locked(make_client, repo):

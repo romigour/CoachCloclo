@@ -566,3 +566,41 @@ def test_migration_adds_cycle_adjust_columns(tmp_path):
     conn.close()
     cycle = Repo(make_engine(path)).active_cycle()
     assert cycle.adjust_due is False and cycle.adjust_notes() == []
+
+
+def test_migration_adds_rest_hr_and_export_zones_columns(tmp_path):
+    """Une base d'avant la provenance de la FC repos reçoit les 3 colonnes et passe au schéma 3."""
+    path = tmp_path / "old.db"
+    repo = Repo(make_engine(path))
+    repo.add(AthleteSnapshot(date=date(2026, 11, 1), hr_max=190, hr_rest=50))
+    conn = sqlite3.connect(path)
+    conn.execute("ALTER TABLE athletesnapshot DROP COLUMN hr_rest_source")
+    conn.execute("ALTER TABLE athletesnapshot DROP COLUMN hr_rest_nights")
+    conn.execute("ALTER TABLE session DROP COLUMN export_hr_zones_json")
+    conn.execute("UPDATE appstate SET value_json = '{\"v\": 2}' WHERE key = 'schema_version'")
+    conn.commit()
+    conn.close()
+    repo = Repo(make_engine(path))
+    conn = sqlite3.connect(path)
+    snap_cols = {row[1] for row in conn.execute("PRAGMA table_info(athletesnapshot)")}
+    session_cols = {row[1] for row in conn.execute("PRAGMA table_info(session)")}
+    conn.close()
+    assert {"hr_rest_source", "hr_rest_nights"} <= snap_cols
+    assert "export_hr_zones_json" in session_cols
+    assert repo.get_state("schema_version") == {"v": 3}
+    snap = repo.latest_snapshot()
+    assert (snap.hr_rest, snap.hr_rest_source, snap.hr_rest_nights) == (50, None, None)
+
+
+def test_latest_nights_snapshot(repo):
+    assert repo.latest_nights_snapshot() is None
+    repo.add(AthleteSnapshot(date=date(2026, 11, 20), hr_rest=47, hr_rest_source="nights", hr_rest_nights=4))
+    repo.add(AthleteSnapshot(date=date(2026, 11, 21), hr_rest=44, hr_rest_source="manual"))
+    repo.add(AthleteSnapshot(date=date(2026, 11, 22), hr_rest=55, hr_rest_source="garmin"))
+    assert repo.latest_nights_snapshot().hr_rest == 47
+
+
+def test_has_activity_on(repo):
+    repo.add(make_activity(date=date(2026, 11, 20)))
+    assert repo.has_activity_on(date(2026, 11, 20)) is True
+    assert repo.has_activity_on(date(2026, 11, 21)) is False

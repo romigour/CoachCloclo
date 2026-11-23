@@ -35,7 +35,7 @@ from coach.plan.models import (
 _LAPS = TypeAdapter(list[LapSummary])
 
 # Chaque changement de schéma futur doit incrémenter SCHEMA_VERSION.
-SCHEMA_VERSION = 2  # 2 : table llmusage
+SCHEMA_VERSION = 3  # 3 : provenance de la FC repos, zones FC à l'envoi
 
 
 class SchemaTooNew(Exception):
@@ -148,6 +148,10 @@ def _migrate(engine: Engine) -> None:
                     FROM goal WHERE id NOT IN (SELECT id FROM cycle)
                 """)
             )
+        # provenance de la FC repos de l'instantané
+        _add_columns(conn, "athletesnapshot", {"hr_rest_source": "VARCHAR", "hr_rest_nights": "INTEGER"})
+        # zones FC utilisées à l'envoi d'une séance à la montre
+        _add_columns(conn, "session", {"export_hr_zones_json": "VARCHAR"})
 
 
 class Repo:
@@ -307,6 +311,16 @@ class Repo:
         with self._open() as db:
             return db.exec(stmt).first()
 
+    def latest_nights_snapshot(self) -> AthleteSnapshot | None:
+        """Dernier instantané dont la FC repos vient de la moyenne des nuits portées."""
+        stmt = (
+            select(AthleteSnapshot)
+            .where(AthleteSnapshot.hr_rest_source == "nights")
+            .order_by(AthleteSnapshot.date.desc(), AthleteSnapshot.id.desc())
+        )
+        with self._open() as db:
+            return db.exec(stmt).first()
+
     def all_activities(self) -> list[Activity]:
         stmt = select(Activity).order_by(Activity.date, Activity.id)
         with self._open() as db:
@@ -319,6 +333,11 @@ class Repo:
     def has_activities(self) -> bool:
         with self._open() as db:
             return db.exec(select(Activity.id).limit(1)).first() is not None
+
+    def has_activity_on(self, day: date) -> bool:
+        """Au moins une activité enregistrée ce jour-là."""
+        with self._open() as db:
+            return db.exec(select(Activity.id).where(Activity.date == day).limit(1)).first() is not None
 
     def activity(self, id: int) -> Activity:
         with self._open() as db:

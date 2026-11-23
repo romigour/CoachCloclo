@@ -7,7 +7,7 @@ export type Db = {
   execute(stmt: string | { sql: string; args: Arg[] }): Promise<{ rows: Record<string, unknown>[] }>;
 };
 
-const KNOWN_SCHEMA = 2; // 2 : table llmusage (ignorée par la PWA)
+const KNOWN_SCHEMA = 3; // 3 : provenance de la FC repos, zones FC à l'envoi (colonnes ignorées par la PWA)
 
 const MESSAGES = {
   auth: "Jeton Turso refusé",

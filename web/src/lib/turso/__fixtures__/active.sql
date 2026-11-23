@@ -37,7 +37,7 @@ CREATE TABLE appstate (
 	value_json VARCHAR NOT NULL, 
 	PRIMARY KEY ("key")
 );
-INSERT INTO "appstate" VALUES('schema_version','{"v": 2}');
+INSERT INTO "appstate" VALUES('schema_version','{"v": 3}');
 INSERT INTO "appstate" VALUES('history','{"status": "done", "imported": 42, "error": null, "finished_at": "2026-11-10T08:00:00Z"}');
 CREATE TABLE athletesnapshot (
 	id INTEGER NOT NULL, 
@@ -48,10 +48,12 @@ CREATE TABLE athletesnapshot (
 	threshold_hr INTEGER, 
 	threshold_pace_s_km FLOAT, 
 	zones_json VARCHAR NOT NULL, 
+	hr_rest_source VARCHAR, 
+	hr_rest_nights INTEGER, 
 	PRIMARY KEY (id)
 );
-INSERT INTO "athletesnapshot" VALUES(1,'2026-02-20',50.0,188,52,NULL,310.0,'{"pace":{"récup":[403,450],"EF":[372,409],"marathon":[329,347],"seuil":[304,319],"VMA":[273,288]},"hr":{"Z1":[120,134],"Z2":[134,147],"Z3":[147,161],"Z4":[161,174],"Z5":[174,188]},"source":["lactate_threshold","karvonen"]}');
-INSERT INTO "athletesnapshot" VALUES(2,'2026-03-01',52.0,190,50,NULL,300.0,'{"pace":{"récup":[390,435],"EF":[360,396],"marathon":[318,336],"seuil":[294,309],"VMA":[264,279]},"hr":{"Z1":[120,134],"Z2":[134,148],"Z3":[148,162],"Z4":[162,176],"Z5":[176,190]},"source":["lactate_threshold","karvonen"]}');
+INSERT INTO "athletesnapshot" VALUES(1,'2026-02-20',50.0,188,52,NULL,310.0,'{"pace":{"récup":[403,450],"EF":[372,409],"marathon":[329,347],"seuil":[304,319],"VMA":[273,288]},"hr":{"Z1":[120,134],"Z2":[134,147],"Z3":[147,161],"Z4":[161,174],"Z5":[174,188]},"source":["lactate_threshold","karvonen"]}',NULL,NULL);
+INSERT INTO "athletesnapshot" VALUES(2,'2026-03-01',52.0,190,50,NULL,300.0,'{"pace":{"récup":[390,435],"EF":[360,396],"marathon":[318,336],"seuil":[294,309],"VMA":[264,279]},"hr":{"Z1":[120,134],"Z2":[134,148],"Z3":[148,162],"Z4":[162,176],"Z5":[176,190]},"source":["lactate_threshold","karvonen"]}',NULL,NULL);
 CREATE TABLE cycle (
 	id INTEGER NOT NULL, 
 	created_at DATETIME NOT NULL, 
@@ -209,16 +211,17 @@ CREATE TABLE session (
 	pending_old_workout_id INTEGER, 
 	pending_old_schedule_id INTEGER, 
 	pending_removal BOOLEAN NOT NULL, 
+	export_hr_zones_json VARCHAR, 
 	PRIMARY KEY (id)
 );
-INSERT INTO "session" VALUES(1,1,1,1,'mardi',NULL,'EF','run','hr','EF mardi','Description de la séance 1.','[{"kind": "warmup", "zone": "Z2", "duration_s": 600}]',NULL,NULL,'done',NULL,NULL,NULL,NULL,NULL,NULL,0);
-INSERT INTO "session" VALUES(2,1,1,2,'jeudi','Après le vélo','seuil','run','pace','Seuil jeudi','Description de la séance 2.','[{"kind": "warmup", "zone": "EF", "duration_s": 600}, {"repeat": 5, "steps": [{"kind": "active", "zone": "seuil", "distance_m": 1000}, {"kind": "recovery", "zone": "récup", "duration_s": 90}]}, {"kind": "cooldown", "zone": "EF", "duration_s": 300}]',NULL,NULL,'missed',NULL,NULL,NULL,NULL,NULL,NULL,0);
-INSERT INTO "session" VALUES(3,1,1,3,'dimanche',NULL,'sortie longue','run','hr','Sortie longue','Description de la séance 3.','[{"kind": "warmup", "zone": "Z2", "duration_s": 600}]',NULL,NULL,'exported','2026-03-08',111,222,NULL,NULL,NULL,0);
-INSERT INTO "session" VALUES(4,1,2,1,'mardi',NULL,'EF','run','hr','Séance en erreur','Description de la séance 4.','[{"kind": "warmup", "zone": "Z2", "duration_s": 600}]',NULL,NULL,'sync_error',NULL,NULL,NULL,'Garmin indisponible',NULL,NULL,0);
-INSERT INTO "session" VALUES(5,1,2,2,'mercredi',NULL,'EF','bike','hr','Vélo récup','Description de la séance 5.','[{"kind": "active", "zone": "Z1", "duration_s": 2400}]',NULL,NULL,'todo',NULL,NULL,NULL,NULL,NULL,NULL,0);
-INSERT INTO "session" VALUES(6,1,2,3,'samedi',NULL,'EF','run','hr','Fartlek','Description de la séance 6.','[{"kind": "warmup", "zone": "Z2", "duration_s": 600}]',NULL,NULL,'todo',NULL,NULL,NULL,NULL,NULL,NULL,0);
-INSERT INTO "session" VALUES(7,1,3,1,'mardi',NULL,'EF','run','hr','Dernier footing','Description de la séance 7.','[{"kind": "warmup", "zone": "Z2", "duration_s": 600}]',NULL,NULL,'todo',NULL,NULL,NULL,NULL,NULL,NULL,0);
-INSERT INTO "session" VALUES(8,1,3,2,'dimanche',NULL,'course','run','pace','Course objectif','Description de la séance 8.','[{"kind": "active", "zone": "marathon", "distance_m": 21100}]',NULL,NULL,'todo',NULL,NULL,NULL,NULL,NULL,NULL,0);
+INSERT INTO "session" VALUES(1,1,1,1,'mardi',NULL,'EF','run','hr','EF mardi','Description de la séance 1.','[{"kind": "warmup", "zone": "Z2", "duration_s": 600}]',NULL,NULL,'done',NULL,NULL,NULL,NULL,NULL,NULL,0,NULL);
+INSERT INTO "session" VALUES(2,1,1,2,'jeudi','Après le vélo','seuil','run','pace','Seuil jeudi','Description de la séance 2.','[{"kind": "warmup", "zone": "EF", "duration_s": 600}, {"repeat": 5, "steps": [{"kind": "active", "zone": "seuil", "distance_m": 1000}, {"kind": "recovery", "zone": "récup", "duration_s": 90}]}, {"kind": "cooldown", "zone": "EF", "duration_s": 300}]',NULL,NULL,'missed',NULL,NULL,NULL,NULL,NULL,NULL,0,NULL);
+INSERT INTO "session" VALUES(3,1,1,3,'dimanche',NULL,'sortie longue','run','hr','Sortie longue','Description de la séance 3.','[{"kind": "warmup", "zone": "Z2", "duration_s": 600}]',NULL,NULL,'exported','2026-03-08',111,222,NULL,NULL,NULL,0,NULL);
+INSERT INTO "session" VALUES(4,1,2,1,'mardi',NULL,'EF','run','hr','Séance en erreur','Description de la séance 4.','[{"kind": "warmup", "zone": "Z2", "duration_s": 600}]',NULL,NULL,'sync_error',NULL,NULL,NULL,'Garmin indisponible',NULL,NULL,0,NULL);
+INSERT INTO "session" VALUES(5,1,2,2,'mercredi',NULL,'EF','bike','hr','Vélo récup','Description de la séance 5.','[{"kind": "active", "zone": "Z1", "duration_s": 2400}]',NULL,NULL,'todo',NULL,NULL,NULL,NULL,NULL,NULL,0,NULL);
+INSERT INTO "session" VALUES(6,1,2,3,'samedi',NULL,'EF','run','hr','Fartlek','Description de la séance 6.','[{"kind": "warmup", "zone": "Z2", "duration_s": 600}]',NULL,NULL,'todo',NULL,NULL,NULL,NULL,NULL,NULL,0,NULL);
+INSERT INTO "session" VALUES(7,1,3,1,'mardi',NULL,'EF','run','hr','Dernier footing','Description de la séance 7.','[{"kind": "warmup", "zone": "Z2", "duration_s": 600}]',NULL,NULL,'todo',NULL,NULL,NULL,NULL,NULL,NULL,0,NULL);
+INSERT INTO "session" VALUES(8,1,3,2,'dimanche',NULL,'course','run','pace','Course objectif','Description de la séance 8.','[{"kind": "active", "zone": "marathon", "distance_m": 21100}]',NULL,NULL,'todo',NULL,NULL,NULL,NULL,NULL,NULL,0,NULL);
 CREATE INDEX ix_activity_date ON activity (date);
 CREATE INDEX ix_event_cycle_id ON event (cycle_id);
 CREATE INDEX ix_llmusage_created_at ON llmusage (created_at);

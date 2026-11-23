@@ -34,6 +34,8 @@ class AthleteSnapshot(SQLModel, table=True):
     threshold_hr: int | None = None
     threshold_pace_s_km: float | None = None
     zones_json: str = "{}"
+    hr_rest_source: str | None = None  # "manual" | "nights" | "last_good" | "garmin" ; None : instantané d'avant
+    hr_rest_nights: int | None = None  # nuits portées de la moyenne (source "nights")
 
 
 class Goal(SQLModel, table=True):
@@ -135,6 +137,7 @@ class Session(SQLModel, table=True):
     pending_old_workout_id: int | None = None
     pending_old_schedule_id: int | None = None
     pending_removal: bool = False  # supprimer la ligne une fois Garmin nettoyé
+    export_hr_zones_json: str | None = None  # zones FC utilisées au dernier envoi à la montre
 
     def to_spec(self) -> SessionSpec:
         return SessionSpec(

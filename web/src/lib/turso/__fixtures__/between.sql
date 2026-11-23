@@ -26,7 +26,7 @@ CREATE TABLE appstate (
 	value_json VARCHAR NOT NULL, 
 	PRIMARY KEY ("key")
 );
-INSERT INTO "appstate" VALUES('schema_version','{"v": 2}');
+INSERT INTO "appstate" VALUES('schema_version','{"v": 3}');
 CREATE TABLE athletesnapshot (
 	id INTEGER NOT NULL, 
 	date DATE NOT NULL, 
@@ -36,6 +36,8 @@ CREATE TABLE athletesnapshot (
 	threshold_hr INTEGER, 
 	threshold_pace_s_km FLOAT, 
 	zones_json VARCHAR NOT NULL, 
+	hr_rest_source VARCHAR, 
+	hr_rest_nights INTEGER, 
 	PRIMARY KEY (id)
 );
 CREATE TABLE cycle (
@@ -183,6 +185,7 @@ CREATE TABLE session (
 	pending_old_workout_id INTEGER, 
 	pending_old_schedule_id INTEGER, 
 	pending_removal BOOLEAN NOT NULL, 
+	export_hr_zones_json VARCHAR, 
 	PRIMARY KEY (id)
 );
 CREATE INDEX ix_activity_date ON activity (date);

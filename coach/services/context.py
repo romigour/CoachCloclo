@@ -9,6 +9,7 @@ from coach.plan.constraints import PlanConstraints
 from coach.plan.models import Activity, AthleteSnapshot, Cycle, Goal
 from coach.plan.repo import Repo
 from coach.services import CoachError
+from coach.services.rest_hr import refresh_nights, resolve_rest_hr
 
 HISTORY_DAYS = 56
 
@@ -27,12 +28,20 @@ def zones_from_metrics(m: Metrics) -> Zones:
 
 
 def refresh_snapshot(repo: Repo, garmin: GarminPort) -> tuple[AthleteSnapshot, Zones]:
-    """Lit les métriques Garmin, calcule les zones et enregistre un instantané."""
+    """Lit les métriques Garmin, calcule les zones et enregistre un instantané.
+
+    La FC repos vient de la saisie manuelle, sinon de la moyenne des nuits portées, sinon de la
+    dernière moyenne enregistrée, sinon de Garmin ; sa provenance est enregistrée avec l'instantané.
+    """
     m = garmin.metrics()
-    if m.hr_rest is None:
+    nights = refresh_nights(repo, garmin)
+    rest = resolve_rest_hr(repo, nights, garmin.today(), m.hr_rest)
+    hr_rest = rest.value
+    if hr_rest is None:
         # FC repos pas encore remontée aujourd'hui : on garde la dernière connue plutôt que d'échouer.
         last = repo.latest_snapshot()
-        m = m.model_copy(update={"hr_rest": last.hr_rest if last else None})
+        hr_rest = last.hr_rest if last else None
+    m = m.model_copy(update={"hr_rest": hr_rest})
     zones = zones_from_metrics(m)
     snapshot = repo.add(
         AthleteSnapshot(
@@ -43,6 +52,8 @@ def refresh_snapshot(repo: Repo, garmin: GarminPort) -> tuple[AthleteSnapshot, Z
             threshold_hr=m.threshold_hr,
             threshold_pace_s_km=m.threshold_pace_s_km,
             zones_json=zones.model_dump_json(),
+            hr_rest_source=rest.source,
+            hr_rest_nights=rest.nights,
         )
     )
     return snapshot, zones

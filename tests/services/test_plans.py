@@ -76,10 +76,10 @@ def test_refresh_snapshot_relays_real_zone_error(repo):
 
 
 def test_refresh_snapshot_reuses_last_known_hr_rest(repo):
-    # FC repos absente aujourd'hui (montre pas encore synchronisée) : la synchro ne doit pas échouer
+    # ni saisie, ni nuits portées, ni FC repos Garmin aujourd'hui : on reprend la dernière connue
     repo.add(AthleteSnapshot(date=date(2026, 11, 1), hr_max=190, hr_rest=49))
     snap, zones = refresh_snapshot(repo, FakeGarminClient(metrics=Metrics(hr_max=190)))
-    assert snap.hr_rest == 49
+    assert (snap.hr_rest, snap.hr_rest_source) == (49, "garmin")
     assert zones.hr["Z1"] == (120, 134)
 
 

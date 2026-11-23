@@ -72,8 +72,10 @@ semaines environ, et 3 nuits évitent qu'une seule nuit atypique décide des zon
 **Lecture Garmin.** Par jour : FC repos (`get_heart_rates(day)["restingHeartRate"]`) et présence d'un sommeil
 (`get_sleep_data(day)`, durée de sommeil du `dailySleepDTO`). Les jours passés ne changent plus : on les met
 en cache en base (FC repos du jour et « nuit portée » oui/non), et chaque synchro ne relit que les jours
-absents du cache, plus aujourd'hui et hier (Garmin peut finaliser une nuit en retard). Une erreur Garmin sur
+absents du cache, plus aujourd'hui et hier (Garmin peut finaliser une nuit en retard), et les nuits sans FC
+des 5 derniers jours (montre synchronisée avec Garmin Connect en retard). Une erreur Garmin sur
 un jour fait sauter ce jour pour cette synchro, sans faire échouer la synchro ; il sera relu la fois suivante.
+Si Garmin limite les appels, la lecture des nuits s'arrête pour cette synchro (jours restants relus à la suivante).
 
 **Provenance.** L'instantané (`AthleteSnapshot`) enregistre, en plus de `hr_rest`, sa provenance :
 `manual`, `nights` (avec le nombre de nuits), `last_good` ou `garmin`.

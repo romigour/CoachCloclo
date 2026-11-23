@@ -33,7 +33,7 @@
 
 ---
 
-### Tâche 1 : lecture d'une nuit côté Garmin
+### Task 1: lecture d'une nuit côté Garmin
 
 **Files :**
 - Modify : `coach/garmin/port.py` (modèle `NightRest`, méthode du `Protocol`, fake)
@@ -69,7 +69,7 @@ def test_night_rest_missing_data():
 
 ---
 
-### Tâche 2 : choix de la FC repos (calcul pur)
+### Task 2: choix de la FC repos (calcul pur)
 
 **Files :**
 - Create : `coach/analysis/rest_hr.py`
@@ -121,7 +121,7 @@ Dans `test_zones.py` : `test_hr_zones_matches_compute_zones` (`hr_zones(182, 49)
 
 ---
 
-### Tâche 3 : schéma, cache des nuits, saisie, instantané
+### Task 3: schéma, cache des nuits, saisie, instantané
 
 **Files :**
 - Modify : `coach/plan/models.py` (`AthleteSnapshot.hr_rest_source: str | None = None`, `AthleteSnapshot.hr_rest_nights: int | None = None`, `Session.export_hr_zones_json: str | None = None`)
@@ -191,7 +191,7 @@ Test de migration : une base sans les 3 colonnes les reçoit, `schema_version ==
 
 ---
 
-### Tâche 4 : renvoi des séances quand les zones FC changent
+### Task 4: renvoi des séances quand les zones FC changent
 
 **Files :**
 - Create : `coach/services/rezone.py`
@@ -244,7 +244,7 @@ def test_sync_reports_resent(...):   # test_sync.py
 
 ---
 
-### Tâche 5 : API de la FC repos
+### Task 5: API de la FC repos
 
 **Files :**
 - Modify : `coach/services/rest_hr.py` (`rest_hr_view`, `apply_manual`)
@@ -291,7 +291,7 @@ def test_get_rest_hr_shows_auto_value_while_manual(client, ...):
 
 ---
 
-### Tâche 6 : interface web
+### Task 6: interface web
 
 **Files :**
 - Modify : `web/src/lib/api.ts` (type `RestHrView`, `api.restHr()`, `api.saveRestHr(manual: number | null)`, type de retour de `api.sync` avec `resent` et `hr_rest`)
@@ -320,7 +320,7 @@ Libellés (copie fixée) :
 
 ---
 
-### Tâche 7 : guide et vérification d'ensemble
+### Task 7: guide et vérification d'ensemble
 
 **Files :**
 - Modify : `docs/guide/index.html` (si les zones FC ou la FC repos y sont décrites : nuits portées, saisie manuelle, renvoi automatique)

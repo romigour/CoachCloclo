@@ -86,6 +86,7 @@ from coach.storage.switch import (
 )
 from coach.services.history import HistoryRunner, load_state, recover_orphan
 from coach.services.laps import fetch_laps, latest_zones, session_comparison
+from coach.services.rest_hr import apply_manual, rest_hr_view
 from coach.services.sync import add_pending_done, remove_pending_done, sync
 from coach.stats.normalize import stat_row
 from coach.version import app_version
@@ -142,6 +143,10 @@ class DateBody(BaseModel):
 
 class MatchBody(BaseModel):
     session_id: int | None = None
+
+
+class RestHrBody(BaseModel):
+    manual: int | None = Field(None, ge=30, le=100)  # None : retour au calcul automatique
 
 
 class SettingsBody(BaseModel):
@@ -863,6 +868,21 @@ def create_app(
         """Zones d'allure et de FC du dernier instantané, `null` s'il n'y en a pas encore."""
         zones = latest_zones(repo)
         return zones.model_dump() if zones else None
+
+    @api.get("/rest-hr")
+    def get_rest_hr(request: Request, repo: RepoDep):
+        """FC repos retenue, saisie manuelle et moyenne automatique des nuits ; lisible Garmin déconnecté."""
+        try:
+            today = request.app.state.garmin_factory().today()
+        except GarminAuthRequired:
+            today = date.today()
+        return rest_hr_view(repo, today)
+
+    @api.put("/rest-hr")
+    def put_rest_hr(body: RestHrBody, repo: RepoDep, garmin: GarminDep):
+        """Saisit (ou efface) la FC repos : zones FC recalculées et séances renvoyées à la montre."""
+        with garmin_lock(repo, holder, SYNC_TTL):
+            return apply_manual(repo, garmin, body.manual)
 
     # --- activités, synchro, propositions ---------------------------------------------------
 

@@ -1,19 +1,25 @@
+import json
 from datetime import date, timedelta
 
 import pytest
 
 from coach.analysis.rest_hr import WINDOW_DAYS, NightRecord
-from coach.analysis.zones import hr_zones
+from coach.analysis.zones import Zones, hr_zones
 from coach.garmin.port import FakeGarminClient, GarminAuthRequired, Metrics, NightRest
+from coach.plan.models import AthleteSnapshot
 from coach.services.context import refresh_snapshot
+from coach.services.garmin_export import export_session
 from coach.services.rest_hr import (
     NIGHTS_KEY,
+    apply_manual,
     cached_nights,
     load_manual,
     refresh_nights,
     resolve_rest_hr,
+    rest_hr_view,
     save_manual,
 )
+from tests.plan.factories import make_cycle, make_db_session, zones_rest
 
 T = date(2026, 11, 23)
 METRICS = Metrics(hr_max=182, hr_rest=55, threshold_pace_s_km=300)
@@ -111,3 +117,122 @@ def test_night_auth_required_propagates(repo):
 
     with pytest.raises(GarminAuthRequired):
         refresh_nights(repo, AuthFake(today=T, metrics=METRICS))
+
+
+def _cache_nights(repo, nights: dict[date, NightRest]) -> None:
+    repo.set_state(NIGHTS_KEY, {d.isoformat(): {"hr_rest": n.hr_rest, "slept": n.slept} for d, n in nights.items()})
+
+
+def _garmin_snapshot(repo, **over) -> AthleteSnapshot:
+    data = {
+        "date": T - timedelta(days=1),
+        "vo2max": 52.0,
+        "hr_max": 182,
+        "hr_rest": 55,
+        "threshold_hr": 165,
+        "threshold_pace_s_km": 300,
+        "zones_json": zones_rest(55).model_dump_json(),
+        "hr_rest_source": "garmin",
+    }
+    data.update(over)
+    return repo.add(AthleteSnapshot(**data))
+
+
+def test_view_without_snapshot(repo):
+    save_manual(repo, 44)
+    _cache_nights(repo, THREE_WORN_NIGHTS)
+    assert rest_hr_view(repo, T) == {
+        "value": None,
+        "source": None,
+        "nights": None,
+        "manual": 44,
+        "auto_value": 47,
+        "auto_nights": 3,
+    }
+
+
+def test_view_reads_latest_snapshot(repo):
+    _garmin_snapshot(repo, hr_rest=47, hr_rest_source="nights", hr_rest_nights=3)
+    view = rest_hr_view(repo, T)
+    assert (view["value"], view["source"], view["nights"], view["manual"]) == (47, "nights", 3, None)
+    assert (view["auto_value"], view["auto_nights"]) == (None, None)
+
+
+def test_apply_manual_without_snapshot_only_saves(repo):
+    g = fake({})
+    result = apply_manual(repo, g, 44)
+    assert load_manual(repo) == 44 and repo.latest_snapshot() is None
+    assert (result["applied"], result["manual"], result["value"], result["resent"], result["failed"]) == (
+        False, 44, None, 0, []
+    )
+    assert g.calls == []
+
+
+def test_apply_manual_new_snapshot_and_zones(repo):
+    prev = _garmin_snapshot(repo)
+    g = fake({}, fail_on={"metrics"})  # aucune lecture des métriques ni des nuits
+    result = apply_manual(repo, g, 44)
+    snap = repo.latest_snapshot()
+    assert snap.id != prev.id and snap.date == T
+    assert (snap.vo2max, snap.hr_max, snap.threshold_hr, snap.threshold_pace_s_km) == (52.0, 182, 165, 300)
+    assert (snap.hr_rest, snap.hr_rest_source, snap.hr_rest_nights) == (44, "manual", None)
+    zones = Zones.model_validate_json(snap.zones_json)
+    assert zones == Zones(pace=zones_rest(55).pace, hr=hr_zones(182, 44), source=zones_rest(55).source)
+    assert (result["applied"], result["value"], result["source"], result["resent"]) == (True, 44, "manual", 0)
+    assert g.night_calls == []
+
+
+def test_clear_manual_falls_back_to_cached_nights(repo):
+    _garmin_snapshot(repo)
+    _cache_nights(repo, THREE_WORN_NIGHTS)
+    apply_manual(repo, fake({}), 44)
+    result = apply_manual(repo, fake({}), None)
+    assert (result["value"], result["source"], result["nights"], result["manual"]) == (47, "nights", 3, None)
+
+
+def test_clear_manual_without_nights_keeps_garmin_value(repo):
+    _garmin_snapshot(repo)
+    result = apply_manual(repo, fake({}), None)
+    assert (result["value"], result["source"]) == (55, "garmin")
+    assert Zones.model_validate_json(repo.latest_snapshot().zones_json).hr == hr_zones(182, 55)
+
+
+def test_clear_manual_without_any_value_keeps_last(repo):
+    # valeur Garmin inconnue (dernier instantané manuel), pas de nuits : la dernière FC repos est gardée
+    _garmin_snapshot(repo)
+    apply_manual(repo, fake({}), 44)
+    result = apply_manual(repo, fake({}), None)
+    assert (result["value"], result["source"], result["manual"]) == (44, "garmin", None)
+
+
+def test_apply_manual_without_hr_max_keeps_zones(repo):
+    _garmin_snapshot(repo, hr_max=None)
+    apply_manual(repo, fake({}), 44)
+    snap = repo.latest_snapshot()
+    assert snap.hr_rest == 44 and Zones.model_validate_json(snap.zones_json) == zones_rest(55)
+
+
+def _exported_hr_session(repo, g) -> int:
+    cycle = repo.add(make_cycle(plan_start=date(2026, 11, 23)))
+    sid = repo.add(make_db_session(cycle.id, week_index=1, order=1)).id
+    export_session(repo, g, sid, T + timedelta(days=1))
+    return sid
+
+
+def test_apply_manual_resends_watch_sessions(repo):
+    _garmin_snapshot(repo)
+    g = fake({})
+    sid = _exported_hr_session(repo, g)
+    result = apply_manual(repo, g, 44)
+    assert (result["resent"], result["failed"]) == (1, [])
+    assert json.loads(repo.session(sid).export_hr_zones_json)["Z2"] == list(hr_zones(182, 44)["Z2"])
+
+
+def test_apply_manual_resend_failure_keeps_value(repo):
+    _garmin_snapshot(repo)
+    g = fake({})
+    sid = _exported_hr_session(repo, g)
+    g.fail_on = {"upload_workout"}
+    result = apply_manual(repo, g, 44)
+    assert (result["resent"], result["failed"], result["value"]) == (0, [sid], 44)
+    assert load_manual(repo) == 44 and repo.session(sid).status == "sync_error"

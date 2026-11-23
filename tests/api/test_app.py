@@ -1,7 +1,7 @@
 import logging
 import sqlite3
 import threading
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -11,7 +11,7 @@ from sqlalchemy import select as sa_select
 from sqlalchemy.exc import OperationalError
 
 from coach.api.app import create_app
-from coach.analysis.zones import Zones, compute_zones
+from coach.analysis.zones import Zones, compute_zones, hr_zones
 from coach.api.deps import hash_pin, valid_pin, verify_pin
 from coach.config import db_path, load_settings, save_settings
 from coach.version import app_version
@@ -25,7 +25,7 @@ from coach.plan.repo import Repo, SchemaTooNew, make_engine
 from coach.storage import switch as switch_mod
 from coach.storage.cloud_errors import CloudUnreachable
 from coach.storage.source import LocalSource
-from tests.plan.factories import make_activity, make_cycle, make_db_session
+from tests.plan.factories import make_activity, make_cycle, make_db_session, zones_rest
 from tests.services.test_sync import adjustment_json
 
 FIXTURES = Path(__file__).parent.parent / "fixtures" / "gpx"
@@ -560,6 +560,84 @@ def test_zones_from_latest_snapshot(make_client, repo):
     body = make_client().get("/api/zones").json()
     assert body["pace"]["VMA"] == [264, 279]
     assert body["hr"]["Z2"] == [134, 148]
+
+
+def _rest_hr_setup(repo, fake_garmin) -> int:
+    """Instantané Garmin (FC max 182, repos 55), 3 nuits portées en cache (47) et une séance FC exportée demain."""
+    from coach.services.garmin_export import export_session
+    from coach.services.rest_hr import NIGHTS_KEY
+
+    today = fake_garmin.today()
+    repo.add(
+        AthleteSnapshot(
+            date=today, hr_max=182, hr_rest=55, hr_rest_source="garmin", zones_json=zones_rest(55).model_dump_json()
+        )
+    )
+    repo.set_state(
+        NIGHTS_KEY,
+        {
+            (today - timedelta(days=i)).isoformat(): {"hr_rest": hr, "slept": True}
+            for i, hr in enumerate((46, 48, 47))
+        },
+    )
+    cycle = repo.add(make_cycle(plan_start=date(2026, 11, 2)))
+    sid = repo.add(make_db_session(cycle.id, week_index=1, order=1)).id
+    export_session(repo, fake_garmin, sid, today + timedelta(days=1))
+    return sid
+
+
+def test_put_rest_hr_applies_and_resends(make_client, repo, fake_garmin):
+    _rest_hr_setup(repo, fake_garmin)
+    client = make_client()
+    r = client.put("/api/rest-hr", json={"manual": 44})
+    body = r.json()
+    assert r.status_code == 200 and body["value"] == 44 and body["source"] == "manual" and body["resent"] == 1
+    assert body["applied"] is True and body["failed"] == []
+    assert client.get("/api/zones").json()["hr"]["Z2"] == list(hr_zones(182, 44)["Z2"])
+
+
+def test_put_rest_hr_out_of_range(make_client):
+    client = make_client()
+    assert client.put("/api/rest-hr", json={"manual": 29}).status_code == 422
+    assert client.put("/api/rest-hr", json={"manual": 101}).status_code == 422
+
+
+def test_put_rest_hr_without_snapshot(make_client):
+    r = make_client().put("/api/rest-hr", json={"manual": 44})
+    assert r.status_code == 200 and r.json()["applied"] is False and r.json()["manual"] == 44
+
+
+def test_clear_manual_returns_to_auto(make_client, repo, fake_garmin):
+    _rest_hr_setup(repo, fake_garmin)
+    client = make_client()
+    client.put("/api/rest-hr", json={"manual": 44})
+    r = client.put("/api/rest-hr", json={"manual": None})
+    assert (r.json()["value"], r.json()["source"], r.json()["nights"]) == (47, "nights", 3)
+
+
+def test_get_rest_hr_shows_auto_value_while_manual(make_client, repo, fake_garmin):
+    _rest_hr_setup(repo, fake_garmin)
+    client = make_client()
+    client.put("/api/rest-hr", json={"manual": 44})
+    body = client.get("/api/rest-hr").json()
+    assert (body["value"], body["source"]) == (44, "manual")
+    assert (body["manual"], body["auto_value"], body["auto_nights"]) == (44, 47, 3)
+
+
+def test_get_rest_hr_without_garmin_connection(make_client, repo):
+    from coach.services.rest_hr import save_manual
+
+    save_manual(repo, 44)
+    r = make_client(garmin="auth").get("/api/rest-hr")
+    assert r.status_code == 200 and (r.json()["value"], r.json()["manual"]) == (None, 44)
+
+
+def test_put_rest_hr_garmin_locked(make_client, repo):
+    from coach.storage.lock import SYNC_TTL, garmin_lock
+
+    with garmin_lock(repo, "autre-machine", SYNC_TTL):
+        r = make_client().put("/api/rest-hr", json={"manual": 44})
+    assert r.status_code == 409
 
 
 def test_manual_match_refuses_other_sport(make_client, repo):

@@ -3,22 +3,16 @@ from datetime import date
 
 import pytest
 
-from coach.analysis.zones import Zones, compute_zones, hr_zones
+from coach.analysis.zones import hr_zones
 from coach.export.garmin_workout import session_to_workout_json
 from coach.garmin.port import FakeGarminClient
 from coach.llm.schemas import StepSpec
 from coach.plan.models import AthleteSnapshot
 from coach.services.garmin_export import export_session
 from coach.services.rezone import RESEND_MIN_BPM, Rezone, needs_resend, resend_for_zones
-from tests.plan.factories import make_activity, make_cycle, make_db_session
+from tests.plan.factories import make_activity, make_cycle, make_db_session, zones_rest
 
 T = date(2026, 11, 23)  # lundi de la semaine 5 du cycle (début 26/10)
-PACE = compute_zones(threshold_pace_s_km=300, pred_10k_s=None, hr_max=182, hr_rest=55).pace
-
-
-def zones_rest(x: int) -> Zones:
-    """Zones dont la FC vient de `hr_zones(182, x)`."""
-    return Zones(pace=PACE, hr=hr_zones(182, x), source=["lactate_threshold", "karvonen"])
 
 
 def _hr_session(cycle_id: int, zone: str = "Z2", title: str = "EF 40 min Z2", order: int = 1, week: int = 5):

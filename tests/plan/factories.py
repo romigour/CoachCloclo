@@ -2,8 +2,16 @@
 
 from datetime import date
 
+from coach.analysis.zones import Zones, compute_zones, hr_zones
 from coach.plan.models import Activity, Cycle, Goal, Session
 from tests.llm.factories import make_session
+
+PACE = compute_zones(threshold_pace_s_km=300, pred_10k_s=None, hr_max=182, hr_rest=55).pace
+
+
+def zones_rest(x: int) -> Zones:
+    """Zones dont la FC vient de `hr_zones(182, x)`."""
+    return Zones(pace=PACE, hr=hr_zones(182, x), source=["lactate_threshold", "karvonen"])
 
 
 def make_goal(**overrides) -> Goal:

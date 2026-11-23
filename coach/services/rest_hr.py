@@ -1,10 +1,15 @@
 """FC repos fiable : cache des nuits lues sur Garmin et saisie manuelle de l'athlète."""
 
+import logging
 from datetime import date, timedelta
 
 from coach.analysis.rest_hr import WINDOW_DAYS, NightRecord, RestHr, choose_rest_hr, nights_average
-from coach.garmin.port import GarminPort, GarminRateLimited, GarminUnavailable
+from coach.analysis.zones import Zones, hr_zones
+from coach.garmin.port import GarminAuthRequired, GarminPort, GarminRateLimited, GarminUnavailable
+from coach.plan.models import AthleteSnapshot
 from coach.plan.repo import Repo
+
+_log = logging.getLogger(__name__)
 
 # AppState : {"YYYY-MM-DD": {"hr_rest": int | None, "slept": bool}}
 NIGHTS_KEY = "rest_nights"
@@ -68,3 +73,64 @@ def resolve_rest_hr(repo: Repo, nights: list[NightRecord], today: date, garmin_v
         last_nights_value=last.hr_rest if last else None,
         garmin_value=garmin_value,
     )
+
+
+def rest_hr_view(repo: Repo, today: date) -> dict:
+    """FC repos retenue (dernier instantané), saisie manuelle et moyenne automatique des nuits en cache."""
+    last = repo.latest_snapshot()
+    auto = nights_average(cached_nights(repo), today)
+    return {
+        "value": last.hr_rest if last else None,
+        "source": last.hr_rest_source if last else None,
+        "nights": last.hr_rest_nights if last else None,
+        "manual": load_manual(repo),
+        "auto_value": auto[0] if auto else None,
+        "auto_nights": auto[1] if auto else None,
+    }
+
+
+def apply_manual(repo: Repo, garmin: GarminPort, value: int | None) -> dict:
+    """Enregistre la saisie, recalcule tout de suite la FC repos et les zones FC, puis renvoie à la montre
+    les séances concernées.
+
+    Sans instantané, la saisie est seulement enregistrée (`applied` faux). Sinon un nouvel instantané
+    reprend le dernier, sans lecture Garmin des métriques ni des nuits (nuits du cache). Un échec Garmin
+    du renvoi ne fait pas échouer la saisie.
+    """
+    # import local : rezone → garmin_export → context importe ce module
+    from coach.services.rezone import resend_for_zones
+
+    save_manual(repo, value)
+    today = garmin.today()
+    last = repo.latest_snapshot()
+    if last is None:
+        return {**rest_hr_view(repo, today), "resent": 0, "failed": [], "applied": False}
+    # valeur Garmin connue seulement si le dernier instantané la tenait de Garmin
+    garmin_value = last.hr_rest if last.hr_rest_source in ("garmin", None) else None
+    rest = resolve_rest_hr(repo, cached_nights(repo), today, garmin_value)
+    if rest.value is None:
+        # rien de mieux : on garde la dernière FC repos connue
+        rest = RestHr(value=last.hr_rest, source="garmin")
+    zones = Zones.model_validate_json(last.zones_json)
+    if last.hr_max is not None and rest.value is not None:
+        zones = zones.model_copy(update={"hr": hr_zones(last.hr_max, rest.value)})
+    repo.add(
+        AthleteSnapshot(
+            date=today,
+            vo2max=last.vo2max,
+            hr_max=last.hr_max,
+            hr_rest=rest.value,
+            threshold_hr=last.threshold_hr,
+            threshold_pace_s_km=last.threshold_pace_s_km,
+            zones_json=zones.model_dump_json(),
+            hr_rest_source=rest.source,
+            hr_rest_nights=rest.nights,
+        )
+    )
+    resent, failed = 0, []
+    try:
+        r = resend_for_zones(repo, garmin, zones, today)
+        resent, failed = r.resent, r.failed
+    except (GarminUnavailable, GarminAuthRequired, GarminRateLimited):
+        _log.exception("Renvoi des séances après saisie de la FC repos échoué")
+    return {**rest_hr_view(repo, today), "resent": resent, "failed": failed, "applied": True}

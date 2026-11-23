@@ -485,7 +485,7 @@ def test_sync_reports_resent(repo, coach_home):
     from coach.plan.models import AthleteSnapshot
     from coach.services.garmin_export import export_session
     from coach.services.rest_hr import save_manual
-    from tests.services.test_rezone import zones_rest
+    from tests.plan.factories import zones_rest
 
     g = FakeGarminClient(metrics=Metrics(hr_max=182, hr_rest=55, threshold_pace_s_km=300), today=date(2026, 11, 4))
     repo.add(AthleteSnapshot(date=date(2026, 11, 1), hr_rest=55, zones_json=zones_rest(55).model_dump_json()))
@@ -505,7 +505,7 @@ def test_sync_resend_failure_does_not_fail_sync(repo, coach_home):
     from coach.plan.models import AthleteSnapshot
     from coach.services.garmin_export import export_session
     from coach.services.rest_hr import save_manual
-    from tests.services.test_rezone import zones_rest
+    from tests.plan.factories import zones_rest
 
     g = FakeGarminClient(metrics=Metrics(hr_max=182, hr_rest=55, threshold_pace_s_km=300), today=date(2026, 11, 4))
     repo.add(AthleteSnapshot(date=date(2026, 11, 1), hr_rest=55, zones_json=zones_rest(55).model_dump_json()))

@@ -262,7 +262,7 @@
       {:else if route === "welcome"}
         <Welcome onconnected={garminConnected} />
       {:else if route === "setup"}
-        <Setup onchanged={refresh} onconnected={garminConnected} />
+        <Setup onchanged={refresh} onconnected={garminConnected} {syncing} />
       {:else if route === "goal"}
         <Goal onchanged={refresh} />
       {:else if route === "week" && toPrepare}

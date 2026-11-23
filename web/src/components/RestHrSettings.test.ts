@@ -99,3 +99,26 @@ test("annonce que la valeur s'appliquera à la prochaine synchro", async () => {
   await fireEvent.click(screen.getByRole("button", { name: "Enregistrer" }));
   expect(await screen.findByText("Enregistrée : elle s'appliquera à la prochaine synchro")).toBeInTheDocument();
 });
+
+test("bouton désactivé pendant une synchro", async () => {
+  render(RestHrSettings, { syncing: true });
+  await screen.findByLabelText("FC repos");
+  expect(screen.getByRole("button", { name: "Enregistrer" })).toBeDisabled();
+});
+
+test("affiche le refus quand une synchro est en cours", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string, init?: RequestInit) => {
+      if (url === "/api/rest-hr" && init?.method === "PUT") {
+        const detail = "Synchronisation en cours, réessaie dans un instant";
+        return new Response(JSON.stringify({ code: "sync_running", detail }), { status: 409 });
+      }
+      return new Response(JSON.stringify(view), { status: 200 });
+    }),
+  );
+  render(RestHrSettings);
+  await fireEvent.input(await screen.findByLabelText("FC repos"), { target: { value: "44" } });
+  await fireEvent.click(screen.getByRole("button", { name: "Enregistrer" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent("Synchronisation en cours, réessaie dans un instant");
+});

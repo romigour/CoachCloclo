@@ -103,6 +103,7 @@ SCHEMA_TOO_NEW_MSG = "Mets à jour CoachCloclo sur ce PC"
 STORAGE_RETRY_S = 10  # délai entre deux essais de réouverture d'une base cloud indisponible
 SCHEMA_CHECK_S = 60  # en mode cloud, relecture de la version du schéma (un autre PC a pu mettre à jour)
 STORAGE_BUSY_MSG = "Une opération est en cours, réessaie dans un instant."
+SYNC_RUNNING_MSG = "Synchronisation en cours, réessaie dans un instant"
 # routes utiles sans base de données : réglages du stockage, statut, PIN, réglages, connexion Garmin, bureau
 NO_DB_PATHS = (
     "/api/storage",
@@ -498,6 +499,9 @@ def create_app(
     app.state.pin_failures = 0
     app.state.pin_locked_until = 0.0
     pin_lock = threading.Lock()
+    # synchro, saisie de la FC repos et application d'une proposition réécrivent les workouts Garmin :
+    # une seule à la fois sur ce PC (le verrou garmin_lock est réentrant pour un même PC)
+    app.state.garmin_work = threading.Lock()
     _register_errors(app)
 
     def get_repo(request: Request) -> Repo:
@@ -877,8 +881,13 @@ def create_app(
     @api.put("/rest-hr")
     def put_rest_hr(body: RestHrBody, repo: RepoDep, garmin: GarminDep):
         """Saisit (ou efface) la FC repos : zones FC recalculées et séances renvoyées à la montre."""
-        with garmin_lock(repo, holder, SYNC_TTL):
-            return apply_manual(repo, garmin, body.manual)
+        if not app.state.garmin_work.acquire(blocking=False):
+            return _error(409, "sync_running", SYNC_RUNNING_MSG)
+        try:
+            with garmin_lock(repo, holder, SYNC_TTL):
+                return apply_manual(repo, garmin, body.manual)
+        finally:
+            app.state.garmin_work.release()
 
     # --- activités, synchro, propositions ---------------------------------------------------
 
@@ -962,8 +971,13 @@ def create_app(
 
     @api.post("/sync")
     def post_sync(repo: RepoDep, garmin: GarminDep, llm: LLMDep):
-        with garmin_lock(repo, holder, SYNC_TTL):
-            result = sync(repo, garmin, llm, now=datetime.now(timezone.utc))
+        if not app.state.garmin_work.acquire(blocking=False):
+            return _error(409, "sync_running", SYNC_RUNNING_MSG)
+        try:
+            with garmin_lock(repo, holder, SYNC_TTL):
+                result = sync(repo, garmin, llm, now=datetime.now(timezone.utc))
+        finally:
+            app.state.garmin_work.release()
         if load_state(repo).status == "idle":  # premier lancement : import de l'historique complet
             app.state.history.start()
         return result
@@ -982,7 +996,12 @@ def create_app(
 
     @api.post("/proposals/{proposal_id}/accept")
     def post_proposal_accept(proposal_id: int, repo: RepoDep, garmin: GarminDep):
-        return {"sync_error_ids": export.apply_proposal(repo, garmin, proposal_id)}
+        if not app.state.garmin_work.acquire(blocking=False):
+            return _error(409, "sync_running", SYNC_RUNNING_MSG)
+        try:
+            return {"sync_error_ids": export.apply_proposal(repo, garmin, proposal_id)}
+        finally:
+            app.state.garmin_work.release()
 
     @api.post("/proposals/{proposal_id}/reject")
     def post_proposal_reject(proposal_id: int, repo: RepoDep):

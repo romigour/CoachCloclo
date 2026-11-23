@@ -3,6 +3,9 @@
   import { api, type RestHrView } from "../lib/api";
   import { READONLY } from "../lib/mode";
 
+  // synchro en cours : la saisie serait refusée (409), le bouton attend la fin
+  let { syncing = false }: { syncing?: boolean } = $props();
+
   const SOURCES: Record<string, (v: RestHrView) => string> = {
     nights: (v) => `${v.value} bpm, moyenne de ${v.nights} nuits avec la montre`,
     manual: (v) => `${v.value} bpm, saisie à la main`,
@@ -29,7 +32,7 @@
   });
 
   async function save() {
-    if (!view || busy || !valid) return;
+    if (!view || busy || syncing || !valid) return;
     busy = true;
     error = "";
     note = "";
@@ -71,7 +74,7 @@
         bind:value={draft}
         disabled={busy}
       />
-      <button type="button" onclick={save} disabled={busy || !valid}>Enregistrer</button>
+      <button type="button" onclick={save} disabled={busy || syncing || !valid}>Enregistrer</button>
     </div>
   </div>
 {/if}

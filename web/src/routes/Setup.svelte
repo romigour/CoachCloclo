@@ -13,7 +13,11 @@
   import Icon from "../components/Icon.svelte";
   import { lastImport, newCount, totalLabel } from "../lib/history";
 
-  let { onchanged, onconnected }: { onchanged?: () => void; onconnected?: () => void } = $props();
+  let {
+    onchanged,
+    onconnected,
+    syncing = false,
+  }: { onchanged?: () => void; onconnected?: () => void; syncing?: boolean } = $props();
 
   let status = $state<Status | null>(null);
   let settings = $state<SettingsView | null>(null);
@@ -274,7 +278,7 @@
             </div>
           {/if}
         </div>
-        <RestHrSettings />
+        <RestHrSettings {syncing} />
         <StorageSettings />
       </div>
     </section>

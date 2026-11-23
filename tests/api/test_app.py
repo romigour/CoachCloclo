@@ -643,6 +643,45 @@ def test_put_rest_hr_garmin_locked(make_client, repo):
     assert r.status_code == 409
 
 
+def test_put_rest_hr_refused_while_sync_running(make_client, repo):
+    """Saisie pendant une synchro (même PC) : 409, rien d'enregistré, verrou de la synchro intact."""
+    from coach.services.rest_hr import load_manual
+
+    client = make_client(garmin=_rest_hr_setup(repo))
+    busy = client.app.state.garmin_work
+    assert busy.acquire(blocking=False)
+    try:
+        r = client.put("/api/rest-hr", json={"manual": 44})
+    finally:
+        busy.release()
+    assert r.status_code == 409 and r.json()["code"] == "sync_running"
+    assert r.json()["detail"] == "Synchronisation en cours, réessaie dans un instant"
+    assert load_manual(repo) is None
+    assert client.put("/api/rest-hr", json={"manual": 44}).status_code == 200
+
+
+def test_sync_refused_while_rest_hr_saving(make_client):
+    client = make_client()
+    busy = client.app.state.garmin_work
+    assert busy.acquire(blocking=False)
+    try:
+        r = client.post("/api/sync")
+    finally:
+        busy.release()
+    assert r.status_code == 409 and r.json()["code"] == "sync_running"
+
+
+def test_accept_proposal_refused_while_sync_running(make_client):
+    client = make_client()
+    busy = client.app.state.garmin_work
+    assert busy.acquire(blocking=False)
+    try:
+        r = client.post("/api/proposals/1/accept")
+    finally:
+        busy.release()
+    assert r.status_code == 409 and r.json()["code"] == "sync_running"
+
+
 def test_manual_match_refuses_other_sport(make_client, repo):
     from datetime import date
 

@@ -8,6 +8,7 @@ let statusBody: Record<string, unknown> = {};
 let statsCalls = 0;
 let syncInstant = false;
 let syncFails = false;
+let syncResent = 0;
 let afterSync: (() => void) | null = null;
 let setupBody: Record<string, unknown> | null = null; // null : 404, comme sous `coach start`
 
@@ -31,6 +32,7 @@ beforeEach(() => {
   statsCalls = 0;
   syncInstant = false;
   syncFails = false;
+  syncResent = 0;
   afterSync = null;
   setupBody = null;
   localStorage.clear();
@@ -55,7 +57,7 @@ beforeEach(() => {
       if (!syncInstant) await new Promise<void>((r) => (syncDone = r));
       if (syncFails) return new Response(JSON.stringify({ code: "garmin_unavailable", detail: "Garmin coupé" }), { status: 503 });
       afterSync?.();
-      body = { new_activities: 0, matched: 0, missed: 0, proposal_id: null };
+      body = { new_activities: 0, matched: 0, missed: 0, proposal_id: null, resent: syncResent, hr_rest: 44 };
     }
     return new Response(JSON.stringify(body), { status: 200 });
   }));
@@ -383,4 +385,25 @@ test("settings: Claude mode saves on change, except an API mode still missing it
   expect(puts()).toBe(0);
   await fireEvent.click(screen.getByLabelText("Claude Code (CLI)"));
   await waitFor(() => expect(puts()).toBe(1));
+});
+
+test("after a sync that resent workouts, a non-blocking message is shown and cleared by the next sync", async () => {
+  syncInstant = true;
+  syncResent = 2;
+  location.hash = "#/week";
+  render(App);
+  expect(await screen.findByText("2 séances mises à jour sur ta montre (FC repos 44)")).toBeInTheDocument();
+  syncResent = 0;
+  await fireEvent.click(await screen.findByRole("button", { name: /Synchroniser/ }));
+  await waitFor(() => expect(syncs()).toBe(2));
+  await waitFor(() => expect(screen.queryByText(/mises à jour sur ta montre/)).toBeNull());
+});
+
+test("no message after a sync that resent nothing", async () => {
+  syncInstant = true;
+  location.hash = "#/week";
+  render(App);
+  await waitFor(() => expect(syncs()).toBe(1));
+  await screen.findByText("Ma semaine", { selector: "h1" });
+  expect(screen.queryByText(/mises? à jour sur ta montre/)).toBeNull();
 });

@@ -30,6 +30,7 @@
   let version = $state(0);
   let ready = $state(false);
   let syncing = $state(false);
+  let resentNote = $state(""); // séances renvoyées à la montre par la dernière synchro
   let lastSync = $state<Date | null>(null);
   let autoSyncStarted = false; // une seule synchro automatique par chargement de l'app
 
@@ -170,8 +171,12 @@
   async function sync(): Promise<boolean> {
     if (syncing) return true;
     syncing = true;
+    resentNote = "";
     try {
-      await api.sync();
+      const r = await api.sync();
+      if (r.resent > 0) {
+        resentNote = `${r.resent} ${r.resent > 1 ? "séances mises" : "séance mise"} à jour sur ta montre (FC repos ${r.hr_rest})`;
+      }
       lastSync = new Date();
       version++;
       await refresh();
@@ -228,6 +233,7 @@
         {status?.cycle ? "Analyse de ta séance par Claude…" : "Synchronisation Garmin…"}
       </p>
     {/if}
+    {#if resentNote}<p class="card busy" role="status">{resentNote}</p>{/if}
 
     {#if ready && !(error && (error as { code?: string }).code === "pin_required")}
       {#if storageError && route !== "setup" && route !== "welcome" && route !== "connection"}

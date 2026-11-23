@@ -343,6 +343,27 @@ export function setupDone(s: SetupStatus, claudeSkipped: boolean): boolean {
 
 export type SettingsView = { llm_mode: "cli" | "api"; anthropic_model: string | null; has_api_key: boolean };
 
+/** FC repos retenue (GET/PUT /api/rest-hr) ; `manual` : saisie à la main, `auto_*` : calcul sur les nuits portées. */
+export type RestHrView = {
+  value: number | null;
+  source: "manual" | "nights" | "last_good" | "garmin" | null;
+  nights: number | null;
+  manual: number | null;
+  auto_value: number | null;
+  auto_nights: number | null;
+};
+/** Réponse du PUT : `resent` séances renvoyées à la montre ; `applied` faux si aucun instantané (appliqué à la prochaine synchro). */
+export type RestHrSaved = RestHrView & { resent: number; failed: number[]; applied: boolean };
+
+/** Résultat d'une synchro (POST /api/sync). */
+export type SyncResult = {
+  new_activities: number;
+  missed: number;
+  proposal_id: number | null;
+  resent: number;
+  hr_rest: number | null;
+};
+
 /** Journaux de diagnostic (GET/PUT /api/diagnostics) ; `can_open` : appli de bureau, depuis ce PC. */
 export type DiagnosticsView = { trace_claude: boolean; trace_garmin: boolean; logs_dir: string; can_open: boolean };
 
@@ -584,6 +605,8 @@ const rawApi = {
   diagnostics: () => get<DiagnosticsView>("/diagnostics"),
   saveDiagnostics: (b: Partial<Pick<DiagnosticsView, "trace_claude" | "trace_garmin">>) =>
     put<DiagnosticsView>("/diagnostics", b),
+  restHr: () => get<RestHrView>("/rest-hr"),
+  saveRestHr: (manual: number | null) => put<RestHrSaved>("/rest-hr", { manual }),
   openLogs: () => post<{ status: string }>("/logs/open"),
   createGoal: (g: GoalInput) => {
     const f = new FormData();
@@ -638,7 +661,7 @@ const rawApi = {
     get<Activity[]>(`/activities/free?days=${days}&sport=${sport}`),
   match: (activityId: number, sessionId: number | null) =>
     post<{ status: string }>(`/activities/${activityId}/match`, { session_id: sessionId }),
-  sync: () => post<Record<string, unknown>>("/sync"),
+  sync: () => post<SyncResult>("/sync"),
   pendingProposal: () => get<Proposal | null>("/proposals/pending"),
   acceptProposal: (id: number) => post<{ sync_error_ids: number[] }>(`/proposals/${id}/accept`),
   rejectProposal: (id: number) => post<{ status: string }>(`/proposals/${id}/reject`),

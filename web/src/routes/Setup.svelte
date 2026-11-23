@@ -8,6 +8,7 @@
   import UpdateSettings from "../components/UpdateSettings.svelte";
   import ThemeSettings from "../components/ThemeSettings.svelte";
   import ClaudeUsage from "../components/ClaudeUsage.svelte";
+  import RestHrSettings from "../components/RestHrSettings.svelte";
   import DiagnosticSettings from "../components/DiagnosticSettings.svelte";
   import Icon from "../components/Icon.svelte";
   import { lastImport, newCount, totalLabel } from "../lib/history";
@@ -273,6 +274,7 @@
             </div>
           {/if}
         </div>
+        <RestHrSettings />
         <StorageSettings />
       </div>
     </section>

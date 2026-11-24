@@ -31,15 +31,32 @@
   let model = $state("");
   let saved = $state(false);
 
+  let bases = $state(0); // change quand le stockage a pu changer : les blocs lus dans la base repartent de zéro
+  let reading = 0; // numéro de la dernière lecture : une réponse plus ancienne est ignorée
+
   async function load() {
+    const mine = ++reading;
     try {
-      status = await api.status();
-      settings = await api.settings();
-      mode = settings.llm_mode;
-      model = settings.anthropic_model ?? "";
+      const s = await api.status();
+      if (mine !== reading) return;
+      status = s;
+      const v = await api.settings();
+      if (mine !== reading) return;
+      settings = v;
+      mode = v.llm_mode;
+      model = v.anthropic_model ?? "";
     } catch (e) {
-      error = e;
+      if (mine === reading) error = e;
     }
+  }
+
+  /** Stockage changé : plus rien de l'ancienne base à l'écran, puis tout est relu. */
+  function switched() {
+    bases++;
+    status = null;
+    error = null;
+    load();
+    onswitched?.();
   }
   async function loadWizard() {
     try {
@@ -246,7 +263,7 @@
             </form>
           {/if}
         </div>
-        <ClaudeUsage />
+        {#key bases}<ClaudeUsage />{/key}
       </div>
     </section>
 
@@ -279,8 +296,8 @@
             </div>
           {/if}
         </div>
-        <RestHrSettings {syncing} />
-        <StorageSettings {onswitched} />
+        {#key bases}<RestHrSettings {syncing} />{/key}
+        <StorageSettings onswitched={switched} />
       </div>
     </section>
 

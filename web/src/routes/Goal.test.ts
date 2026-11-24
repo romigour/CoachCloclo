@@ -576,3 +576,39 @@ test("retour sur Objectifs : le cycle et ses objectifs affichés sans attendre",
   await Promise.resolve();
   expect(screen.getByRole("list", { name: "Objectifs à venir" })).toHaveTextContent("21,1 km");
 });
+
+const planAndStatus = (cycle: ReturnType<typeof mkCycle>) =>
+  vi.stubGlobal("fetch", vi.fn(async (url: string) =>
+    new Response(JSON.stringify(url === "/api/status" ? { cycle, goals: [mkGoal()] } : mkPlan(mkGoal(), cycle)), { status: 200 })));
+
+test.each([
+  ["brouillon", {}, ["Valider le plan", "Régénérer"]],
+  ["plan à recalculer", { needs_generation: true }, ["Générer"]],
+])("Objectifs depuis le cache (%s) : actions bloquées jusqu'à la relecture, et si elle échoue", async (_n, extra, names) => {
+  planAndStatus(mkCycle(extra));
+  const all = [...names, "Retirer", "Modifier", "Réglages du plan"];
+  const first = render(Goal);
+  await screen.findByRole("list", { name: "Objectifs à venir" });
+  await waitFor(() => all.forEach((n) => expect(screen.getByRole("button", { name: n })).toBeEnabled()));
+  first.unmount();
+  const fails: (() => void)[] = [];
+  vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>((r) =>
+    fails.push(() => r(new Response(JSON.stringify({ detail: "Base coupée" }), { status: 503 }))))));
+  render(Goal);
+  await Promise.resolve();
+  all.forEach((n) => expect(screen.getByRole("button", { name: n })).toBeDisabled());
+  fails.forEach((go) => go());
+  expect(await screen.findByText("Base coupée")).toBeVisible();
+  all.forEach((n) => expect(screen.getByRole("button", { name: n })).toBeDisabled());
+});
+
+test("Objectifs depuis le cache : pas de bandeau d'ajustement avant la relecture", async () => {
+  planAndStatus({ ...mkCycle({ plan_accepted: true, adjust_due: true }) });
+  const first = render(Goal);
+  await screen.findByRole("region", { name: "Plan à mettre à jour" });
+  first.unmount();
+  vi.stubGlobal("fetch", vi.fn(() => new Promise(() => {})));
+  render(Goal);
+  await Promise.resolve();
+  expect(screen.queryByRole("region", { name: "Plan à mettre à jour" })).toBeNull();
+});

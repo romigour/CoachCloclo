@@ -2,7 +2,7 @@
   import { onMount } from "svelte";
   import { api, ApiError, claudeSkipped, setupDone, type SetupStatus, type Status } from "./lib/api";
   import { clearCache, noteWrite } from "./lib/cache";
-  import { loadZones } from "./lib/zones.svelte";
+  import { loadZones, resetZones } from "./lib/zones.svelte";
   import { READONLY } from "./lib/mode";
   import ErrorBanner from "./components/ErrorBanner.svelte";
   import UpdateBanner from "./components/UpdateBanner.svelte";
@@ -31,6 +31,7 @@
   let error = $state<unknown>(null);
   let version = $state(0);
   let base = $state(1); // change quand le stockage a pu changer
+  let generation = 0; // change avec la base : une lecture de l'état partie avant est ignorée
   let ready = $state(false);
   let syncing = $state(false);
   let resentNote = $state(""); // séances renvoyées à la montre par la dernière synchro
@@ -64,9 +65,17 @@
     return status?.has_activities ? "#/stats" : "#/goal";
   }
 
+  /** La base a pu changer : oublie l'état de l'ancienne, y compris les lectures en vol. */
+  function forgetBase() {
+    generation++;
+    status = null;
+    clearCache();
+    resetZones();
+  }
+
   /** Connexion Turso enregistrée : on relit les données puis on va à l'accueil. */
   async function connected() {
-    clearCache();
+    forgetBase();
     version++; // relit les zones et recharge les pages (première connexion ou changement de base)
     await refresh();
     location.hash = home();
@@ -74,14 +83,14 @@
 
   /** Connexion effacée : on reste sur la page de connexion et on oublie l'état de l'ancienne base. */
   function cleared() {
-    clearCache();
-    status = null;
+    forgetBase();
     error = null;
     location.hash = "#/connection";
   }
 
-  /** Stockage changé depuis les Réglages (cache déjà vidé) : zones, pages et état viennent de la nouvelle base. */
+  /** Stockage changé depuis les Réglages : zones, pages et état viennent de la nouvelle base. */
   function storageSwitched() {
+    forgetBase();
     base++;
     version++;
     refresh();
@@ -99,8 +108,10 @@
 
   /** Relit l'état ; `clear` efface l'erreur affichée (pas depuis le sondage, qui la ferait disparaître). */
   async function refresh(clear = true) {
+    const mine = generation;
     try {
       const next = await api.status();
+      if (mine !== generation) return;
       // Fin d'import (réussie ou non) observée via le sondage : les statistiques doivent être rechargées.
       const ended = next.history.status === "done" || next.history.status === "error";
       if (status?.history.status === "running" && ended) {
@@ -111,7 +122,7 @@
       status = next;
       if (clear) error = null;
     } catch (e) {
-      error = e;
+      if (mine === generation) error = e;
     }
   }
 
@@ -301,7 +312,9 @@
               onerror={failed}
               onchanged={refresh}
             />
-          {:else}
+          {:else if !status && !error}
+            <p class="busy">Chargement…</p>
+          {:else if status}
             <p class="card">Aucun objectif actif : le jour J se prépare à partir d'un objectif. <a href="#/goal">Créer un objectif</a></p>
           {/if}
         {:else if route === "stats"}

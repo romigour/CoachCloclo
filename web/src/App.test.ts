@@ -425,7 +425,7 @@ test("passage en erreur de stockage : les anciennes données ne réapparaissent 
   expect(apply.mock.calls).toEqual([["nouvelle base"]]);
 });
 
-test("bascule de stockage depuis les Réglages : état et zones relus", async () => {
+test("bascule de stockage depuis les Réglages : zones et état relus (appli et Réglages)", async () => {
   syncInstant = true;
   const base = vi.mocked(fetch).getMockImplementation()!;
   let mode = "turso";
@@ -443,7 +443,7 @@ test("bascule de stockage depuis les Réglages : état et zones relus", async ()
   const [zones, status] = [count("/api/zones"), count("/api/status")];
   await fireEvent.click(button);
   await waitFor(() => expect(count("/api/zones")).toBe(zones + 1));
-  await waitFor(() => expect(count("/api/status")).toBe(status + 1));
+  await waitFor(() => expect(count("/api/status")).toBe(status + 2));
 });
 
 test("bascule de stockage finie depuis une autre page : rien de l'ancienne base ne reste affiché", async () => {
@@ -476,4 +476,161 @@ test("bascule de stockage finie depuis une autre page : rien de l'ancienne base 
   await waitFor(() => expect(plans).toBe(before + 1));
   expect(await screen.findByText("Chargement…")).toBeVisible();
   expect(document.querySelector(".goal-what")).toBeNull();
+});
+
+// --- bascule : rien de l'ancienne base ne reste utilisable ---
+
+/** Bascule tenue ouverte depuis les Réglages ; `status` et les autres lectures sont pilotables. */
+async function pendingSwitch(over: { status?: () => Promise<Response> | null; get?: (u: string) => unknown } = {}) {
+  syncInstant = true;
+  const base = vi.mocked(fetch).getMockImplementation()!;
+  const ctl = { finish: () => {}, over };
+  vi.mocked(fetch).mockImplementation(async (url, init) => {
+    const u = String(url);
+    const custom = u === "/api/status" ? ctl.over.status?.() : null;
+    if (custom) return custom;
+    const given = (init?.method ?? "GET") === "GET" ? ctl.over.get?.(u) : undefined;
+    if (given !== undefined) return new Response(JSON.stringify(given), { status: 200 });
+    if (u === "/api/storage/cloud") await new Promise<void>((r) => (ctl.finish = r));
+    if (u.startsWith("/api/storage"))
+      return new Response(JSON.stringify({ mode: "turso", turso_url: "libsql://x", has_turso_token: true }), { status: 200 });
+    return base(url, init);
+  });
+  location.hash = "#/setup";
+  render(App);
+  const button = await screen.findByRole("button", { name: "Revenir au stockage local" });
+  await waitFor(() => expect(syncs()).toBe(1));
+  await waitFor(() => expect(screen.queryByText("Analyse de ta séance par Claude…")).toBeNull());
+  await screen.findByRole("button", { name: /Réimporter/ });
+  await fireEvent.click(button);
+  return ctl;
+}
+const goto = (hash: string) => {
+  location.hash = hash;
+  window.dispatchEvent(new HashChangeEvent("hashchange"));
+};
+const racePlans = () => calls.filter((c) => c.url.endsWith("/race-plan")).map((c) => c.url);
+const reply = (b: unknown, status = 200) => new Response(JSON.stringify(b), { status });
+const pause = () => new Promise((r) => setTimeout(r, 30));
+
+test("bascule : Jour J ne relit jamais un objectif de l'ancienne base", async () => {
+  const ctl = await pendingSwitch();
+  goto("#/race/1");
+  await waitFor(() => expect(racePlans()).toEqual(["/api/goals/1/race-plan"]));
+  await pause();
+  let answer: (r: Response) => void = () => {};
+  ctl.over.status = () => new Promise<Response>((r) => (answer = r));
+  ctl.finish();
+  await pause();
+  expect(racePlans()).toHaveLength(1); // rien avant le nouvel état
+  expect(screen.getByText("Chargement…")).toBeVisible();
+  const other = { ...goal, id: 7 };
+  answer(reply({ ...statusBody, goals: [other], next_goal: other }));
+  // l'id de l'adresse (1) n'existe pas dans la nouvelle base
+  await waitFor(() => expect(racePlans()).toEqual(["/api/goals/1/race-plan", "/api/goals/7/race-plan"]));
+});
+
+test("bascule puis /status en échec : l'ancien état est oublié", async () => {
+  statusBody = { ...statusBody, pending_proposal_id: 3 };
+  const ctl = await pendingSwitch();
+  expect(screen.getByLabelText("1 proposition en attente")).toBeVisible();
+  ctl.over.status = () => Promise.resolve(reply({ detail: "Coupé" }, 503));
+  ctl.finish();
+  expect((await screen.findAllByText("Coupé")).length).toBeGreaterThan(0);
+  expect(screen.queryByLabelText("1 proposition en attente")).toBeNull();
+});
+
+test.each([200, 503])("bascule : une lecture d'état partie avant (%i) ne change plus rien", async (code) => {
+  const ctl = await pendingSwitch();
+  const late: ((r: Response) => void)[] = [];
+  ctl.over.status = () => new Promise<Response>((r) => late.push(r));
+  goto("#/week");
+  await fireEvent.click(await screen.findByRole("button", { name: /Synchroniser/ })); // relit l'état à la fin
+  await waitFor(() => expect(late).toHaveLength(1));
+  ctl.over.status = undefined;
+  ctl.finish();
+  await pause();
+  late[0](code === 200 ? reply({ ...statusBody, pending_proposal_id: 3 }) : reply({ detail: "Ancienne erreur" }, code));
+  await pause();
+  expect(screen.queryByLabelText("1 proposition en attente")).toBeNull();
+  expect(screen.queryByText("Ancienne erreur")).toBeNull();
+});
+
+test.each([false, true])("bascule : zones de l'ancienne base oubliées (lecture tardive : %s)", async (late) => {
+  const { currentZones } = await import("./lib/zones.svelte");
+  let answer: (r: Response) => void = () => {};
+  const ctl = await pendingSwitch({ get: (u) => (u === "/api/zones" ? { hr: "ancienne" } : undefined) });
+  await waitFor(() => expect(currentZones()).toEqual({ hr: "ancienne" }));
+  ctl.over.get = undefined;
+  const before = vi.mocked(fetch).getMockImplementation()!;
+  let reads = 0;
+  vi.mocked(fetch).mockImplementation((url, init) => {
+    if (url !== "/api/zones") return before(url, init);
+    if (late && reads++ === 0) return new Promise<Response>((r) => (answer = r));
+    return Promise.resolve(reply({}, 503));
+  });
+  if (late) {
+    await fireEvent.click(await screen.findByRole("button", { name: /Synchroniser/ }));
+    await waitFor(() => expect(reads).toBe(1));
+  }
+  ctl.finish();
+  await pause();
+  answer(reply({ hr: "ancienne" }));
+  await pause();
+  expect(currentZones()).toBeNull();
+});
+
+test("bascule : les Réglages relisent leurs données, FC repos et consommation comprises", async () => {
+  const rest = (manual: number) => ({ value: manual, source: "manual", nights: null, manual, auto_value: null, auto_nights: null });
+  let usage = 0;
+  const ctl = await pendingSwitch({
+    get: (u) => {
+      if (u === "/api/llm-usage") usage++;
+      return u === "/api/rest-hr" ? rest(41) : undefined;
+    },
+  });
+  const input = screen.getByLabelText("FC repos") as HTMLInputElement;
+  expect(input.value).toBe("41");
+  await fireEvent.input(input, { target: { value: "43" } }); // brouillon de l'ancienne base
+  expect(usage).toBe(1);
+  ctl.over.get = (u) => {
+    if (u === "/api/llm-usage") usage++;
+    return u === "/api/rest-hr" ? rest(55) : undefined;
+  };
+  statusBody = { ...statusBody, history: { ...idle, total: 777 } };
+  ctl.finish();
+  await waitFor(() => expect((screen.getByLabelText("FC repos") as HTMLInputElement).value).toBe("55"));
+  expect(screen.queryByText("41 bpm, saisie à la main")).toBeNull();
+  expect(await screen.findByText(/777/)).toBeVisible();
+  expect(usage).toBe(2);
+});
+
+test("bascule : une lecture des Réglages partie avant ne restaure pas l'ancienne base", async () => {
+  const ctl = await pendingSwitch();
+  const late: ((r: Response) => void)[] = [];
+  ctl.over.status = () => new Promise<Response>((r) => late.push(r));
+  await fireEvent.click(screen.getByRole("button", { name: /Réimporter/ })); // relit l'état
+  await waitFor(() => expect(late.length).toBeGreaterThan(0));
+  ctl.over.status = undefined;
+  const old = { ...statusBody, history: { ...idle, total: 111 } };
+  statusBody = { ...statusBody, history: { ...idle, total: 777 } };
+  ctl.finish();
+  expect(await screen.findByText(/777/)).toBeVisible();
+  late.forEach((r) => r(reply(old)));
+  await pause();
+  expect(screen.getByText(/777/)).toBeVisible();
+  expect(screen.queryByText(/111/)).toBeNull();
+});
+
+test("bascule ratée : l'erreur du stockage reste affichée dans les Réglages", async () => {
+  const ctl = await pendingSwitch();
+  const before = vi.mocked(fetch).getMockImplementation()!;
+  ctl.finish();
+  await pause();
+  vi.mocked(fetch).mockImplementation(async (url, init) =>
+    init?.method === "DELETE" ? reply({ code: "x", detail: "Bascule impossible" }, 503) : before(url, init));
+  await fireEvent.click(screen.getByRole("button", { name: "Revenir au stockage local" }));
+  expect(await screen.findByText("Bascule impossible")).toBeVisible();
+  await pause();
+  expect(screen.getByText("Bascule impossible")).toBeVisible();
 });

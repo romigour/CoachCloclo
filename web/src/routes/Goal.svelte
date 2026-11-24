@@ -95,13 +95,18 @@
     loaded = true;
   }
 
-  onMount(async () => {
+  async function start() {
+    error = null;
     try {
       await load();
     } catch (e) {
       error = e;
     }
-  });
+  }
+  onMount(start);
+
+  // objectifs et cycle encore en cache (pas relus, ou relecture en échec) : rien ne peut être modifié
+  const locked = $derived(!!busy || !loaded);
 
   async function generate() {
     busy = "Claude construit ton plan… (cela peut prendre une minute)";
@@ -267,7 +272,7 @@
   </div>
 </header>
 
-<ErrorBanner {error} />
+<ErrorBanner {error} onpin={start} />
 
 {#if busy}
   <p class="card busy" role="status">{busy}</p>
@@ -277,7 +282,7 @@
   <p class="card" role="status">{notice}</p>
 {/if}
 
-<AdjustBanner {cycle} onproposal={adjusted} />
+<AdjustBanner cycle={loaded ? cycle : null} onproposal={adjusted} />
 
 {#if needsGeneration}
   <section class="card row spread" aria-label="Plan à recalculer">
@@ -285,7 +290,7 @@
       Le plan doit être recalculé pour tenir compte de tes objectifs.{#if previous} En attendant, voici le plan
         précédent.{/if}
     </p>
-    <button class="primary" onclick={regenerate} disabled={!!busy}>Générer</button>
+    <button class="primary" onclick={regenerate} disabled={locked}>Générer</button>
   </section>
 {:else if draft && plan}
   <section class="card stack" aria-labelledby="draft-title">
@@ -293,8 +298,8 @@
     <p class="meta">{plan.weeks.length} semaines</p>
     {#if summary}<p>{summary}</p>{/if}
     <div class="row">
-      <button class="primary" onclick={accept} disabled={!!busy}>Valider le plan</button>
-      <button onclick={regenerate} disabled={!!busy}>Régénérer</button>
+      <button class="primary" onclick={accept} disabled={locked}>Valider le plan</button>
+      <button onclick={regenerate} disabled={locked}>Régénérer</button>
     </div>
   </section>
 {/if}
@@ -350,7 +355,7 @@
         <div class="row spread">
           <h2 id="goals-title">À venir</h2>
           <div class="row">
-            {#if cycle}<button type="button" onclick={() => (editingSettings = true)}>Réglages du plan</button>{/if}
+            {#if cycle}<button type="button" disabled={!loaded} onclick={() => (editingSettings = true)}>Réglages du plan</button>{/if}
             {#if !adding && !toPrepare}
               <button type="button" class="primary" onclick={() => (adding = true)}>Ajouter un objectif</button>
             {/if}
@@ -370,9 +375,9 @@
                 {#if g.notes}<span class="meta notes">{g.notes}</span>{/if}
               </div>
               <div class="row">
-                <button type="button" onclick={() => (editing = g)} disabled={!!busy}>Modifier</button>
+                <button type="button" onclick={() => (editing = g)} disabled={locked}>Modifier</button>
                 <a class="button" href="#/race/{g.id}">Jour J</a>
-                <button type="button" onclick={() => remove(g)} disabled={!!busy}>Retirer</button>
+                <button type="button" onclick={() => remove(g)} disabled={locked}>Retirer</button>
               </div>
             </li>
           {/each}
@@ -380,7 +385,7 @@
       </section>
     {:else if cycle}
       <div class="row end">
-        <button type="button" onclick={() => (editingSettings = true)}>Réglages du plan</button>
+        <button type="button" disabled={!loaded} onclick={() => (editingSettings = true)}>Réglages du plan</button>
       </div>
     {/if}
 

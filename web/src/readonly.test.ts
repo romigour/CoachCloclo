@@ -232,3 +232,40 @@ test("lecture seule : nouvelle connexion, les données de l'ancienne base ne ré
   await load("stats", async () => "nouvelle base", apply);
   expect(apply.mock.calls).toEqual([["nouvelle base"]]);
 });
+
+test("lecture seule : nouvelle connexion et état en échec, l'ancien état est oublié", async () => {
+  location.hash = "#/connection";
+  const status = vi.spyOn(api, "status").mockImplementation(async () => f.status);
+  render(App);
+  await fireEvent.click(await screen.findByRole("button", { name: "Modifier" }));
+  status.mockImplementation(() => Promise.reject(new ApiError("x", "Coupé", 503)));
+  await fireEvent.input(await screen.findByLabelText("URL de la base"), { target: { value: "libsql://y.turso.io" } });
+  await fireEvent.input(screen.getByLabelText("Jeton d'accès"), { target: { value: "tok" } });
+  await fireEvent.click(screen.getByRole("button", { name: "Valider" }));
+  await waitFor(() => expect(location.hash).not.toBe("#/connection"));
+  expect(location.hash).toBe("#/stats"); // l'ancien cycle accepté mènerait à #/week
+  status.mockRestore();
+});
+
+test("lecture seule : connexion effacée, une lecture d'état en vol ne restaure pas l'ancien état", async () => {
+  vi.spyOn(window, "confirm").mockReturnValue(true);
+  location.hash = "#/connection";
+  let answer: (s: typeof f.status) => void = () => {};
+  const status = vi.spyOn(api, "status").mockImplementation(() => new Promise((r) => (answer = r)));
+  render(App);
+  // la page attend la première lecture : elle répond, puis un sondage d'import reste en vol
+  const running = { ...f.status, history: { ...f.status.history, status: "running" } };
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  await waitFor(() => expect(status).toHaveBeenCalled());
+  answer(running);
+  const wipe = await screen.findByRole("button", { name: "Effacer" });
+  await vi.advanceTimersByTimeAsync(5100);
+  await fireEvent.click(wipe);
+  await screen.findByLabelText("URL de la base");
+  const asked = status.mock.calls.length;
+  answer(running);
+  await vi.advanceTimersByTimeAsync(6000); // un état restauré relancerait le sondage
+  expect(status.mock.calls.length).toBe(asked);
+  vi.useRealTimers();
+  status.mockRestore();
+});

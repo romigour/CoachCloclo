@@ -21,6 +21,7 @@ from coach.services.history import (
     save_state,
 )
 from coach.storage.lock import IMPORT_TTL, LOCK_MSG, GarminLocked, held_elsewhere, release, try_acquire
+from tests.sql_writes import recorded_writes
 
 
 def make_activities(n: int) -> list[ActivitySummary]:
@@ -115,8 +116,31 @@ def test_import_refreshes_records(repo, coach_home):
 def test_refresh_records_failure_keeps_table(repo, coach_home):
     repo.replace_records([PersonalRecord(kind="5k", value=1300.0)])
     garmin = FakeGarminClient(fail_on={"personal_records"})
-    assert refresh_records(repo, garmin) is False
+    assert refresh_records(repo, garmin) == "failed"
     assert [(r.kind, r.value) for r in repo.records()] == [("5k", 1300.0)]
+
+
+def test_changed_records_replaced(repo, coach_home):
+    """Records identiques (dans un autre ordre) : rien n'est écrit ; une différence : tout est remplacé."""
+    five = PersonalRecordSummary(kind="5k", value=1200.0, garmin_activity_id=3, date=date(2024, 5, 1))
+    ten = PersonalRecordSummary(kind="10k", value=2500.0)
+    assert refresh_records(repo, FakeGarminClient(personal_records=[five, ten])) == "replaced"
+    ids = [r.id for r in repo.records()]
+    with recorded_writes(repo.engine) as writes:
+        assert refresh_records(repo, FakeGarminClient(personal_records=[ten, five])) == "unchanged"
+    assert writes == [] and [r.id for r in repo.records()] == ids
+    for other in (
+        [five.model_copy(update={"value": 1199.0}), ten],
+        [five.model_copy(update={"date": date(2024, 5, 2)}), ten],
+        [five.model_copy(update={"garmin_activity_id": 4}), ten],
+        [five, five, ten],
+        [five],
+        [],
+    ):
+        repo.replace_records([PersonalRecord(**r.model_dump()) for r in (five, ten)])
+        assert refresh_records(repo, FakeGarminClient(personal_records=other)) == "replaced"
+        assert len(repo.records()) == len(other)
+    assert refresh_records(repo, FakeGarminClient()) == "unchanged"
 
 
 def test_state_defaults_when_missing_or_corrupt(repo):

@@ -4,10 +4,10 @@ from datetime import date, datetime, timedelta
 import pytest
 from sqlmodel import select
 
-from coach.garmin.port import ActivitySummary, FakeGarminClient, LapSummary, Metrics
+from coach.garmin.port import ActivitySummary, FakeGarminClient, LapSummary, Metrics, PersonalRecordSummary
 from coach.llm.provider import FakeLLMProvider, LLMUsageLimit
 from coach.llm.schemas import AdjustmentResponse, Change
-from coach.plan.models import Activity, Cycle, Event, Proposal, Session
+from coach.plan.models import Activity, AthleteSnapshot, Cycle, Event, Proposal, Session
 from coach.services.events import delete_event
 from tests.llm.factories import make_session
 from coach.services.sync import (
@@ -517,3 +517,140 @@ def test_sync_resend_failure_does_not_fail_sync(repo, coach_home):
     result = sync(repo, g, FakeLLMProvider([]), now=NOW)
     assert (result.resent, result.hr_rest) == (0, 47)
     assert repo.session(sid).status == "sync_error"
+
+
+# --- phases et changements ----------------------------------------------------------------------
+
+
+def _phases(repo, garmin, llm) -> list[str]:
+    phases: list[str] = []
+    sync(repo, garmin, llm, now=NOW, on_phase=phases.append)
+    return phases
+
+
+def test_sync_phases_in_order(repo, coach_home, fake_garmin, accepted_plan):
+    assert _phases(repo, fake_garmin, FakeLLMProvider([])) == ["garmin"]
+    _attach(repo, accepted_plan)
+    assert _phases(repo, fake_garmin, FakeLLMProvider([adjustment_json()])) == ["garmin", "claude"]
+
+
+def _quiet(repo, garmin) -> None:
+    """Première synchro : la suivante n'a plus rien de neuf à voir."""
+    sync(repo, garmin, FakeLLMProvider([]), now=NOW)
+
+
+def _changed(repo, garmin, llm=None) -> bool:
+    return sync(repo, garmin, llm or FakeLLMProvider([]), now=NOW + timedelta(hours=1)).changed
+
+
+def _snapshots(repo) -> list[AthleteSnapshot]:
+    with repo.transaction() as db:
+        return list(db.exec(select(AthleteSnapshot).order_by(AthleteSnapshot.id)))
+
+
+def test_nothing_new_is_not_changed(repo, coach_home, fake_garmin, accepted_plan):
+    _quiet(repo, fake_garmin)
+    assert _changed(repo, fake_garmin) is False
+    assert len(_snapshots(repo)) == 1
+
+
+def test_new_activity_sets_changed(repo, coach_home, fake_garmin, accepted_plan):
+    _quiet(repo, fake_garmin)
+    fake_garmin._activities.append(run_summary(garmin_id=2))
+    assert _changed(repo, fake_garmin) is True
+    assert _changed(repo, fake_garmin) is False
+
+
+def test_changed_hr_rest_adds_snapshot(repo, coach_home, fake_garmin, accepted_plan):
+    _quiet(repo, fake_garmin)
+    fake_garmin._metrics = METRICS.model_copy(update={"hr_rest": 49})
+    assert _changed(repo, fake_garmin) is True
+    assert [s.hr_rest for s in _snapshots(repo)] == [50, 49]
+
+
+def test_new_day_adds_snapshot(repo, coach_home, fake_garmin, accepted_plan):
+    _quiet(repo, fake_garmin)
+    fake_garmin._today = date(2026, 11, 5)
+    assert _changed(repo, fake_garmin) is True
+    assert [s.date for s in _snapshots(repo)] == [date(2026, 11, 4), date(2026, 11, 5)]
+
+
+def test_changed_records_set_changed(repo, coach_home, fake_garmin, accepted_plan):
+    _quiet(repo, fake_garmin)
+    fake_garmin._personal_records = [PersonalRecordSummary(kind="5k", value=1200.0)]
+    assert _changed(repo, fake_garmin) is True
+    assert _changed(repo, fake_garmin) is False
+    fake_garmin.fail_on = {"personal_records"}
+    assert _changed(repo, fake_garmin) is False
+
+
+def test_missed_session_sets_changed(repo, coach_home, fake_garmin, draft_plan):
+    fake_garmin._today = date(2026, 11, 8)  # dimanche
+    _quiet(repo, fake_garmin)
+    # instantané du lendemain déjà enregistré : seules les séances manquées changent
+    repo.add(AthleteSnapshot(**{**_snapshots(repo)[0].model_dump(exclude={"id"}), "date": date(2026, 11, 9)}))
+    fake_garmin._today = date(2026, 11, 9)
+    r = sync(repo, fake_garmin, FakeLLMProvider([]), now=NOW + timedelta(days=5))
+    assert r.missed == 3 and r.changed is True and len(_snapshots(repo)) == 2
+
+
+def test_proposal_sets_changed(repo, coach_home, fake_garmin, accepted_plan):
+    _quiet(repo, fake_garmin)
+    _attach(repo, accepted_plan)
+    # tours déjà récupérés : seule la proposition change
+    repo.save_laps(repo.activity_by_garmin_id(1).id, [])
+    assert _changed(repo, fake_garmin, FakeLLMProvider([adjustment_json()])) is True
+
+
+def test_fetched_laps_set_changed(repo, coach_home, fake_garmin, draft_plan):
+    _quiet(repo, fake_garmin)
+    _attach(repo, draft_plan)
+    fake_garmin.fail_on = {"activity_laps"}
+    assert _changed(repo, fake_garmin) is False
+    fake_garmin.fail_on = set()
+    assert _changed(repo, fake_garmin) is True
+    assert _changed(repo, fake_garmin) is False
+
+
+def test_closed_goal_sets_changed(repo, coach_home, fake_garmin, accepted_plan):
+    _quiet(repo, fake_garmin)
+    repo.add(make_goal(race_date=date(2026, 11, 3), priority="secondaire", distance_km=10))
+    assert _changed(repo, fake_garmin) is True
+    assert _changed(repo, fake_garmin) is False
+
+
+def test_closed_cycle_sets_changed(repo, coach_home, fake_garmin):
+    _quiet(repo, fake_garmin)
+    repo.add(make_cycle(plan_start=date(2026, 10, 19), end_date=date(2026, 11, 3)))  # sans objectif à clore
+    assert _changed(repo, fake_garmin) is True
+    assert _changed(repo, fake_garmin) is False
+
+
+def test_retried_removal_sets_changed(repo, coach_home, fake_garmin):
+    _quiet(repo, fake_garmin)
+    done = repo.add(make_cycle(plan_start=date(2026, 9, 7), end_date=date(2026, 11, 1), status="done"))
+    s = make_db_session(done.id, week_index=8, order=1)
+    s.status, s.sync_error, s.pending_removal = "sync_error", "Synchronisation Garmin en cours", True
+    s.pending_old_workout_id, s.pending_old_schedule_id = 700, 701
+    repo.add(s)
+    fake_garmin.fail_on = {"unschedule"}
+    assert _changed(repo, fake_garmin) is True  # le message d'erreur affiché change
+    assert _changed(repo, fake_garmin) is False  # même échec : rien de neuf
+    fake_garmin.fail_on = {"delete_workout"}
+    assert _changed(repo, fake_garmin) is True
+    fake_garmin.fail_on = set()
+    assert _changed(repo, fake_garmin) is True
+    assert _changed(repo, fake_garmin) is False
+
+
+@pytest.mark.parametrize("fails", [set(), {"upload_workout"}])
+def test_resend_sets_changed(repo, coach_home, fake_garmin, accepted_plan, fails):
+    """Une séance renvoyée à la montre, ou dont le renvoi échoue, est un changement visible."""
+    _quiet(repo, fake_garmin)
+    s = repo.sessions(accepted_plan.id, week_index=2)[0]
+    s.status, s.scheduled_date = "exported", date(2026, 11, 10)
+    s.garmin_workout_id, s.garmin_schedule_id = 800, 801
+    s.export_hr_zones_json = json.dumps({f"Z{i}": [20 * i, 20 * i + 20] for i in range(1, 6)})
+    repo.update(s)
+    fake_garmin.fail_on = fails
+    assert _changed(repo, fake_garmin) is True

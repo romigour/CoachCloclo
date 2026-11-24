@@ -267,23 +267,30 @@ def sync_marked(repo: Repo, garmin: GarminPort, session_ids: list[int], zones: Z
     return [sid for sid in session_ids if not _sync(repo, garmin, sid, zones, early=False)]
 
 
-def retry_pending_cleanup(repo: Repo, garmin: GarminPort, today: date) -> list[int]:
+def retry_pending_cleanup(repo: Repo, garmin: GarminPort, today: date) -> bool:
     """Relance, quel que soit leur cycle, les séances en `sync_error` qui ont encore quelque chose à
     retirer de la montre (retrait, ou anciens ids d'un remplacement) ; un remplacement dont la nouvelle
-    version reste à téléverser à une date passée est laissé à l'athlète. Renvoie les ids encore en erreur."""
+    version reste à téléverser à une date passée est laissé à l'athlète. Renvoie vrai si au moins une
+    séance a changé : reprise réussie, retrait avancé, ou autre message d'erreur."""
     with repo.transaction() as db:
         stmt = select(Session).where(Session.status == "sync_error").order_by(Session.id)
         candidates = list(db.exec(stmt))
-    ids = [
-        s.id
+    before = {
+        s.id: s.model_dump()
         for s in candidates
         if s.pending_removal
         or (
             (s.pending_old_schedule_id is not None or s.pending_old_workout_id is not None)
             and (s.garmin_schedule_id is not None or (s.scheduled_date is not None and s.scheduled_date >= today))
         )
-    ]
-    return sync_marked(repo, garmin, ids, None)
+    }
+    failed = sync_marked(repo, garmin, list(before), None)
+    if len(failed) < len(before):
+        return True
+    with repo.transaction() as db:
+        after = [db.get(Session, sid) for sid in failed]
+    # une séance supprimée entre-temps (autre requête) a changé elle aussi
+    return any(s is None or s.model_dump() != before[s.id] for s in after)
 
 
 def retry_sync_error(repo: Repo, garmin: GarminPort, session_id: int) -> None:

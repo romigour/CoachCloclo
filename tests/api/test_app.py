@@ -16,7 +16,15 @@ from coach.analysis.zones import Zones, compute_zones, hr_zones
 from coach.api.deps import hash_pin, valid_pin, verify_pin
 from coach.config import db_path, load_settings, save_settings
 from coach.version import app_version
-from coach.garmin.port import FakeGarminClient, GarminAuthRequired, GarminUnavailable, LapSummary, Metrics
+from coach.garmin.port import (
+    FakeGarminClient,
+    GarminAuthRequired,
+    GarminUnavailable,
+    LapSummary,
+    Metrics,
+    NightRest,
+    PersonalRecordSummary,
+)
 from coach.llm.provider import FakeLLMProvider, LLMError, LLMUsageLimit
 from coach.plan.models import Activity, AthleteSnapshot, LlmUsage, Race
 from coach.services.history import HistoryState, save_state
@@ -30,6 +38,7 @@ from coach.storage.libsql_dialect import remote_engine
 from coach.storage.source import LocalSource
 from tests.plan.factories import make_activity, make_cycle, make_db_session, zones_rest
 from tests.services.test_sync import adjustment_json
+from tests.sql_writes import recorded_writes
 from tests.storage.fake_hrana import FakeHrana
 
 FIXTURES = Path(__file__).parent.parent / "fixtures" / "gpx"
@@ -134,11 +143,26 @@ def test_post_goal_bad_target_time(make_client):
     assert _create_goal(make_client(), target_time="abc").status_code == 422
 
 
-def test_status_reports_auth_required(make_client):
-    r = make_client(garmin="auth").get("/api/status")
+def _count_garmin(client) -> list[int]:
+    """Compte les constructions de client Garmin par l'app."""
+    calls: list[int] = []
+    inner = client.app.state.garmin_factory
+
+    def factory():
+        calls.append(1)
+        return inner()
+
+    client.app.state.garmin_factory = factory
+    return calls
+
+
+def test_status_does_not_build_garmin(make_client):
+    client = make_client(garmin="down")
+    calls = _count_garmin(client)
+    r = client.get("/api/status")
     assert r.status_code == 200
     body = r.json()
-    assert body["garmin"] == "auth_required"
+    assert calls == [] and "garmin" not in body
     assert body["cycle"] is None and body["next_goal"] is None and body["goals"] == []
     assert body["pending_proposal_id"] is None
     assert body["llm_mode"] == "cli"
@@ -424,7 +448,7 @@ def test_export_and_unschedule(make_client, fake_garmin):
 def test_sync_returns_result(make_client):
     r = make_client().post("/api/sync")
     assert r.status_code == 200
-    assert r.json() == {"new_activities": 0, "missed": 0, "proposal_id": None, "resent": 0, "hr_rest": 50}
+    assert r.json() == {"new_activities": 0, "missed": 0, "proposal_id": None, "resent": 0, "hr_rest": 50, "changed": True}
 
 
 def test_manual_match(make_client, repo):
@@ -1042,15 +1066,145 @@ def test_gpx_too_large(make_client):
     assert r.status_code == 413 and r.json()["code"] == "too_large"
 
 
-def test_status_garmin_unavailable(make_client):
-    from coach.garmin.port import GarminUnavailable
+@pytest.mark.parametrize("garmin,state", [(None, "ok"), ("auth", "auth_required"), ("down", "unavailable")])
+def test_garmin_state_route(make_client, garmin, state):
+    r = make_client(garmin=garmin).get("/api/garmin/state")
+    assert r.status_code == 200 and r.json() == {"garmin": state}
 
-    def boom():
-        raise GarminUnavailable("down")
 
+# --- phase de la synchro -------------------------------------------------------------------------
+
+
+def _phase(client):
+    return client.get("/api/sync/phase").json()["phase"]
+
+
+def test_phase_and_garmin_state_never_touch_db(make_client, repo):
     client = make_client()
-    client.app.state.garmin_factory = boom
-    assert client.get("/api/status").json()["garmin"] == "unavailable"
+
+    @event.listens_for(repo.engine, "before_cursor_execute")
+    def interdit(*args):
+        raise AssertionError("lecture de la base")
+
+    try:
+        assert client.get("/api/sync/phase").json() == {"phase": None}
+        assert client.get("/api/garmin/state").json() == {"garmin": "ok"}
+    finally:
+        event.remove(repo.engine, "before_cursor_execute", interdit)
+
+
+def test_phase_without_db(storage_client, cloud):
+    _start_in_cloud_mode(cloud, CloudUnreachable("Base cloud injoignable"))
+    client = storage_client()
+    client.now[0] += 60  # un nouvel essai d'ouverture serait permis
+    opened = len(cloud.opened)
+    r = client.get("/api/sync/phase")
+    assert r.status_code == 200 and r.json() == {"phase": None}
+    assert client.get("/api/garmin/state").json() == {"garmin": "ok"}
+    assert len(cloud.opened) == opened  # base ni lue ni rouverte
+    # le préfixe de la phase ne dispense pas la synchro elle-même de la base
+    assert client.post("/api/sync").status_code == 503
+    status = client.get("/api/status").json()
+    assert status["storage"]["code"] == "cloud_unreachable" and "garmin" not in status
+
+
+class PhaseGarmin(FakeGarminClient):
+    """Note la phase annoncée par l'API pendant la lecture des métriques, puis échoue si demandé."""
+
+    def __init__(self, fail: bool = False):
+        super().__init__(metrics=METRICS)
+        self.client = None
+        self.fail = fail
+        self.seen: list = []
+
+    def metrics(self):
+        self.seen.append(_phase(self.client))
+        if self.fail:
+            raise GarminUnavailable("hors ligne")
+        return super().metrics()
+
+
+def test_phase_during_sync(make_client):
+    garmin = PhaseGarmin()
+    client = garmin.client = make_client(garmin=garmin)
+    assert _phase(client) is None
+    assert client.post("/api/sync").status_code == 200
+    assert garmin.seen == ["garmin"] and _phase(client) is None
+
+
+def test_phase_is_claude_during_proposal(make_client, repo):
+    from tests.services.test_sync import _attach, _cycle_with_sessions
+
+    seen = []
+
+    class PhaseLLM:
+        def complete(self, system, prompt):
+            seen.append(_phase(client))
+            return adjustment_json()
+
+    _attach(repo, _cycle_with_sessions(repo, True))
+    client = make_client(llm=PhaseLLM())
+    assert client.post("/api/sync").json()["proposal_id"] is not None
+    assert seen == ["claude"] and _phase(client) is None
+
+
+def test_phase_reset_after_error(make_client):
+    garmin = PhaseGarmin(fail=True)
+    client = garmin.client = make_client(garmin=garmin)
+    assert client.post("/api/sync").status_code == 502
+    assert garmin.seen == ["garmin"] and _phase(client) is None
+
+
+def test_rejected_sync_keeps_running_phase(make_client):
+    """Une seconde synchro refusée (409) ne touche pas à la phase de celle en cours."""
+
+    class Overlap(PhaseGarmin):
+        def metrics(self):
+            self.second = self.client.post("/api/sync").status_code
+            return super().metrics()
+
+    garmin = Overlap()
+    client = garmin.client = make_client(garmin=garmin)
+    assert client.post("/api/sync").status_code == 200
+    assert garmin.second == 409
+    assert garmin.seen == ["garmin"] and _phase(client) is None
+
+
+def test_no_phase_while_other_garmin_work_runs(make_client):
+    client = make_client()
+    busy = client.app.state.garmin_work
+    assert busy.acquire(blocking=False)
+    try:
+        assert client.post("/api/sync").status_code == 409
+        assert _phase(client) is None
+    finally:
+        busy.release()
+
+
+def test_second_sync_writes_only_state_and_lock(make_client, repo):
+    from tests.services.test_sync import _attach, _cycle_with_sessions, run_summary
+
+    garmin = FakeGarminClient(
+        metrics=METRICS,
+        activities=[run_summary()],
+        personal_records=[
+            PersonalRecordSummary(kind="5k", value=1200.0, garmin_activity_id=1, date=date(2024, 5, 1)),
+            PersonalRecordSummary(kind="longest_run", value=21100.0),
+        ],
+        nights={date(2026, 11, d): NightRest(hr_rest=48, slept=True) for d in (1, 2, 3, 4)},
+        laps={1: [LapSummary(index=0, duration_s=600, distance_m=1800)]},
+    )
+    _attach(repo, _cycle_with_sessions(repo, True))
+    llm = FakeLLMProvider([adjustment_json()])
+    client = make_client(garmin=garmin, llm=llm)
+    assert client.post("/api/sync").json()["changed"] is True
+    assert len(llm.calls) == 1
+    with recorded_writes(repo.engine) as writes:
+        r = client.post("/api/sync")
+    assert r.json()["changed"] is False and len(llm.calls) == 1
+    assert {t for t, _ in writes} == {"appstate", "garminlock"}
+    state_writes = [p for t, p in writes if t == "appstate"]
+    assert len(state_writes) == 1 and "sync" in state_writes[0]
 
 
 def test_wrong_garmin_password(make_client):

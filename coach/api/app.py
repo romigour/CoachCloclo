@@ -131,6 +131,7 @@ NO_DB_PATHS = (
     "/api/diagnostics",
     "/api/logs/",
     "/api/garmin/",
+    "/api/sync/phase",  # pas « /api/sync » : la synchro, elle, a besoin de la base
     "/api/setup/",
     "/api/update",
     "/api/lan",
@@ -519,6 +520,8 @@ def create_app(
     # synchro, saisie de la FC repos et application d'une proposition réécrivent les workouts Garmin :
     # une seule à la fois sur ce PC (le verrou garmin_lock est réentrant pour un même PC)
     app.state.garmin_work = threading.Lock()
+    # phase de la synchro en cours (« garmin », « claude »), écrite par elle seule sous `garmin_work`
+    app.state.sync_phase = None
     _register_errors(app)
 
     def get_repo(request: Request) -> Repo:
@@ -593,13 +596,11 @@ def create_app(
 
     @api.get("/status")
     def status():
-        garmin = garmin_state(app.state.garmin_factory)
         retry_storage()
         repo: Repo | None = app.state.repo
         if repo is None:  # base cloud indisponible : statut minimal, l'erreur pour le bandeau
             _, code, detail = app.state.storage_error
             return {
-                "garmin": garmin,
                 "llm_mode": load_settings().llm_mode,
                 "pending_proposal_id": None,
                 "cycle": None,
@@ -632,7 +633,6 @@ def create_app(
         # le thread peut ne pas avoir encore écrit son état : le runner fait foi
         history_status = "running" if app.state.history.running else history.status
         return {
-            "garmin": garmin,
             "llm_mode": load_settings().llm_mode,
             "pending_proposal_id": proposal.id if proposal else None,
             "cycle": _cycle_dict(cycle) if cycle else None,
@@ -679,6 +679,11 @@ def create_app(
 
     def _login_refused() -> JSONResponse:
         return _error(401, "garmin_login_failed", "Identifiants Garmin refusés")
+
+    @api.get("/garmin/state")
+    def get_garmin_state():
+        """État de la connexion Garmin (construit un client) ; ne lit jamais la base."""
+        return {"garmin": garmin_state(app.state.garmin_factory)}
 
     @api.post("/garmin/login")
     def garmin_login(body: LoginBody):
@@ -1008,14 +1013,24 @@ def create_app(
                 fetch_laps(repo, garmin, repo.activity(activity_id))
         return {"status": "ok"}
 
+    @api.get("/sync/phase")
+    def get_sync_phase():
+        """Phase de la synchro en cours sur ce PC, `null` sinon ; ne lit jamais la base."""
+        return {"phase": app.state.sync_phase}
+
     @api.post("/sync")
     def post_sync(repo: RepoDep, garmin: GarminDep, llm: LLMDep):
+        def set_phase(phase: str) -> None:
+            app.state.sync_phase = phase
+
         if not app.state.garmin_work.acquire(blocking=False):
             return _error(409, "sync_running", SYNC_RUNNING_MSG)
         try:
             with garmin_lock(repo, holder, SYNC_TTL):
-                result = sync(repo, garmin, llm, now=datetime.now(timezone.utc))
+                result = sync(repo, garmin, llm, now=datetime.now(timezone.utc), on_phase=set_phase)
         finally:
+            # avant de rendre `garmin_work` : la synchro suivante pose sa propre phase
+            app.state.sync_phase = None
             app.state.garmin_work.release()
         if load_state(repo).status == "idle":  # premier lancement : import de l'historique complet
             app.state.history.start()

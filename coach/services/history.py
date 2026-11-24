@@ -3,6 +3,7 @@
 import logging
 import threading
 import time
+from collections import Counter
 from collections.abc import Callable
 from datetime import datetime, timezone
 from typing import Literal
@@ -14,6 +15,7 @@ from coach.garmin.port import (
     GarminPort,
     GarminRateLimited,
     GarminUnavailable,
+    PersonalRecordSummary,
 )
 from coach.plan.models import PersonalRecord
 from coach.plan.repo import Repo
@@ -76,19 +78,27 @@ def recover_orphan(repo: Repo, holder: str | None = None) -> None:
         save_state(repo, state)
 
 
-def refresh_records(repo: Repo, garmin: GarminPort) -> bool:
-    """Remplace les records personnels ; en cas d'échec Garmin, ne touche à rien."""
+def _record_key(r: PersonalRecord | PersonalRecordSummary) -> tuple:
+    return r.kind, r.value, r.garmin_activity_id, r.date
+
+
+def refresh_records(repo: Repo, garmin: GarminPort) -> Literal["failed", "unchanged", "replaced"]:
+    """Remplace les records personnels s'ils ont changé (ordre indifférent) ; en cas d'échec Garmin,
+    ne touche à rien."""
     try:
         summaries = garmin.personal_records()
     except (GarminUnavailable, GarminRateLimited, GarminAuthRequired):
-        return False
+        return "failed"
+    # multi-ensemble : un doublon en plus ou en moins est un changement
+    if Counter(map(_record_key, summaries)) == Counter(map(_record_key, repo.records())):
+        return "unchanged"
     repo.replace_records(
         [
             PersonalRecord(kind=r.kind, value=r.value, garmin_activity_id=r.garmin_activity_id, date=r.date)
             for r in summaries
         ]
     )
-    return True
+    return "replaced"
 
 
 def _error_message(exc: Exception) -> str:

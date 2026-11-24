@@ -2,6 +2,7 @@
 
 import json
 from datetime import date, timedelta
+from typing import Literal
 
 from pydantic import Field
 from sqlmodel import Session as DbSession
@@ -25,19 +26,22 @@ class NextCycleInput(PlanSettingsUpdate):
     sessions_per_week: int | None = Field(None, ge=2, le=7)
 
 
-def close_passed(repo: Repo, today: date) -> bool:
+def close_passed(repo: Repo, today: date) -> Literal["nothing", "goals", "cycle"]:
     """Objectifs à venir dont la date est passée → `done` ; cycle actif terminé → `done`, et ses
-    propositions en attente → `stale`. Les séances restent (historique). Renvoie True si le cycle a été clos."""
-    closed = False
+    propositions en attente → `stale`. Les séances restent (historique).
+
+    Renvoie "cycle" si le cycle a été clos, "goals" si seul un objectif l'a été, sinon "nothing"."""
+    closed: Literal["nothing", "goals", "cycle"] = "nothing"
     with repo.transaction() as db:
         for g in db.exec(select(Goal).where(Goal.status == "active", Goal.race_date < today)).all():
             g.status = "done"
             db.add(g)
+            closed = "goals"
         for c in db.exec(select(Cycle).where(Cycle.status == "active", Cycle.end_date < today)).all():
             c.status = "done"
             db.add(c)
-            closed = True
-        if closed:
+            closed = "cycle"
+        if closed == "cycle":
             stale_pending(db)
     return closed
 

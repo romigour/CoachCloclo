@@ -20,6 +20,7 @@ from coach.services.rest_hr import (
     save_manual,
 )
 from tests.plan.factories import make_cycle, make_db_session, zones_rest
+from tests.sql_writes import recorded_writes
 
 T = date(2026, 11, 23)
 METRICS = Metrics(hr_max=182, hr_rest=55, threshold_pace_s_km=300)
@@ -89,6 +90,46 @@ def test_nights_cached_then_only_today_yesterday_and_recent_empty_reread(repo):
     refresh_nights(repo, g)
     # T-2 portée reste en cache ; T-3 et T-4 sans FC sont relues ; au-delà, plus rien
     assert sorted(g.night_calls) == [T - timedelta(days=i) for i in (4, 3, 1, 0)]
+
+
+def test_nights_not_rewritten_when_equal(repo):
+    g = fake(THREE_WORN_NIGHTS)
+    refresh_nights(repo, g)
+    # même contenu dans un autre ordre : toujours rien à écrire
+    repo.set_state(NIGHTS_KEY, dict(reversed(repo.get_state(NIGHTS_KEY).items())))
+    with recorded_writes(repo.engine) as writes:
+        refresh_nights(repo, g)
+    assert writes == []
+    g._nights[T] = NightRest(hr_rest=51, slept=True)
+    with recorded_writes(repo.engine) as writes:
+        refresh_nights(repo, g)
+    assert [t for t, _ in writes] == ["appstate"]
+    assert repo.get_state(NIGHTS_KEY)[T.isoformat()] == {"hr_rest": 51, "slept": True}
+
+
+def test_identical_snapshot_reused(repo):
+    """Même instantané le même jour : l'existant est renvoyé, utilisable hors session."""
+    first, zones = refresh_snapshot(repo, fake(THREE_WORN_NIGHTS))
+    with recorded_writes(repo.engine) as writes:
+        again, again_zones = refresh_snapshot(repo, fake(THREE_WORN_NIGHTS))
+    assert writes == [] and again_zones == zones
+    assert again.model_dump() == first.model_dump()
+
+
+def test_snapshot_back_to_previous_value_added(repo):
+    """A puis B puis A le même jour : la comparaison ne porte que sur le dernier instantané."""
+    ids = []
+    for manual in (44, 45, 44):
+        save_manual(repo, manual)
+        ids.append(refresh_snapshot(repo, fake({}))[0].id)
+    assert len(set(ids)) == 3
+
+
+def test_zones_key_order_is_not_a_change(repo):
+    first, _ = refresh_snapshot(repo, fake({}))
+    first.zones_json = json.dumps(dict(reversed(json.loads(first.zones_json).items())))
+    repo.update(first)
+    assert refresh_snapshot(repo, fake({}))[0].id == first.id
 
 
 def test_refresh_nights_returns_window_records(repo):

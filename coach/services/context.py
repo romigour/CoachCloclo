@@ -1,5 +1,6 @@
 """Contexte athlète : instantané des métriques Garmin et historique récent."""
 
+import json
 from datetime import date, timedelta
 
 from coach.analysis.long_history import MONTHS, LongHistory, kept_records, monthly_volume, past_races, window_start
@@ -27,8 +28,31 @@ def zones_from_metrics(m: Metrics) -> Zones:
         raise CoachError(f"{exc} : synchronise ta montre avec Garmin Connect") from exc
 
 
+def _same_snapshot(a: AthleteSnapshot, b: AthleteSnapshot) -> bool:
+    """Mêmes champs, hors `id` ; l'ordre des clés du JSON des zones ne compte pas."""
+
+    def content(s: AthleteSnapshot) -> dict:
+        fields = s.model_dump(exclude={"id"})
+        try:
+            fields["zones_json"] = json.loads(s.zones_json)
+        except ValueError:
+            pass  # JSON illisible : comparé tel quel
+        return fields
+
+    return content(a) == content(b)
+
+
 def refresh_snapshot(repo: Repo, garmin: GarminPort) -> tuple[AthleteSnapshot, Zones]:
-    """Lit les métriques Garmin, calcule les zones et enregistre un instantané.
+    """Instantané à jour des métriques Garmin et ses zones (voir `update_snapshot`)."""
+    snapshot, zones, _ = update_snapshot(repo, garmin)
+    return snapshot, zones
+
+
+def update_snapshot(repo: Repo, garmin: GarminPort) -> tuple[AthleteSnapshot, Zones, bool]:
+    """Lit les métriques Garmin, calcule les zones et enregistre un instantané s'il diffère du dernier.
+
+    Renvoie l'instantané (le dernier enregistré s'il est identique, date comprise), les zones, et vrai
+    si un instantané a été ajouté.
 
     La FC repos vient de la saisie manuelle, sinon de la moyenne des nuits portées, sinon de la
     dernière moyenne enregistrée, sinon de Garmin ; sa provenance est enregistrée avec l'instantané.
@@ -37,26 +61,26 @@ def refresh_snapshot(repo: Repo, garmin: GarminPort) -> tuple[AthleteSnapshot, Z
     nights = refresh_nights(repo, garmin)
     rest = resolve_rest_hr(repo, nights, garmin.today(), m.hr_rest)
     hr_rest = rest.value
+    last = repo.latest_snapshot()
     if hr_rest is None:
         # FC repos pas encore remontée aujourd'hui : on garde la dernière connue plutôt que d'échouer.
-        last = repo.latest_snapshot()
         hr_rest = last.hr_rest if last else None
     m = m.model_copy(update={"hr_rest": hr_rest})
     zones = zones_from_metrics(m)
-    snapshot = repo.add(
-        AthleteSnapshot(
-            date=garmin.today(),
-            vo2max=m.vo2max,
-            hr_max=m.hr_max,
-            hr_rest=m.hr_rest,
-            threshold_hr=m.threshold_hr,
-            threshold_pace_s_km=m.threshold_pace_s_km,
-            zones_json=zones.model_dump_json(),
-            hr_rest_source=rest.source,
-            hr_rest_nights=rest.nights,
-        )
+    snapshot = AthleteSnapshot(
+        date=garmin.today(),
+        vo2max=m.vo2max,
+        hr_max=m.hr_max,
+        hr_rest=m.hr_rest,
+        threshold_hr=m.threshold_hr,
+        threshold_pace_s_km=m.threshold_pace_s_km,
+        zones_json=zones.model_dump_json(),
+        hr_rest_source=rest.source,
+        hr_rest_nights=rest.nights,
     )
-    return snapshot, zones
+    if last is not None and _same_snapshot(snapshot, last):
+        return last, zones, False
+    return repo.add(snapshot), zones, True
 
 
 def load_constraints(repo: Repo, cycle: Cycle, today: date, goals: list[Goal] | None = None) -> PlanConstraints:

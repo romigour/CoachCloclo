@@ -38,7 +38,7 @@ SCENARIOS = ("active", "between")
 CREATED = datetime(2026, 3, 1, 8, 0, 0, tzinfo=timezone.utc)
 METRICS = Metrics(hr_max=190, hr_rest=50, threshold_pace_s_km=300)
 # clés propres au bureau, absentes de la version mobile
-DESKTOP_STATUS_KEYS = ("garmin", "llm_mode", "storage")
+DESKTOP_STATUS_KEYS = ("llm_mode", "storage")
 
 
 def _step(kind: str, zone: str, **length) -> dict:

@@ -49,7 +49,8 @@ def refresh_nights(repo: Repo, garmin: GarminPort) -> list[NightRecord]:
     et les nuits sans FC des `RECHECK_DAYS` derniers jours (montre synchronisée en retard).
     Un jour où Garmin est indisponible est sauté, sans être mis en cache ; si Garmin limite les appels,
     la lecture des nuits s'arrête pour cette synchro (jours restants relus à la suivante).
-    GarminAuthRequired remonte. Le cache ne garde que les jours de la fenêtre.
+    GarminAuthRequired remonte. Le cache ne garde que les jours de la fenêtre ; il n'est réécrit que
+    s'il a changé.
     """
     today = garmin.today()
     days = [today - timedelta(days=i) for i in range(WINDOW_DAYS)]
@@ -67,7 +68,8 @@ def refresh_nights(repo: Repo, garmin: GarminPort) -> list[NightRecord]:
         except GarminUnavailable:
             continue  # jour sauté : relu à la prochaine synchro
         cache[key] = {"hr_rest": night.hr_rest, "slept": night.slept}
-    repo.set_state(NIGHTS_KEY, cache)
+    if cache != old:
+        repo.set_state(NIGHTS_KEY, cache)
     return _records(cache)
 
 

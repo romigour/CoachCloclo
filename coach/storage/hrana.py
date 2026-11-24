@@ -9,6 +9,7 @@ Le jeton ne figure jamais dans un message, une représentation ou un journal.
 import base64
 import math
 import re
+import threading
 from collections.abc import Callable, Iterable, Iterator, Sequence
 from typing import Any, NamedTuple
 
@@ -27,7 +28,8 @@ class Warning(Exception):  # noqa: A001  (nom imposé par la PEP 249)
 
 
 class Error(Exception):
-    pass
+    # vrai si l'erreur n'annule que sa requête, la transaction restant ouverte
+    statement_only = False
 
 
 class InterfaceError(Error):
@@ -83,15 +85,72 @@ _EXPIRED = ("STREAM_EXPIRED", "TRANSACTION_TIMEOUT", "BATON")
 # Toute autre (SQLITE_BUSY, SQLITE_FULL, délai dépassé…) a pu l'annuler.
 _STATEMENT_ONLY = ("SQLITE_CONSTRAINT", "SQL_", "ARGS_")
 _SLICE_BYTES = 1_000_000
+_TIMEOUT = 30
+_LIMITS = httpx.Limits(max_connections=20, max_keepalive_connections=20, keepalive_expiry=300)
+
+
+class _Pool:
+    """Jeu de connexions HTTP et nombre de requêtes en cours dessus."""
+
+    def __init__(self, client: httpx.Client) -> None:
+        self.client = client
+        self.users = 0
+
+
+class RenewableClient(httpx.Client):
+    """Client partagé dont le jeu de connexions se remplace quand l'une d'elles est morte.
+
+    Après une veille, toutes le sont souvent sans que `httpx` le sache. L'ancien jeu n'est fermé
+    qu'à la fin de ses requêtes en cours : celles des autres fils ne sont pas coupées.
+    """
+
+    def __init__(self) -> None:
+        # Les requêtes partent toutes par `pool` : le transport hérité ne sert pas.
+        super().__init__(transport=httpx.BaseTransport(), timeout=_TIMEOUT)
+        self._ssl = httpx.create_ssl_context()
+        self._lock = threading.Lock()
+        self.pool = self._new_pool()
+
+    def _new_pool(self) -> _Pool:
+        return _Pool(httpx.Client(verify=self._ssl, timeout=_TIMEOUT, limits=_LIMITS))
+
+    def send(self, request: httpx.Request, **kwargs) -> httpx.Response:
+        with self._lock:
+            pool = self.pool
+            pool.users += 1
+        try:
+            return pool.client.send(request, **kwargs)
+        finally:
+            with self._lock:
+                pool.users -= 1
+                finished = pool is not self.pool and pool.users == 0
+            if finished:
+                pool.client.close()
+
+    def renew(self, failed: _Pool) -> None:
+        """Remplace `failed`, sauf si un autre fil l'a déjà fait ou si le client est fermé."""
+        with self._lock:
+            if self.pool is not failed or self.is_closed:
+                return
+            self.pool = self._new_pool()
+            finished = failed.users == 0
+        if finished:
+            failed.client.close()
+
+    def close(self) -> None:
+        with self._lock:
+            super().close()
+        self.pool.client.close()
+
+    def __exit__(self, *exc_info) -> None:
+        self.close()
 
 
 def make_client(transport: httpx.BaseTransport | None = None) -> httpx.Client:
-    """Client HTTP à partager entre les connexions."""
-    return httpx.Client(
-        transport=transport,
-        timeout=30,
-        limits=httpx.Limits(max_connections=20, max_keepalive_connections=20, keepalive_expiry=300),
-    )
+    """Client HTTP à partager entre les connexions (`transport` : pour les tests)."""
+    if transport is not None:
+        return httpx.Client(transport=transport, timeout=_TIMEOUT)
+    return RenewableClient()
 
 
 def connect(base_url: str, *, auth_token: str, client: httpx.Client) -> "Connection":
@@ -162,7 +221,8 @@ class Connection:
     def prefetch(self, sqls: list[str]) -> None:
         """Exécute ces lectures sans paramètre en un envoi ; `execute` du même texte les consomme une fois.
 
-        Une lecture en erreur n'est pas gardée : elle échouera à son `execute`.
+        Une lecture en erreur n'est pas gardée : elle échouera à son `execute`, sauf si l'erreur a pu
+        annuler la transaction en cours (levée aussitôt).
         """
         self._check_usable()
         if not all(_is_read(sql) for sql in sqls):
@@ -172,7 +232,16 @@ class Connection:
             return
         batch = {"type": "batch", "batch": {"steps": [{"stmt": _stmt(sql)} for sql in sqls]}}
         body = self._send_read(batch, replay=all(_is_replayable(sql) for sql in sqls))
-        results, _ = self._parsed(lambda: _steps(_response(body, 0, "batch"), len(sqls)))
+        in_stream = self._baton is not None or self._failed
+
+        def parse() -> list:
+            results, errors = _steps(_response(body, 0, "batch"), len(sqls))
+            for error in errors:
+                if in_stream and error is not None and not (exc := _sql_error(error)).statement_only:
+                    raise exc  # la transaction a pu être annulée
+            return results
+
+        results = self._parsed(parse)
         self._prefetched.update((sql, _result(r)) for sql, r in zip(sqls, results, strict=True) if r is not None)
 
     # --- exécution -------------------------------------------------------------------------------
@@ -213,10 +282,14 @@ class Connection:
         del steps[0]["condition"]
         body = self._send_in_stream([{"type": "batch", "batch": {"steps": steps}}])
 
+        # Tant que BEGIN n'est pas confirmé, pas de transaction : rien ne doit s'exécuter hors d'elle.
+        stream_lost = self._failed
+        self._failed = stream_lost or opening
+
         def parse() -> list[_Result]:
             results, errors = _steps(_response(body, 0, "batch"), len(stmts))
-            if opening and errors[0] is not None:
-                self._failed = True  # pas de transaction : ne rien exécuter hors de BEGIN
+            if opening and results[0] is not None:
+                self._failed = stream_lost
             for error in errors:
                 if error is not None:
                     raise _sql_error(error)
@@ -251,7 +324,7 @@ class Connection:
                 raise CloudNetworkError("Transaction fermée par la base distante")
             return result
         except Error as e:
-            if in_stream and not getattr(e, "statement_only", False):
+            if in_stream and not e.statement_only:
                 self._failed = True
             raise
 
@@ -279,9 +352,13 @@ class Connection:
         return body
 
     def _post(self, url: str, request: dict) -> tuple[httpx.Response | None, Exception | None]:
+        client = self._client
+        pool = client.pool if isinstance(client, RenewableClient) else None
         try:
-            return self._client.post(url, json=request, headers=self._headers), None
+            return client.post(url, json=request, headers=self._headers), None
         except (httpx.HTTPError, httpx.InvalidURL) as e:
+            if pool is not None and isinstance(e, _REPLAYABLE):
+                client.renew(pool)  # le rejeu, et tout envoi suivant, part sur une connexion neuve
             return None, e
 
 

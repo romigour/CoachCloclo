@@ -250,6 +250,55 @@ def test_refused_begin_blocks_transaction():
     assert len(sends) == 1
 
 
+@pytest.mark.parametrize("code", ["SQL_PARSE_ERROR", "SQLITE_ERROR", "ARGS_INVALID", "SQLITE_CONSTRAINT"])
+def test_opening_batch_refused_as_a_whole_blocks_transaction(code):
+    """Erreur de pipeline avec un jeton de flux : BEGIN n'a pas tourné, rien ne doit suivre."""
+    sends = []
+
+    def handler(request):
+        sends.append(request)
+        entry = {"type": "error", "error": {"message": "x", "code": code}}
+        return httpx.Response(200, json={"baton": "b", "base_url": None, "results": [entry]})
+
+    conn = _served(handler)
+    for _ in range(2):
+        with pytest.raises(hrana.DatabaseError):
+            conn.cursor().execute("DELETE FROM t")
+    with pytest.raises(hrana.DatabaseError):
+        conn.commit()
+    assert len(sends) == 1
+
+
+@pytest.mark.parametrize(
+    ("code", "error"),
+    [("TRANSACTION_TIMEOUT", hrana.CloudNetworkError), ("SQLITE_IOERR", hrana.DatabaseError), ("SQLITE_ERROR", None)],
+)
+def test_prefetch_abort_blocks_transaction(code, error):
+    """Une lecture préchargée dont l'erreur a pu annuler la transaction la bloque ; les autres, non."""
+    step_errors = [None, {"message": "x", "code": code}]
+    result = {"step_results": [OK_RESULT, None], "step_errors": step_errors}
+    replies = iter(
+        [
+            OK_FIRST_WRITE,
+            {"type": "ok", "response": {"type": "batch", "result": result}},
+            {"type": "ok", "response": {"type": "execute", "result": OK_RESULT}},
+        ]
+    )
+    conn = _served(lambda r: httpx.Response(200, json={"baton": "b", "base_url": None, "results": [next(replies)]}))
+    conn.cursor().execute("DELETE FROM t")
+    if error is None:
+        conn.prefetch(["SELECT 1", "SELECT 2"])
+        conn.cursor().execute("DELETE FROM t")
+        return
+    with pytest.raises(error):
+        conn.prefetch(["SELECT 1", "SELECT 2"])
+    with pytest.raises(hrana.DatabaseError):
+        conn.cursor().execute("DELETE FROM t")
+    with pytest.raises(hrana.DatabaseError):
+        conn.commit()
+    assert len(list(replies)) == 1  # rien n'est parti après l'erreur
+
+
 @pytest.mark.parametrize("sql", ["BEGIN", "COMMIT", "end", "ROLLBACK"])
 def test_explicit_transaction_control_refused(conn, fake, sql):
     with pytest.raises(hrana.ProgrammingError):
@@ -511,17 +560,26 @@ def test_network_error_does_not_chain_httpx_error(conn, fake):
     assert e.value.__cause__ is None
 
 
-class _DropSecond(BaseHTTPRequestHandler):
-    """Vrai serveur : coupe la connexion gardée ouverte à la 2e requête, sans répondre."""
+class _Handler(BaseHTTPRequestHandler):
+    """Vrai serveur : coupe sans répondre, à leur requête suivante, les connexions d'avant `cut()`."""
 
     protocol_version = "HTTP/1.1"
 
+    def setup(self):
+        super().setup()
+        self.epoch = self.server.epoch
+
     def do_POST(self):
-        self.rfile.read(int(self.headers["Content-Length"]))
+        body = self.rfile.read(int(self.headers["Content-Length"]))
         self.server.received += 1
-        if self.server.received == 2:
+        if b"lent" in body:
+            self.server.slow_started.set()
+            self.server.release.wait(5)
+        elif self.epoch < self.server.epoch:
             self.close_connection = True
             return
+        elif self.server.barrier is not None:
+            self.server.barrier.wait(5)
         result = (
             b'{"baton":null,"base_url":null,"results":[{"type":"ok","response":{"type":"execute","result":'
             b'{"cols":[{"name":"1"}],"rows":[[{"type":"integer","value":"1"}]],"affected_row_count":0,'
@@ -536,24 +594,114 @@ class _DropSecond(BaseHTTPRequestHandler):
         pass
 
 
-def test_real_http_dead_keepalive_and_debug_logs(caplog):
-    caplog.set_level(logging.DEBUG)
-    server = ThreadingHTTPServer(("127.0.0.1", 0), _DropSecond)
-    server.received = 0
+class _RealServer(ThreadingHTTPServer):
+    daemon_threads = True
+
+    def __init__(self):
+        super().__init__(("127.0.0.1", 0), _Handler)
+        self.received = self.epoch = 0
+        self.barrier = None
+        self.slow_started, self.release = threading.Event(), threading.Event()
+
+    def connect(self, client):
+        return hrana.connect(f"http://127.0.0.1:{self.server_port}", auth_token=TOKEN, client=client)
+
+    def cut(self):
+        self.epoch += 1
+
+
+@pytest.fixture
+def real():
+    server = _RealServer()
     thread = threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True)
     thread.start()
-    try:
-        with hrana.make_client() as client:
-            conn = hrana.connect(f"http://127.0.0.1:{server.server_port}", auth_token=TOKEN, client=client)
-            assert conn.cursor().execute("SELECT 1").fetchall() == [(1,)]
-            assert conn.cursor().execute("SELECT 1").fetchall() == [(1,)]
-    finally:
-        server.shutdown()
-        server.server_close()
-        thread.join()
-    assert server.received == 3
+    yield server
+    server.shutdown()
+    server.server_close()
+    thread.join()
+
+
+def _open_sockets(server, client, count):
+    """Laisse `count` connexions HTTP ouvertes et inactives dans le client."""
+    server.barrier = threading.Barrier(count)
+    threads = [
+        threading.Thread(target=lambda: server.connect(client).cursor().execute("SELECT 1")) for _ in range(count)
+    ]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    server.barrier = None
+    assert server.received == count
+
+
+def test_real_http_dead_keepalive_and_debug_logs(real, caplog):
+    caplog.set_level(logging.DEBUG)
+    with hrana.make_client() as client:
+        _open_sockets(real, client, 3)
+        real.cut()
+        assert real.connect(client).cursor().execute("SELECT 1").fetchall() == [(1,)]
+        assert real.received == 5  # une coupure, un seul rejeu
+        # plus aucune connexion morte : une écriture, jamais rejouée, passerait aussi
+        for _ in range(2):
+            real.connect(client).cursor().execute("SELECT 1")
+        assert real.received == 7
     assert any(r.name.startswith("httpcore") for r in caplog.records)
     assert TOKEN not in caplog.text
+
+
+def test_write_failure_also_drops_dead_sockets(real):
+    """L'écriture échoue sans rejeu, mais la suite ne retombe pas sur une autre connexion morte."""
+    with hrana.make_client() as client:
+        _open_sockets(real, client, 2)
+        real.cut()
+        with pytest.raises(hrana.CloudNetworkError):
+            real.connect(client).cursor().execute("DELETE FROM t")
+        assert real.received == 3
+        real.connect(client).cursor().execute("SELECT 1")
+        assert real.received == 4
+
+
+def test_fresh_connection_spares_requests_in_flight(real):
+    results = []
+    with hrana.make_client() as client:
+        _open_sockets(real, client, 2)
+        slow = threading.Thread(
+            target=lambda: results.append(real.connect(client).cursor().execute("SELECT 'lent'").fetchall())
+        )
+        slow.start()
+        assert real.slow_started.wait(5)
+        old = client.pool
+        real.cut()
+        assert real.connect(client).cursor().execute("SELECT 1").fetchall() == [(1,)]
+        assert client.pool is not old
+        assert not old.client.is_closed
+        real.release.set()
+        slow.join()
+        assert results == [[(1,)]]
+        assert old.client.is_closed
+        current = client.pool
+    assert current.client.is_closed
+
+
+def test_concurrent_failures_renew_pool_once():
+    with hrana.make_client() as client:
+        old = client.pool
+        client.renew(old)
+        current = client.pool
+        assert current is not old
+        assert old.client.is_closed
+        client.renew(old)
+        assert client.pool is current
+
+
+def test_closed_client_stays_closed():
+    client = hrana.make_client()
+    pool = client.pool
+    client.close()
+    client.renew(pool)
+    assert client.is_closed
+    assert client.pool.client.is_closed
 
 
 def test_sql_error_is_not_operational(conn):

@@ -44,9 +44,8 @@ from coach.garmin.port import (  # noqa: E402
 
 RETRY_DELAY_S = 5
 PACE_MIN_S_KM, PACE_MAX_S_KM = 150, 600
-# `wktStepIndex` (tour Garmin) -> `stepOrder` du workout : stepOrder = index + base.
-# PROVISOIRE : base 1 supposée, non confirmée sur une activité réelle ; à vérifier
-# avec le test live `test_activity_splits_capture` avant de s'y fier.
+# `wktStepIndex` (tour Garmin, rang 0-based dans l'ordre FIT) -> `LapSummary.step_order` (1-based).
+# Confirmé sur une activité réelle ; l'ordre FIT n'est pas le `stepOrder` de l'export (cf. `flat_steps`).
 _STEP_INDEX_BASE = 1
 # typeId Garmin des records personnels de course -> `PersonalRecordSummary.kind`
 PR_KINDS: dict[int, str] = {

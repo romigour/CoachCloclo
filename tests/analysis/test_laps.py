@@ -10,7 +10,7 @@ ZONES = Zones(
     source=[],
 )
 
-# orders Garmin : échauffement 1, groupe 2, actif 3, récup 4, retour au calme 5
+# ordre FIT : échauffement 1, actif 2, récup 3, groupe 4, retour au calme 5
 INTERVALS = make_session(
     type="VMA",
     target_kind="pace",
@@ -26,7 +26,7 @@ INTERVALS = make_session(
         StepSpec(kind="cooldown", duration_s=600),
     ],
 )
-FULL_ORDERS = [1] + [3, 4] * 6 + [5]
+FULL_ORDERS = [1] + [2, 3] * 6 + [5]
 
 
 def lap(i, order, dur, dist, hr=None):
@@ -55,7 +55,7 @@ def test_one_lap_per_step_matches_all():
 
 
 def test_manual_lap_inside_step_is_merged():
-    laps = [lap(1, 1, 300, 1000), lap(2, 1, 300, 1000), lap(3, 3, 90, 400)]
+    laps = [lap(1, 1, 300, 1000), lap(2, 1, 300, 1000), lap(3, 2, 90, 400)]
     result = compare_session(INTERVALS, laps, ZONES)
     warmup = result.steps[0]
     assert (warmup.duration_s, warmup.distance_m, warmup.avg_pace_s_km) == (600, 2000, 300)
@@ -68,7 +68,7 @@ def test_merged_hr_is_duration_weighted():
 
 
 def test_skipped_step_is_not_done():
-    result = compare_session(INTERVALS, laps_for([1, 4]), ZONES)
+    result = compare_session(INTERVALS, laps_for([1, 3]), ZONES)
     assert result.followed_workout is True
     assert result.steps[1].done is False  # actif 1 jamais couru
     assert result.steps[1].avg_hr is None and result.steps[1].duration_s is None
@@ -76,20 +76,20 @@ def test_skipped_step_is_not_done():
 
 
 def test_stopped_early_leaves_remaining_not_done():
-    result = compare_session(INTERVALS, laps_for([1, 3, 4]), ZONES)
+    result = compare_session(INTERVALS, laps_for([1, 2, 3]), ZONES)
     assert [s.done for s in result.steps] == [True] * 3 + [False] * 11
     assert len(result.steps) == 14
 
 
 def test_going_back_falls_back_to_degraded():
-    result = compare_session(INTERVALS, laps_for([1, 5, 3]), ZONES)
+    result = compare_session(INTERVALS, laps_for([1, 5, 2]), ZONES)
     assert result.followed_workout is False
     assert result.steps == []
     assert len(result.laps) == 3 and result.laps[0].raw == {}
 
 
 def test_lap_without_step_order_is_degraded():
-    laps = laps_for([1, 3, 4])
+    laps = laps_for([1, 2, 3])
     laps[1] = laps[1].model_copy(update={"step_order": None})
     result = compare_session(INTERVALS, laps, ZONES)
     assert result.followed_workout is False and result.steps == []
@@ -108,9 +108,9 @@ def test_no_laps_is_degraded_with_empty_list():
 
 def test_single_step_repeat_laps_are_iterations():
     spec = make_session(steps=[RepeatSpec(repeat=3, steps=[StepSpec(kind="active", duration_s=60)])])
-    result = compare_session(spec, laps_for([2, 2, 2]), ZONES)
+    result = compare_session(spec, laps_for([1, 1, 1]), ZONES)
     assert [(s.iteration, s.done) for s in result.steps] == [(1, True), (2, True), (3, True)]
-    merged = compare_session(spec, laps_for([2, 2, 2, 2]), ZONES)
+    merged = compare_session(spec, laps_for([1, 1, 1, 1]), ZONES)
     assert [s.done for s in merged.steps] == [True] * 3
     assert merged.steps[2].duration_s == 200 and merged.steps[0].duration_s == 100
 
@@ -161,7 +161,47 @@ def test_zero_distance_lap_has_no_pace_verdict():
 
 
 def test_planned_volume_is_reported():
-    result = compare_session(INTERVALS, [lap(1, 1, 900, 2000), lap(2, 3, 90, 412)], ZONES)
+    result = compare_session(INTERVALS, [lap(1, 1, 900, 2000), lap(2, 2, 90, 412)], ZONES)
     assert result.steps[1].planned_distance_m == 400
     assert result.steps[1].distance_m == 412
     assert result.steps[0].planned_duration_s == 900
+
+
+def test_real_vma_session_with_lap_after_workout_end():
+    """Tours d'une VMA 8 × 1 min (cas réel) suivie de 3 min de trot hors workout."""
+    spec = make_session(
+        type="VMA",
+        target_kind="pace",
+        steps=[
+            StepSpec(kind="warmup", duration_s=900),
+            RepeatSpec(
+                repeat=8,
+                steps=[
+                    StepSpec(kind="active", duration_s=60, zone="VMA"),
+                    StepSpec(kind="recovery", duration_s=60),
+                ],
+            ),
+            StepSpec(kind="cooldown", duration_s=600),
+        ],
+    )
+    laps = [lap(0, 1, 900, 2627)]
+    for _ in range(8):
+        laps += [lap(len(laps), 2, 60, 265), lap(len(laps) + 1, 3, 60, 165)]
+    laps += [lap(17, 5, 600, 1667), lap(18, None, 194.6, 542)]
+    result = compare_session(spec, laps, ZONES)
+    assert result.followed_workout is True
+    assert len(result.steps) == 18 and all(s.done for s in result.steps)
+    assert [s.verdict for s in result.steps if s.kind == "active"] == ["in"] * 8
+    assert result.steps[-1].duration_s == 600  # le trot hors workout n'est pas compté
+    assert len(result.laps) == 19
+
+
+def test_several_laps_after_workout_end_are_ignored():
+    spec = make_session(steps=[StepSpec(kind="active", duration_s=1800)])
+    result = compare_session(spec, laps_for([1, None, None]), ZONES)
+    assert result.followed_workout is True and result.steps[0].duration_s == 100
+
+
+def test_only_laps_without_step_order_is_degraded():
+    result = compare_session(INTERVALS, laps_for([None, None]), ZONES)
+    assert result.followed_workout is False and result.steps == [] and len(result.laps) == 2

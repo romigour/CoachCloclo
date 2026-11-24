@@ -207,9 +207,9 @@ def test_adjustment_prompt_details_workout_steps():
     )
     laps = [_lap(0, 1, 902, 902 / 331 * 1000, avg_hr=138)]
     for i, pace in enumerate([228, 230, 232, 238, 241]):
-        laps.append(_lap(2 * i + 1, 3, pace * 0.4, 400))
+        laps.append(_lap(2 * i + 1, 2, pace * 0.4, 400))
         if i < 4:
-            laps.append(_lap(2 * i + 2, 4, 90, 200))
+            laps.append(_lap(2 * i + 2, 3, 90, 200))
     p = _adjustment(compare_session(spec, laps, ZONES_VMA))
     assert "\n    · échauffement 15 min : 15:02, 5:31/km, 138 bpm\n" in p
     assert (
@@ -224,7 +224,7 @@ def test_adjustment_prompt_hr_target_lists_bpm():
     spec = make_session(
         steps=[RepeatSpec(repeat=3, steps=[StepSpec(kind="active", duration_s=600, zone="Z4")])],
     )
-    laps = [_lap(0, 2, 600, 2000, avg_hr=172), _lap(1, 2, 600, 2000, avg_hr=180)]
+    laps = [_lap(0, 1, 600, 2000, avg_hr=172), _lap(1, 1, 600, 2000, avg_hr=180)]
     p = _adjustment(compare_session(spec, laps, ZONES_VMA))
     assert "    · 3× actif 10 min Z4 [162–176 bpm] : 172 bpm, 180 bpm (FC trop haute), non réalisée" in p
 

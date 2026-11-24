@@ -453,7 +453,7 @@ def test_activity_laps_workout_maps_step_orders():
 
 def test_activity_laps_workout_step_order_is_index_plus_one():
     laps = client_with(SPLITS["workout"]).activity_laps(1)
-    assert [l.step_order for l in laps] == [1, 3, 4, 3, 4, 5]
+    assert [l.step_order for l in laps] == [1, 2, 3, 2, 3, 5]
 
 
 def test_activity_laps_free_run_has_no_step_order():

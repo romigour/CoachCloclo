@@ -67,7 +67,7 @@ class FlatStep(BaseModel):
     iteration: int | None  # 1..repeat pour une étape de répétition, None sinon
     position: int  # rang (0-based) de l'étape dans son groupe de répétition, 0 sinon
     step: StepSpec
-    step_order: int  # stepOrder Garmin de l'étape exécutable
+    step_order: int  # rang (1-based) de l'étape dans l'ordre FIT, comme `LapSummary.step_order`
 
 
 class _Numbered(NamedTuple):
@@ -77,7 +77,7 @@ class _Numbered(NamedTuple):
 
 
 def _number_steps(items: list[StepSpec | RepeatSpec]) -> list[_Numbered]:
-    """Numérote les éléments comme Garmin (`stepOrder`) : source unique pour l'export et `flat_steps`."""
+    """Numérote les éléments pour l'export Garmin (`stepOrder`, groupe avant ses enfants)."""
     orders = count(1)
 
     def number(item: StepSpec | RepeatSpec) -> _Numbered:
@@ -89,25 +89,32 @@ def _number_steps(items: list[StepSpec | RepeatSpec]) -> list[_Numbered]:
 
 
 def flat_steps(spec: SessionSpec) -> list[FlatStep]:
-    """Déplie les répétitions ; les enfants gardent le même `step_order` à chaque itération."""
+    """Déplie les répétitions ; les enfants gardent le même `step_order` à chaque itération.
+
+    Numérotation du fichier FIT (celle des tours d'une activité) : un groupe de répétition occupe un
+    rang *après* ses enfants, contrairement au `stepOrder` de l'export qui le place avant.
+    """
     flat: list[FlatStep] = []
-    for group, node in enumerate(_number_steps(spec.steps), start=1):
-        if isinstance(node.item, RepeatSpec):
-            for iteration in range(1, node.item.repeat + 1):
-                for position, child in enumerate(node.children):
+    orders = count(1)
+    for group, item in enumerate(spec.steps, start=1):
+        if isinstance(item, RepeatSpec):
+            children = [(child, next(orders)) for child in item.steps]
+            next(orders)  # rang du groupe lui-même
+            for iteration in range(1, item.repeat + 1):
+                for position, (child, order) in enumerate(children):
                     flat.append(
                         FlatStep(
                             group=group,
                             iteration=iteration,
                             position=position,
-                            step=child.item,
-                            step_order=child.order,
+                            step=child,
+                            step_order=order,
                         )
                     )
         else:
             flat.append(
                 FlatStep(
-                    group=group, iteration=None, position=0, step=node.item, step_order=node.order
+                    group=group, iteration=None, position=0, step=item, step_order=next(orders)
                 )
             )
     return flat

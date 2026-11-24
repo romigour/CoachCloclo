@@ -18,7 +18,7 @@
         "averageSpeed": 4.0,
         "averageHR": 170,
         "maxHR": 176,
-        "wktStepIndex": 2
+        "wktStepIndex": 1
       },
       {
         "lapIndex": 3,
@@ -27,7 +27,7 @@
         "averageSpeed": 2.6667,
         "averageHR": 150,
         "maxHR": 165,
-        "wktStepIndex": 3
+        "wktStepIndex": 2
       },
       {
         "lapIndex": 4,
@@ -36,7 +36,7 @@
         "averageSpeed": 4.0816,
         "averageHR": 172,
         "maxHR": 179,
-        "wktStepIndex": 2
+        "wktStepIndex": 1
       },
       {
         "lapIndex": 5,
@@ -45,7 +45,7 @@
         "averageSpeed": 2.7027,
         "averageHR": 152,
         "maxHR": 166,
-        "wktStepIndex": 3
+        "wktStepIndex": 2
       },
       {
         "lapIndex": 6,

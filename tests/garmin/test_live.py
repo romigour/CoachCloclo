@@ -80,7 +80,7 @@ def test_activity_splits_capture(tmp_path):
     """Capture les tours bruts pour confirmer le champ d'étape et sa base.
 
     Écrit dans tmp_path (la fixture versionnée n'est jamais écrasée) et affiche
-    les `wktStepIndex` de chaque tour : à comparer aux `stepOrder` du workout.
+    les `wktStepIndex` de chaque tour : rangs 0-based dans l'ordre FIT (cf. `flat_steps`).
     """
     import json
 

@@ -40,7 +40,12 @@ class StepComparison(BaseModel):
 
 
 def _group_laps(plan: list[FlatStep], laps: list[LapSummary]) -> list[list[LapSummary]] | None:
-    """Affecte chaque tour à une étape prévue ; None si la structure est incohérente."""
+    """Affecte chaque tour à une étape prévue ; None si la structure est incohérente.
+
+    Les tours de fin sans étape (course poursuivie après la fin du workout) sont ignorés.
+    """
+    last = max((i for i, lap in enumerate(laps) if lap.step_order is not None), default=-1)
+    laps = laps[: last + 1]
     if not laps or any(lap.step_order is None for lap in laps):
         return None
     if {lap.step_order for lap in laps} - {f.step_order for f in plan}:

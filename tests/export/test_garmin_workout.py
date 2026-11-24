@@ -218,9 +218,9 @@ def _flat_spec():
     )
 
 
-def test_flat_steps_unrolls_repeats_with_garmin_step_orders():
+def test_flat_steps_unrolls_repeats_in_fit_order():
     flat = flat_steps(_flat_spec())
-    assert [f.step_order for f in flat] == [1, 3, 4, 3, 4, 3, 4, 5]
+    assert [f.step_order for f in flat] == [1, 2, 3, 2, 3, 2, 3, 5]
     assert [(f.group, f.iteration, f.position) for f in flat][:3] == [
         (1, None, 0),
         (2, 1, 0),
@@ -229,18 +229,8 @@ def test_flat_steps_unrolls_repeats_with_garmin_step_orders():
     assert flat[-1].group == 3 and flat[-1].iteration is None
 
 
-def test_flat_steps_orders_match_exported_workout():
-    spec = _flat_spec()
-    workout = session_to_workout_json(spec, ZONES, name="x")
-
-    def executable_orders(steps: list[dict]) -> set[int]:
-        orders: set[int] = set()
-        for s in steps:
-            if s["type"] == "ExecutableStepDTO":
-                orders.add(s["stepOrder"])
-            else:
-                orders |= executable_orders(s["workoutSteps"])
-        return orders
-
-    exported = executable_orders(workout["workoutSegments"][0]["workoutSteps"])
-    assert exported == {f.step_order for f in flat_steps(spec)}
+def test_flat_steps_numbers_several_repeats_in_fit_order():
+    run = StepSpec(kind="active", duration_s=60)
+    spec = make_session(steps=[RepeatSpec(repeat=2, steps=[run, run]), run, RepeatSpec(repeat=2, steps=[run]), run])
+    # groupes aux rangs 3 et 6, après leurs enfants
+    assert [f.step_order for f in flat_steps(spec)] == [1, 2, 1, 2, 4, 5, 5, 7]

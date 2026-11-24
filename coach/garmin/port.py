@@ -66,7 +66,7 @@ class LapSummary(BaseModel):
     avg_hr: int | None = None
     max_hr: int | None = None
     avg_pace_s_km: float | None = None
-    step_order: int | None = None  # stepOrder Garmin de l'étape exécutée, None hors workout
+    step_order: int | None = None  # rang FIT (1-based) de l'étape exécutée, None hors workout
     raw: dict = {}
 
 

@@ -72,3 +72,20 @@ test("Ma semaine mène au programme complet", async () => {
   render(Week, { today: "2026-10-28" });
   expect(await screen.findByRole("link", { name: "Programme complet" })).toHaveAttribute("href", "#/program");
 });
+
+test("retour sur le programme : affiché sans attendre ; une seule lecture d'activités par affichage", async () => {
+  mock();
+  const first = render(Program, { today: "2026-10-28", version: 0 });
+  await fireEvent.click(await screen.findByRole("button", { name: /Footing/ }));
+  const reads = () => vi.mocked(fetch).mock.calls.filter((c) => String(c[0]).startsWith("/api/activities")).length;
+  await waitFor(() => expect(reads()).toBe(1));
+  await new Promise((r) => setTimeout(r, 20));
+  await first.rerender({ version: 1 }); // plan relu, fenêtre ouverte
+  await new Promise((r) => setTimeout(r, 20));
+  expect(reads()).toBe(2);
+  first.unmount();
+  vi.stubGlobal("fetch", vi.fn(() => new Promise(() => {})));
+  render(Program, { today: "2026-10-28" });
+  await Promise.resolve();
+  expect(screen.getByRole("button", { name: /Footing/ })).toBeVisible();
+});

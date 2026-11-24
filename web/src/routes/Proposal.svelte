@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { api, type Change, type Proposal, type Session } from "../lib/api";
+  import { load as cached } from "../lib/cache";
   import { formatSteps } from "../lib/steps";
   import { currentZones } from "../lib/zones.svelte";
   import ErrorBanner from "../components/ErrorBanner.svelte";
@@ -11,8 +12,8 @@
   let { onchanged }: { onchanged?: () => void } = $props();
 
   let proposal = $state<Proposal | null>(null);
-  let current = $state<Map<number, Session>>(new Map());
-  let loaded = $state(false);
+  let current = $state<Map<number, Session> | null>(null); // séances du plan (null : pas encore lues)
+  let loaded = $state(false); // relue depuis le serveur : une proposition en cache ne peut pas être décidée
   let error = $state<unknown>(null);
   let busy = $state(false);
   let warning = $state("");
@@ -23,9 +24,12 @@
 
   async function load() {
     try {
-      const [p, plan] = await Promise.all([api.pendingProposal(), api.plan()]);
-      proposal = p;
-      current = new Map(plan.weeks.flatMap((w) => w.sessions).map((s) => [s.id, s]));
+      await Promise.all([
+        cached("proposal", () => api.pendingProposal(), (p) => (proposal = p)),
+        cached("plan", () => api.plan(), (plan) => {
+          current = new Map(plan.weeks.flatMap((w) => w.sessions).map((s) => [s.id, s]));
+        }),
+      ]);
       loaded = true;
     } catch (e) {
       error = e;
@@ -33,7 +37,7 @@
   }
   onMount(load);
 
-  const before = (c: Change) => (c.session_id != null ? current.get(c.session_id) : undefined);
+  const before = (c: Change) => (c.session_id != null ? current?.get(c.session_id) : undefined);
   const heading = (c: Change) => {
     const b = before(c);
     if (b) return b.title;
@@ -91,7 +95,7 @@
   <p class="banner warning">{warning} <a href="#/week">Voir la semaine</a></p>
 {/if}
 
-{#if proposal}
+{#if proposal && current}
   <div class="cols">
     <section class="col-side card stack" style:flex-basis="320px">
       <h2>Ce que Claude a observé</h2>
@@ -139,8 +143,8 @@
 
   <div class="action-bar">
     <p>En acceptant, les séances déjà envoyées sont mises à jour dans ton calendrier Garmin.</p>
-    <button onclick={() => decide(false)} disabled={busy}>Refuser</button>
-    <button class="primary" onclick={() => decide(true)} disabled={busy}>Accepter les changements</button>
+    <button onclick={() => decide(false)} disabled={busy || !loaded}>Refuser</button>
+    <button class="primary" onclick={() => decide(true)} disabled={busy || !loaded}>Accepter les changements</button>
   </div>
 {:else if loaded && !warning}
   <p class="card">Aucune proposition en attente. Claude en propose après l'analyse de tes séances. <a href="#/week">Retour à ma semaine</a></p>

@@ -1,5 +1,6 @@
 <script lang="ts">
   import { api, ApiError } from "../lib/api";
+  import { clearCache } from "../lib/cache";
   import { READONLY } from "../lib/mode";
 
   let { error, onpin, setupAvailable = false }: { error: unknown; onpin?: () => void; setupAvailable?: boolean } = $props();
@@ -41,6 +42,7 @@
     pinError = "";
     try {
       await api.pin(pin);
+      clearCache();
       pin = "";
       onpin?.();
     } catch (err) {

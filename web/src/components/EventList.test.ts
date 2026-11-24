@@ -47,3 +47,14 @@ test("deleting asks whether to recompute, and yes requests an adjustment", async
   await waitFor(() => expect(onproposal).toHaveBeenCalledWith(9));
   expect(f.mock.calls.some((c) => c[0] === "/api/cycle/adjust")).toBe(true);
 });
+
+test("retour sur la page : imprévus affichés sans attendre", async () => {
+  mock([ev(3, {})]);
+  const first = render(EventList, { today: "2026-11-03" });
+  await screen.findByText(/Indisponible/);
+  first.unmount();
+  vi.stubGlobal("fetch", vi.fn(() => new Promise(() => {})));
+  render(EventList, { today: "2026-11-03" });
+  await Promise.resolve();
+  expect(screen.getByText(/Indisponible/)).toBeVisible();
+});

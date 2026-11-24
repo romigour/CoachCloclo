@@ -1,4 +1,5 @@
 import type { Weekday } from "./dates";
+import { noteWrite } from "./cache";
 import { READONLY } from "./mode";
 
 export class ApiError extends Error {
@@ -511,6 +512,15 @@ export type GoalChange = PlanChange & { goal: Goal };
 export type GoalUpdate = { race_date?: string; target_time?: string; priority?: Priority; notes?: string };
 
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
+  if (method === "GET") return send<T>(method, path, body);
+  try {
+    return await send<T>(method, path, body);
+  } finally {
+    noteWrite(); // même en échec : l'écriture a pu être faite, en tout ou partie
+  }
+}
+
+async function send<T>(method: string, path: string, body?: unknown): Promise<T> {
   const headers: Record<string, string> = {};
   let payload: BodyInit | undefined;
   if (method !== "GET") headers["X-Coach"] = "1";

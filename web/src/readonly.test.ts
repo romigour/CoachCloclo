@@ -39,6 +39,7 @@ import InjuryBanner from "./components/InjuryBanner.svelte";
 import Races from "./components/stats/Races.svelte";
 import { raceRows } from "./lib/stats/races";
 import { api, ApiError } from "./lib/api";
+import { load } from "./lib/cache";
 import ErrorBanner from "./components/ErrorBanner.svelte";
 import fixtures from "./lib/turso/__fixtures__/expected.json";
 
@@ -50,8 +51,10 @@ const ACTIONS = /imprévu|générer|montre|changer de jour|retirer|réessayer|su
 const actions = () => screen.queryAllByRole("button", { name: ACTIONS }).filter((b) => !b.classList.contains("wsession"));
 
 beforeEach(() => {
-  // Les deux lectures simultanées de Stats contournent le mock du module turso (import dynamique concurrent) :
-  // on branche donc ces deux lectures directement sur la fixture.
+  // Les lectures simultanées (Stats, Ma semaine) contournent le mock du module turso (import dynamique concurrent) :
+  // on branche donc ces lectures directement sur la fixture.
+  vi.spyOn(api, "plan").mockImplementation(async () => over.plan ?? f.plan);
+  vi.spyOn(api, "events").mockImplementation(async () => f.events);
   vi.spyOn(api, "statsActivities").mockImplementation(async () => over.stats ?? f.stats_activities);
   vi.spyOn(api, "statsRecords").mockImplementation(async () => f.stats_records);
   creds.value = { url: "libsql://x", token: "t" };
@@ -191,4 +194,41 @@ test("Connexion effacée : retour à la connexion, Ma semaine y renvoie", async 
   location.hash = "#/week";
   await waitFor(() => expect(location.hash).toBe("#/connection"));
   expect(screen.queryByRole("link", { name: "Modifier la connexion" })).toBeNull();
+});
+
+test("lecture seule : même comportement (plan affiché au retour, oublié avec la connexion)", async () => {
+  const first = render(Week, { today: TODAY, status: f.status });
+  await screen.findByRole("heading", { name: "Cette semaine" });
+  first.unmount();
+  const planSpy = vi.spyOn(api, "plan").mockClear().mockImplementation(() => new Promise<never>(() => {}));
+  const second = render(Week, { today: TODAY, status: f.status });
+  await Promise.resolve();
+  expect(screen.getByRole("heading", { name: "Cette semaine" })).toBeInTheDocument();
+  expect(planSpy).toHaveBeenCalledTimes(1); // relu quand même
+  second.unmount();
+
+  vi.spyOn(window, "confirm").mockReturnValue(true);
+  location.hash = "#/connection";
+  const app = render(App);
+  await fireEvent.click(await screen.findByRole("button", { name: "Effacer" }));
+  await waitFor(() => expect(creds.value).toBeNull());
+  await screen.findByLabelText("URL de la base");
+  app.unmount();
+  render(Week, { today: TODAY, status: f.status });
+  await Promise.resolve();
+  expect(screen.getByText("Chargement…")).toBeInTheDocument();
+});
+
+test("lecture seule : nouvelle connexion, les données de l'ancienne base ne réapparaissent pas", async () => {
+  creds.value = null;
+  await load("stats", async () => ({ activities: [] }), () => {});
+  render(App);
+  await fireEvent.input(await screen.findByLabelText("URL de la base"), { target: { value: "libsql://y.turso.io" } });
+  await fireEvent.input(screen.getByLabelText("Jeton d'accès"), { target: { value: "tok" } });
+  await fireEvent.click(screen.getByRole("button", { name: "Valider" }));
+  // seule Ma semaine s'ouvre et relit : « stats » doit avoir été oublié
+  await waitFor(() => expect(location.hash).toBe("#/week"));
+  const apply = vi.fn();
+  await load("stats", async () => "nouvelle base", apply);
+  expect(apply.mock.calls).toEqual([["nouvelle base"]]);
 });

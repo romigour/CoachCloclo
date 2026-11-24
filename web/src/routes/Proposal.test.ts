@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/svelte";
+import { render, screen, waitFor } from "@testing-library/svelte";
 import { afterEach, expect, test, vi } from "vitest";
 import Proposal from "./Proposal.svelte";
 import type { Change, SessionSpec } from "../lib/api";
@@ -53,4 +53,21 @@ test("affiche une seule fois l'avertissement transmis par la page Objectifs", as
   render(Proposal);
   await screen.findByText("Footing");
   expect(screen.queryByText(/moins de 14 jours/)).toBeNull();
+});
+
+test("retour sur la proposition : affichée sans attendre, décision possible une fois relue", async () => {
+  mock([change("modify", spec("Footing", "run"))]);
+  const first = render(Proposal);
+  await screen.findByText("Footing");
+  first.unmount();
+  const waiting: (() => void)[] = [];
+  const base = vi.mocked(fetch).getMockImplementation()!;
+  vi.stubGlobal("fetch", vi.fn((url: string) => new Promise<Response>((r) => waiting.push(async () => r(await base(url))))));
+  render(Proposal);
+  await Promise.resolve();
+  expect(screen.getByText("Footing")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Accepter les changements" })).toBeDisabled();
+  expect(waiting).toHaveLength(2);
+  waiting.forEach((go) => go());
+  await waitFor(() => expect(screen.getByRole("button", { name: "Accepter les changements" })).toBeEnabled());
 });

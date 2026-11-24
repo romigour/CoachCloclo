@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { api, ApiError, claudeSkipped, setupDone, type SetupStatus, type Status } from "./lib/api";
+  import { clearCache, noteWrite } from "./lib/cache";
   import { loadZones } from "./lib/zones.svelte";
   import { READONLY } from "./lib/mode";
   import ErrorBanner from "./components/ErrorBanner.svelte";
@@ -29,6 +30,7 @@
   let setupAvailable = $state(false); // appli de bureau : l'écran d'accueil existe
   let error = $state<unknown>(null);
   let version = $state(0);
+  let base = $state(1); // change quand le stockage a pu changer
   let ready = $state(false);
   let syncing = $state(false);
   let resentNote = $state(""); // séances renvoyées à la montre par la dernière synchro
@@ -64,6 +66,7 @@
 
   /** Connexion Turso enregistrée : on relit les données puis on va à l'accueil. */
   async function connected() {
+    clearCache();
     version++; // relit les zones et recharge les pages (première connexion ou changement de base)
     await refresh();
     location.hash = home();
@@ -71,9 +74,17 @@
 
   /** Connexion effacée : on reste sur la page de connexion et on oublie l'état de l'ancienne base. */
   function cleared() {
+    clearCache();
     status = null;
     error = null;
     location.hash = "#/connection";
+  }
+
+  /** Stockage changé depuis les Réglages (cache déjà vidé) : zones, pages et état viennent de la nouvelle base. */
+  function storageSwitched() {
+    base++;
+    version++;
+    refresh();
   }
 
   /** Lecture seule : toute route inconnue ou sans identifiants est renvoyée vers l'accueil ou la connexion. */
@@ -92,7 +103,11 @@
       const next = await api.status();
       // Fin d'import (réussie ou non) observée via le sondage : les statistiques doivent être rechargées.
       const ended = next.history.status === "done" || next.history.status === "error";
-      if (status?.history.status === "running" && ended) version++;
+      if (status?.history.status === "running" && ended) {
+        noteWrite(); // l'import a écrit côté serveur : une lecture partie avant sa fin est dépassée
+        version++;
+      }
+      if (next.storage && !status?.storage) clearCache(); // passage en erreur de stockage
       status = next;
       if (clear) error = null;
     } catch (e) {
@@ -237,61 +252,64 @@
     {#if resentNote}<p class="card busy" role="status">{resentNote}</p>{/if}
 
     {#if ready && !(error && (error as { code?: string }).code === "pin_required")}
-      {#if storageError && route !== "setup" && route !== "welcome" && route !== "connection"}
-        <section class="card stack" role="alert">
-          <h2>Données indisponibles</h2>
-          <p>{storageError.detail}</p>
-          <div class="row">
-            <button type="button" class="primary" onclick={retryStorage}>Réessayer</button>
-            {#if READONLY}
-              <a href="#/connection">Modifier la connexion</a>
-            {:else}
-              <a href="#/setup">Ouvrir les Réglages</a>
-            {/if}
-          </div>
-        </section>
-      {:else if READONLY && route === "connection"}
-        <!-- Import dynamique gardé par READONLY : libsql reste hors du build de bureau. -->
-        {#await import("./routes/Connection.svelte") then { default: Connection }}
-          <Connection onchanged={connected} oncleared={cleared} />
-        {:catch}
+      <!-- Autre base : la page affichée repart de zéro (les Réglages gardent leur message). -->
+      {#key route === "setup" ? 0 : base}
+        {#if storageError && route !== "setup" && route !== "welcome" && route !== "connection"}
           <section class="card stack" role="alert">
-            <p>Impossible de charger l'écran de connexion.</p>
-            <div class="row"><button type="button" class="primary" onclick={() => location.reload()}>Réessayer</button></div>
+            <h2>Données indisponibles</h2>
+            <p>{storageError.detail}</p>
+            <div class="row">
+              <button type="button" class="primary" onclick={retryStorage}>Réessayer</button>
+              {#if READONLY}
+                <a href="#/connection">Modifier la connexion</a>
+              {:else}
+                <a href="#/setup">Ouvrir les Réglages</a>
+              {/if}
+            </div>
           </section>
-        {/await}
-      {:else if route === "welcome"}
-        <Welcome onconnected={garminConnected} />
-      {:else if route === "setup"}
-        <Setup onchanged={refresh} onconnected={garminConnected} {syncing} />
-      {:else if route === "goal"}
-        <Goal onchanged={refresh} />
-      {:else if (route === "week" || route === "program") && toPrepare}
-        <p class="card">
-          Ton cycle est terminé et une course t'attend encore.
-          {#if !READONLY}<a href="#/goal">Préparer le cycle suivant</a>{/if}
-        </p>
-      {:else if route === "week"}
-        <Week {version} {status} onerror={failed} />
-      {:else if route === "program"}
-        <Program {version} />
-      {:else if route === "race"}
-        {#if status?.next_goal}
-          <Race
-            goals={status.goals}
-            goalId={raceGoalId ?? status.next_goal.id}
-            cycle={status.cycle}
-            onerror={failed}
-            onchanged={refresh}
-          />
-        {:else}
-          <p class="card">Aucun objectif actif : le jour J se prépare à partir d'un objectif. <a href="#/goal">Créer un objectif</a></p>
+        {:else if READONLY && route === "connection"}
+          <!-- Import dynamique gardé par READONLY : libsql reste hors du build de bureau. -->
+          {#await import("./routes/Connection.svelte") then { default: Connection }}
+            <Connection onchanged={connected} oncleared={cleared} />
+          {:catch}
+            <section class="card stack" role="alert">
+              <p>Impossible de charger l'écran de connexion.</p>
+              <div class="row"><button type="button" class="primary" onclick={() => location.reload()}>Réessayer</button></div>
+            </section>
+          {/await}
+        {:else if route === "welcome"}
+          <Welcome onconnected={garminConnected} />
+        {:else if route === "setup"}
+          <Setup onchanged={refresh} onswitched={storageSwitched} onconnected={garminConnected} {syncing} />
+        {:else if route === "goal"}
+          <Goal onchanged={refresh} />
+        {:else if (route === "week" || route === "program") && toPrepare}
+          <p class="card">
+            Ton cycle est terminé et une course t'attend encore.
+            {#if !READONLY}<a href="#/goal">Préparer le cycle suivant</a>{/if}
+          </p>
+        {:else if route === "week"}
+          <Week {version} {status} onerror={failed} />
+        {:else if route === "program"}
+          <Program {version} />
+        {:else if route === "race"}
+          {#if status?.next_goal}
+            <Race
+              goals={status.goals}
+              goalId={raceGoalId ?? status.next_goal.id}
+              cycle={status.cycle}
+              onerror={failed}
+              onchanged={refresh}
+            />
+          {:else}
+            <p class="card">Aucun objectif actif : le jour J se prépare à partir d'un objectif. <a href="#/goal">Créer un objectif</a></p>
+          {/if}
+        {:else if route === "stats"}
+          <Stats {version} history={status?.history ?? null} onimport={importHistory} />
+        {:else if route === "proposal"}
+          <Proposal onchanged={refresh} />
         {/if}
-      {:else if route === "stats"}
-        <Stats {version} history={status?.history ?? null} onimport={importHistory} />
-      {:else if route === "proposal"}
-        <Proposal onchanged={refresh} />
-      {/if}
+      {/key}
     {/if}
   </main>
 </div>

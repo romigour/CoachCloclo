@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
 import { afterEach, expect, test, vi } from "vitest";
 import Week from "./Week.svelte";
-import type { CoachEvent, Cycle, Goal, Plan, Session, Status } from "../lib/api";
+import { api, type CoachEvent, type Cycle, type Goal, type Plan, type Session, type Status } from "../lib/api";
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -288,4 +288,116 @@ test("nothing pending: no update banner", async () => {
   render(Week, { today: "2026-10-30" });
   await screen.findByRole("region", { name: "Séance sélectionnée" });
   expect(screen.queryByRole("region", { name: "Plan à mettre à jour" })).toBeNull();
+});
+
+// --- cache et lectures parallèles -------------------------------------------------------------
+
+const ok = (b: unknown) => new Response(JSON.stringify(b), { status: 200 });
+const run = (id: number, date: string, session_id: number | null) => ({
+  id, date, type_key: "running", duration_s: 2640, distance_m: 8300, d_plus_m: 0, avg_hr: 139, session_id, match_source: "auto",
+});
+const urls = (prefix: string) => vi.mocked(fetch).mock.calls.map((c) => String(c[0])).filter((u) => u.startsWith(prefix));
+const settle = () => new Promise((r) => setTimeout(r, 20));
+
+test("Week : retour sur la page, plan affiché sans attendre", async () => {
+  mock();
+  const first = render(Week, { today: "2026-10-30" });
+  await screen.findByRole("heading", { name: "Cette semaine" });
+  first.unmount();
+  vi.stubGlobal("fetch", vi.fn(() => new Promise(() => {})));
+  render(Week, { today: "2026-10-30" });
+  await Promise.resolve();
+  expect(screen.getByRole("heading", { name: "Cette semaine" })).toBeVisible();
+  expect(screen.queryByText("Chargement…")).toBeNull();
+});
+
+test("Week : /plan et /cycle/events partent ensemble", async () => {
+  vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>(() => {})));
+  render(Week, { today: "2026-10-30" });
+  await settle();
+  expect(urls("/api").sort()).toEqual(["/api/cycle/events", "/api/plan"]);
+});
+
+test("Week : une seule lecture /activities par affichage", async () => {
+  mock();
+  const view = render(Week, { today: "2026-10-30", version: 0 });
+  await screen.findByRole("heading", { name: "Cette semaine" });
+  await settle();
+  expect(urls("/api/activities")).toEqual(["/api/activities?week=1"]);
+  await view.rerender({ version: 1 });
+  await settle();
+  expect(urls("/api/plan")).toHaveLength(2);
+  expect(urls("/api/activities")).toHaveLength(2);
+  view.unmount();
+  // retour sur la page : plan en cache puis relu, toujours une seule lecture
+  render(Week, { today: "2026-10-30", version: 1 });
+  await settle();
+  expect(urls("/api/activities")).toHaveLength(3);
+  expect(urls("/api/plan")).toHaveLength(3);
+});
+
+test("Week : changement rapide de semaine, la réponse tardive ne s'affiche pas", async () => {
+  const late: ((r: Response) => void)[] = [];
+  vi.stubGlobal("fetch", vi.fn((url: string) => {
+    if (url === "/api/plan") return Promise.resolve(ok(plan));
+    if (url === "/api/activities?week=2") return new Promise<Response>((r) => late.push(r));
+    if (url === "/api/activities?week=1") return Promise.resolve(ok([run(9, "2026-10-27", 1)]));
+    return Promise.resolve(ok([]));
+  }));
+  render(Week, { today: "2026-10-30" });
+  const card = await screen.findByRole("region", { name: "Dernière activité" });
+  await within(card).findByText(/27\/10/);
+  await fireEvent.click(screen.getByRole("button", { name: "Semaine suivante" }));
+  await waitFor(() => expect(late).toHaveLength(1));
+  await fireEvent.click(screen.getByRole("button", { name: "Revenir à cette semaine" }));
+  late[0](ok([run(10, "2026-10-29", null)]));
+  await settle();
+  const again = screen.getByRole("region", { name: "Dernière activité" });
+  expect(within(again).getByText(/27\/10/)).toBeVisible();
+  expect(within(again).queryByText(/29\/10/)).toBeNull();
+});
+
+test("Week : séance rattachée pendant une relecture, l'ancienne réponse n'écrase pas l'affichage", async () => {
+  let body = plan;
+  let hold = false;
+  const waiting: (() => void)[] = [];
+  vi.stubGlobal("fetch", vi.fn((url: string, init?: RequestInit) => {
+    if (init?.method === "POST") return Promise.resolve(ok({ status: "ok" }));
+    if (url !== "/api/plan") return Promise.resolve(ok([]));
+    const answer = body; // état de la base au départ de la lecture
+    if (!hold) return Promise.resolve(ok(answer));
+    return new Promise<Response>((r) => waiting.push(() => r(ok(answer))));
+  }));
+  const view = render(Week, { today: "2026-10-30", version: 0 });
+  expect(await screen.findByRole("region", { name: "Bilan de la semaine" })).toHaveTextContent("1/2");
+  hold = true;
+  await view.rerender({ version: 1 });
+  await waitFor(() => expect(waiting).toHaveLength(1));
+  const [w1, w2] = plan.weeks;
+  body = { ...plan, weeks: [{ ...w1, sessions: w1.sessions.map((x) => ({ ...x, status: "done" })) }, w2] };
+  hold = false;
+  await api.match(9, 2);
+  waiting[0]();
+  await waitFor(() => expect(screen.getByRole("region", { name: "Bilan de la semaine" })).toHaveTextContent("2/2"));
+});
+
+test("Week : après une action, les activités sont relues avec le plan", async () => {
+  mockInjury({ injury: true });
+  render(Week, { today: "2026-11-03" });
+  await screen.findByText("Arrêt depuis le 01/11");
+  await waitFor(() => expect(urls("/api/activities")).toHaveLength(1));
+  await fireEvent.click(screen.getByRole("button", { name: "Signaler la reprise" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Confirmer la reprise" }));
+  await waitFor(() => expect(urls("/api/activities")).toHaveLength(2));
+});
+
+test("Week : relecture en échec, l'ancien plan reste affiché avec l'erreur", async () => {
+  mock();
+  const first = render(Week, { today: "2026-10-30" });
+  await screen.findByRole("heading", { name: "Cette semaine" });
+  first.unmount();
+  vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ code: "x", detail: "Base coupée" }), { status: 503 })));
+  render(Week, { today: "2026-10-30" });
+  expect((await screen.findAllByText("Base coupée")).length).toBeGreaterThan(0);
+  expect(screen.getByRole("heading", { name: "Cette semaine" })).toBeVisible();
 });

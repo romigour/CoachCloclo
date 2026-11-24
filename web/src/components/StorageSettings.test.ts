@@ -1,6 +1,7 @@
 import { fireEvent, render, screen } from "@testing-library/svelte";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import StorageSettings from "./StorageSettings.svelte";
+import { load } from "../lib/cache";
 
 type View = { mode: "local" | "turso"; turso_url: string | null; has_turso_token: boolean };
 const local: View = { mode: "local", turso_url: null, has_turso_token: false };
@@ -173,4 +174,25 @@ test("retour au local raté en mode cloud : l'erreur s'affiche", async () => {
   await fireEvent.click(await screen.findByRole("button", { name: "Revenir au stockage local" }));
   expect((await screen.findByRole("alert")).textContent).toContain("Base cloud injoignable");
   expect(screen.getByRole("button", { name: "Revenir au stockage local" })).toBeTruthy();
+});
+
+test.each([
+  ["Stocker mes données dans le cloud", local],
+  ["Revenir au stockage local", cloud],
+  ["Effacer mes données du cloud", cloud],
+])("bascule de stockage : les anciennes données ne réapparaissent pas (%s)", async (name, from) => {
+  for (const failed of [false, true]) {
+    storage = { ...from };
+    if (failed) responses = [{ status: 503, body: { code: "cloud_unreachable", detail: "Coupé" } }];
+    await load("plan", async () => "ancienne base", () => {});
+    const onswitched = vi.fn();
+    const { unmount } = render(StorageSettings, { onswitched });
+    if (from === local) await fill();
+    await fireEvent.click(await screen.findByRole("button", { name }));
+    await vi.waitFor(() => expect(onswitched).toHaveBeenCalledOnce());
+    const apply = vi.fn();
+    await load("plan", async () => "nouvelle base", apply);
+    expect(apply.mock.calls).toEqual([["nouvelle base"]]);
+    unmount();
+  }
 });

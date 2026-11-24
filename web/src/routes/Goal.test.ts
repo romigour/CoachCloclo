@@ -563,3 +563,16 @@ test("les précisions d'un objectif s'affichent dans sa carte", async () => {
   expect(li[1]).toHaveTextContent("Neige et escaliers");
   expect(li[0]).not.toHaveTextContent("Neige");
 });
+
+test("retour sur Objectifs : le cycle et ses objectifs affichés sans attendre", async () => {
+  const statusBody = { cycle: mkCycle(), goals: [mkGoal()] };
+  vi.stubGlobal("fetch", vi.fn(async (url: string) =>
+    new Response(JSON.stringify(url === "/api/status" ? statusBody : mkPlan()), { status: 200 })));
+  const first = render(Goal);
+  await screen.findByRole("list", { name: "Objectifs à venir" });
+  first.unmount();
+  vi.stubGlobal("fetch", vi.fn(() => new Promise(() => {})));
+  render(Goal);
+  await Promise.resolve();
+  expect(screen.getByRole("list", { name: "Objectifs à venir" })).toHaveTextContent("21,1 km");
+});

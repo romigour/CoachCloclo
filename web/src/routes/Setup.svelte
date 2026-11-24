@@ -15,9 +15,10 @@
 
   let {
     onchanged,
+    onswitched,
     onconnected,
     syncing = false,
-  }: { onchanged?: () => void; onconnected?: () => void; syncing?: boolean } = $props();
+  }: { onchanged?: () => void; onconnected?: () => void; onswitched?: () => void; syncing?: boolean } = $props();
 
   let status = $state<Status | null>(null);
   let settings = $state<SettingsView | null>(null);
@@ -279,7 +280,7 @@
           {/if}
         </div>
         <RestHrSettings {syncing} />
-        <StorageSettings />
+        <StorageSettings {onswitched} />
       </div>
     </section>
 

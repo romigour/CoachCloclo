@@ -1,5 +1,7 @@
 <script lang="ts">
+  import { untrack } from "svelte";
   import { api, type CoachEvent, type EventKind } from "../lib/api";
+  import { load as cached } from "../lib/cache";
   import { todayIso } from "../lib/dates";
   import ErrorBanner from "./ErrorBanner.svelte";
   import { READONLY } from "../lib/mode";
@@ -39,7 +41,7 @@
 
   async function load() {
     try {
-      events = await api.events();
+      await cached("events", () => api.events(), (list) => (events = list));
     } catch (e) {
       error = e;
     }
@@ -47,7 +49,7 @@
 
   $effect(() => {
     reload; // recharge quand la page a rechargé son plan (ex. reprise après un arrêt)
-    load();
+    untrack(load);
   });
 
   async function remove(e: CoachEvent) {

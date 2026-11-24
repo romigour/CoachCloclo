@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { api, type Cycle, type Goal, type GoalInput, type Plan, type PlanChange } from "../lib/api";
+  import { load as cached } from "../lib/cache";
   import { WEEKDAYS, formatDate, todayIso } from "../lib/dates";
   import { goalLabel } from "../lib/goals";
   import { goalTimeLabel } from "../lib/race";
@@ -57,8 +58,28 @@
     return null;
   });
 
-  async function load() {
-    const [p, s] = await Promise.all([api.plan(), api.status()]);
+  let reading = 0; // numéro de la dernière lecture : une réponse plus ancienne est ignorée
+
+  /** Premier affichage, avant la réponse de /status : le cycle du plan et ses objectifs. */
+  function preview(p: Plan) {
+    if (!p.cycle) return;
+    plan = p;
+    cycle = p.cycle;
+    goals = [...p.goals, ...p.horizon];
+  }
+
+  async function load(): Promise<void> {
+    const mine = ++reading;
+    const read: { plan: Plan | null } = { plan: null };
+    const planRead = cached("plan", () => api.plan(), (p) => {
+      read.plan = p;
+      if (!loaded) preview(p);
+    });
+    read.plan = null; // la valeur en cache ne sert qu'au premier affichage : plan et état changent ensemble
+    const [, s] = await Promise.all([planRead, api.status()]);
+    if (mine !== reading) return;
+    const p = read.plan as Plan | null;
+    if (!p) return load(); // cache vidé pendant la lecture (bascule de stockage) : on relit
     plan = p;
     cycle = s.cycle ?? p.cycle;
     goals = s.goals ?? [];

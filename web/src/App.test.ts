@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/svelte";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import App from "./App.svelte";
+import { load } from "./lib/cache";
 
 const calls: { url: string; method: string }[] = [];
 let syncDone: (() => void) | null = null;
@@ -406,4 +407,73 @@ test("no message after a sync that resent nothing", async () => {
   await waitFor(() => expect(syncs()).toBe(1));
   await screen.findByText("Ma semaine", { selector: "h1" });
   expect(screen.queryByText(/mises? à jour sur ta montre/)).toBeNull();
+});
+
+test("passage en erreur de stockage : les anciennes données ne réapparaissent pas", async () => {
+  syncInstant = true;
+  location.hash = "#/week";
+  render(App);
+  await screen.findByText("Ma semaine", { selector: "h1" });
+  await waitFor(() => expect(syncs()).toBe(1));
+  const button = await screen.findByRole("button", { name: /Synchroniser/ });
+  await load("records", async () => "ancienne base", () => {});
+  statusBody = { ...statusBody, storage: { code: "cloud_unreachable", detail: "Base cloud injoignable" } };
+  await fireEvent.click(button);
+  await screen.findByText("Données indisponibles");
+  const apply = vi.fn();
+  await load("records", async () => "nouvelle base", apply);
+  expect(apply.mock.calls).toEqual([["nouvelle base"]]);
+});
+
+test("bascule de stockage depuis les Réglages : état et zones relus", async () => {
+  syncInstant = true;
+  const base = vi.mocked(fetch).getMockImplementation()!;
+  let mode = "turso";
+  vi.mocked(fetch).mockImplementation(async (url, init) => {
+    if (!String(url).startsWith("/api/storage")) return base(url, init);
+    if (init?.method === "DELETE") mode = "local";
+    return new Response(JSON.stringify({ mode, turso_url: "libsql://x", has_turso_token: true }), { status: 200 });
+  });
+  location.hash = "#/setup";
+  render(App);
+  const button = await screen.findByRole("button", { name: "Revenir au stockage local" });
+  await waitFor(() => expect(syncs()).toBe(1));
+  await waitFor(() => expect(screen.queryByText("Analyse de ta séance par Claude…")).toBeNull());
+  const count = (u: string) => calls.filter((c) => c.url === u).length;
+  const [zones, status] = [count("/api/zones"), count("/api/status")];
+  await fireEvent.click(button);
+  await waitFor(() => expect(count("/api/zones")).toBe(zones + 1));
+  await waitFor(() => expect(count("/api/status")).toBe(status + 1));
+});
+
+test("bascule de stockage finie depuis une autre page : rien de l'ancienne base ne reste affiché", async () => {
+  syncInstant = true;
+  const base = vi.mocked(fetch).getMockImplementation()!;
+  let finish = () => {};
+  let plans = 0;
+  let switched = false;
+  vi.mocked(fetch).mockImplementation(async (url, init) => {
+    const u = String(url);
+    if (u === "/api/plan") {
+      plans++;
+      if (switched) return new Promise<Response>(() => {}); // nouvelle base : pas encore répondu
+    }
+    if (!u.startsWith("/api/storage")) return base(url, init);
+    if (init?.method === "DELETE") await new Promise<void>((r) => (finish = r));
+    return new Response(JSON.stringify({ mode: "turso", turso_url: "libsql://x", has_turso_token: true }), { status: 200 });
+  });
+  location.hash = "#/setup";
+  render(App);
+  const button = await screen.findByRole("button", { name: "Revenir au stockage local" });
+  await waitFor(() => expect(syncs()).toBe(1));
+  await fireEvent.click(button);
+  location.hash = "#/week";
+  window.dispatchEvent(new HashChangeEvent("hashchange"));
+  await screen.findByText(/Objectif/, { selector: ".goal-what .meta" }); // plan de l'ancienne base
+  const before = plans;
+  switched = true;
+  finish();
+  await waitFor(() => expect(plans).toBe(before + 1));
+  expect(await screen.findByText("Chargement…")).toBeVisible();
+  expect(document.querySelector(".goal-what")).toBeNull();
 });

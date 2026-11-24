@@ -1,6 +1,7 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onMount, untrack } from "svelte";
   import { api, type Activity, type Plan } from "../lib/api";
+  import { load as cached } from "../lib/cache";
   import { formatDate, formatDay, todayIso } from "../lib/dates";
   import { goalLabel, nextRace } from "../lib/goals";
   import { currentWeek, daysUntil, sessionDate } from "../lib/week";
@@ -13,7 +14,7 @@
   let { version = 0, today = todayIso() }: { version?: number; today?: string } = $props();
 
   let plan = $state<Plan | null>(null);
-  let activities = $state<Activity[]>([]);
+  let weekActivities = $state<{ week: number; list: Activity[] } | null>(null);
   let error = $state<unknown>(null);
   let selected = $state<number | null>(null);
   let closeButton = $state<HTMLButtonElement | null>(null);
@@ -36,9 +37,12 @@
     return null;
   });
 
+  const weekIndex = $derived(selection?.week.week_index ?? null);
+  const activities = $derived(weekActivities && weekActivities.week === weekIndex ? weekActivities.list : []);
+
   async function load() {
     try {
-      plan = await api.plan();
+      await cached("plan", () => api.plan(), (p) => (plan = p));
       error = null;
     } catch (e) {
       error = e;
@@ -47,21 +51,25 @@
 
   $effect(() => {
     version; // recharge après chaque synchro
-    load();
+    untrack(load);
   });
 
   // activités de la semaine de la séance ouverte (activité rattachée)
+  // L'indice est un nombre : un nouveau plan ne relance pas la lecture.
   $effect(() => {
-    const idx = selection?.week.week_index;
+    version;
+    const idx = weekIndex;
     if (idx == null) return;
     let stale = false;
-    activities = [];
-    api
-      .activities(idx)
-      .then((a) => {
-        if (!stale) activities = a;
-      })
-      .catch(() => {}); // le détail reste lisible sans l'activité
+    untrack(() =>
+      cached(
+        `activities:${idx}`,
+        () => api.activities(idx),
+        (list) => {
+          if (!stale) weekActivities = { week: idx, list };
+        },
+      ),
+    ).catch(() => {}); // le détail reste lisible sans l'activité
     return () => {
       stale = true;
     };

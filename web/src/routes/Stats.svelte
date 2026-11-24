@@ -1,6 +1,7 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onMount, untrack } from "svelte";
   import { api, type HistoryState, type PersonalRecord, type StatActivity } from "../lib/api";
+  import { load as cached } from "../lib/cache";
   import {
     filterActivities,
     includesRunning,
@@ -85,12 +86,17 @@
   $effect(() => save({ choice, sport, metric }));
 
   async function loadAll() {
-    api.statsRecords().then(
-      (r) => (records = r.records),
-      () => (records = []),
-    );
+    cached("records", () => api.statsRecords(), (r) => (records = r.records)).catch(() => (records ??= []));
+    // Liste déjà affichée (compétition modifiée depuis, peut-être) : la valeur en cache ne la remplace pas.
+    let initial = true;
+    const shown = activities !== null;
+    const reading = cached("stats", () => api.statsActivities(), (r) => {
+      if (!initial || !shown) activities = r.activities;
+    });
+    initial = false;
     try {
-      activities = (await api.statsActivities()).activities;
+      await reading;
+      loadError = null;
     } catch (e) {
       loadError = e instanceof Error ? e.message : "Impossible de charger les activités";
     }
@@ -108,7 +114,7 @@
     }
     loadedVersion = v;
     loadError = null;
-    loadAll();
+    untrack(loadAll);
   });
 
   const all = $derived(activities ?? []);
@@ -175,8 +181,9 @@
 
   {#if loadError}
     <p class="banner error" role="alert">{loadError}</p>
-  {:else if activities === null}
-    <p class="busy">Chargement des statistiques…</p>
+  {/if}
+  {#if activities === null}
+    {#if !loadError}<p class="busy">Chargement des statistiques…</p>{/if}
   {:else if activities.length === 0 && history?.status === "idle"}
     <section class="card lg stack first-import">
       <h2>Aucune activité pour l'instant</h2>

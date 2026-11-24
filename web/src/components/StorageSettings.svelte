@@ -1,6 +1,10 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { api, ApiError, type StorageView } from "../lib/api";
+  import { clearCache } from "../lib/cache";
+
+  /** La base utilisée a pu changer (même après un échec) : l'appli relit ses données. */
+  let { onswitched }: { onswitched?: () => void } = $props();
 
   const GUIDE = "https://github.com/romigour/CoachCloclo#stockage-dans-le-cloud-turso";
 
@@ -19,6 +23,13 @@
       view = null;
     }
   });
+
+  /** Fin d'une bascule, désactivation ou effacement : aucune donnée de l'ancienne base ne doit réapparaître. */
+  function switched() {
+    busy = false;
+    clearCache();
+    onswitched?.();
+  }
 
   // Après un échec, le serveur a pu changer d'état (ex. retour en local avant un effacement raté) : on relit.
   async function fail(e: unknown) {
@@ -46,7 +57,7 @@
     } catch (e) {
       await fail(e);
     } finally {
-      busy = false;
+      switched();
     }
   }
 
@@ -58,7 +69,7 @@
     } catch (e) {
       await fail(e);
     } finally {
-      busy = false;
+      switched();
     }
   }
 
@@ -71,7 +82,7 @@
     } catch (e) {
       await fail(e);
     } finally {
-      busy = false;
+      switched();
     }
   }
 </script>

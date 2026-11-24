@@ -296,3 +296,34 @@ test("adding a race lists run and trail activities, searchable", async () => {
   await fireEvent.click(picker.getByRole("button", { name: /Séance 1/ }));
   expect(screen.getByRole("dialog", { name: /Compétition/ })).toBeInTheDocument();
 });
+
+// ---- Cache ----
+
+test("retour sur les statistiques : affichées sans attendre, gardées si la relecture échoue", async () => {
+  records = [{ kind: "5k", value: 1234, garmin_activity_id: 987654, date: "2025-04-12" }];
+  const first = render(Stats, { history: null, onimport: () => {} });
+  expect(await (await section(/^Records/)).findByText("20:34")).toBeInTheDocument();
+  first.unmount();
+  vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ detail: "Base coupée" }), { status: 503 })));
+  render(Stats, { history: null, onimport: () => {} });
+  await Promise.resolve();
+  expect(screen.getByRole("group", { name: "Séances" })).toBeInTheDocument();
+  expect(await screen.findByText("Base coupée")).toBeInTheDocument();
+  expect(screen.getByRole("group", { name: "Séances" })).toBeInTheDocument();
+  expect((await section(/^Records/)).getByText("20:34")).toBeInTheDocument();
+});
+
+test("compétition modifiée puis relecture : la valeur en cache ne la remplace pas", async () => {
+  activities = [...ACTS, RACE];
+  write = (_m, _u, body) => new Response(JSON.stringify({ ...RACE, race: { ...NO_RACE, ...(body as object) } }), { status: 200 });
+  const view = render(Stats, { history: null, onimport: () => {}, version: 0 });
+  const races = await section(/^Compétitions/);
+  await fireEvent.click(races.getByRole("button", { name: /Modifier/ }));
+  const dialog = within(screen.getByRole("dialog"));
+  await fireEvent.input(dialog.getByLabelText(/Temps officiel/), { target: { value: "0:41:30" } });
+  await fireEvent.click(dialog.getByRole("button", { name: "Enregistrer" }));
+  expect(await races.findByText("41:30")).toBeInTheDocument();
+  vi.stubGlobal("fetch", vi.fn(() => new Promise(() => {})));
+  await view.rerender({ version: 1 });
+  expect((await section(/^Compétitions/)).getByText("41:30")).toBeInTheDocument();
+});

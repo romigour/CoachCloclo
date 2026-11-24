@@ -1,5 +1,7 @@
 <script lang="ts">
+  import { untrack } from "svelte";
   import { api, type Activity, type Plan, type Session, type Status, type Week } from "../lib/api";
+  import { load as cached } from "../lib/cache";
   import { formatActivity } from "../lib/activity";
   import { goalLabel, nextRace } from "../lib/goals";
   import { addDays, formatDay, todayIso } from "../lib/dates";
@@ -24,9 +26,9 @@
   }: { version?: number; status?: Status | null; today?: string; onerror?: (e: unknown) => void } = $props();
 
   let plan = $state<Plan | null>(null);
-  let activities = $state<Activity[]>([]);
+  let weekActivities = $state<{ week: number; list: Activity[] } | null>(null);
   let error = $state<unknown>(null);
-  let reloads = $state(0); // incrémenté à chaque rechargement du plan, pour rafraîchir la liste des imprévus
+  let reloads = $state(0); // incrémenté après chaque action : activités et imprévus sont relus avec le plan
   let viewed = $state<number | null>(null); // semaine affichée (null : celle d'aujourd'hui)
   let picked = $state<number | null>(null); // séance choisie dans la semaine affichée
   let declaring = $state(false);
@@ -41,6 +43,9 @@
   const weeks = $derived(plan?.weeks ?? []);
   const current = $derived(plan ? currentWeek(plan.weeks, today) : null);
   const week = $derived(weeks.find((w) => w.week_index === viewed) ?? current);
+  const weekIndex = $derived(week?.week_index ?? null);
+  // seulement celles de la semaine affichée
+  const activities = $derived(weekActivities && weekActivities.week === weekIndex ? weekActivities.list : []);
   const isCurrent = $derived(!!week && week.week_index === current?.week_index);
   const position = $derived(week ? weeks.indexOf(week) : -1);
   const strip = $derived(week ? days(week) : []);
@@ -98,27 +103,45 @@
   const racesIn = (w: Week) => (plan?.goals ?? []).filter((g) => g.race_date >= w.week_monday && g.race_date <= addDays(w.week_monday, 6));
 
   async function load() {
+    // les imprévus partent avec le plan ; la liste partage cette lecture et affiche son éventuelle erreur
+    cached("events", () => api.events(), () => {}).catch(() => {});
     try {
-      plan = await api.plan();
-      reloads++;
+      await cached("plan", () => api.plan(), (p) => (plan = p));
     } catch (e) {
       fail(e);
     }
   }
 
+  /** Après une action : relit le plan, les activités et les imprévus. */
+  function reload() {
+    reloads++;
+    return load();
+  }
+
   $effect(() => {
     version; // recharge après chaque synchro
-    load();
+    untrack(load);
   });
 
   // activités de la semaine affichée (rattachement, « Corriger », dernière sortie)
+  // L'indice est un nombre : un nouveau plan ne relance pas la lecture.
   $effect(() => {
-    const idx = week?.week_index;
+    void [version, reloads];
+    const idx = weekIndex;
     if (idx == null) return;
-    api
-      .activities(idx)
-      .then((a) => (activities = a))
-      .catch(() => (activities = []));
+    let stale = false;
+    untrack(() =>
+      cached(
+        `activities:${idx}`,
+        () => api.activities(idx),
+        (list) => {
+          if (!stale) weekActivities = { week: idx, list };
+        },
+      ),
+    ).catch(() => {}); // la semaine reste lisible sans ses activités
+    return () => {
+      stale = true;
+    };
   });
 
   function show(w: Week | undefined) {
@@ -141,7 +164,7 @@
     generating = true;
     try {
       await api.generate();
-      await load();
+      await reload();
     } catch (e) {
       fail(e);
     } finally {
@@ -178,7 +201,7 @@
   </div>
 </header>
 
-<ErrorBanner {error} onpin={load} />
+<ErrorBanner {error} onpin={reload} />
 
 {#if !READONLY && declaring && plan?.cycle}
   <EventDialog
@@ -232,7 +255,7 @@
       {/if}
     {/if}
 
-    <InjuryBanner injury={plan.open_injury ?? null} {today} onproposal={goProposal} onresumed={load} />
+    <InjuryBanner injury={plan.open_injury ?? null} {today} onproposal={goProposal} onresumed={reload} />
 
     {#if week}
       <section class="stack" aria-labelledby="week-heading">
@@ -307,7 +330,7 @@
             when={`${focusDate === today ? "Aujourd'hui · " : ""}${capitalize(formatDay(focusDate ?? week.week_monday))} · S${week.week_index}`}
             readonly={stale}
             {activities}
-            onchanged={load}
+            onchanged={reload}
             onerror={fail}
           />
         {:else}
@@ -349,7 +372,7 @@
       </div>
     </div>
 
-    <EventList {today} reload={reloads} onproposal={goProposal} onchanged={load} />
+    <EventList {today} reload={version + reloads} onproposal={goProposal} onchanged={reload} />
   {/if}
 {:else if !error}
   <p class="busy">Chargement…</p>

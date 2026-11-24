@@ -304,6 +304,7 @@ dependencies = [
     { name = "fastapi" },
     { name = "garminconnect", extra = ["workout"] },
     { name = "gpxpy" },
+    { name = "httpx" },
     { name = "libsql" },
     { name = "platformdirs" },
     { name = "pydantic" },
@@ -320,7 +321,6 @@ desktop = [
     { name = "pystray" },
 ]
 dev = [
-    { name = "httpx" },
     { name = "pytest" },
 ]
 
@@ -330,6 +330,7 @@ requires-dist = [
     { name = "fastapi" },
     { name = "garminconnect", extras = ["workout"], specifier = ">=0.3,<0.4" },
     { name = "gpxpy" },
+    { name = "httpx" },
     { name = "libsql", specifier = ">=0.1.11" },
     { name = "platformdirs" },
     { name = "pydantic", specifier = ">=2" },
@@ -345,10 +346,7 @@ desktop = [
     { name = "pyinstaller" },
     { name = "pystray" },
 ]
-dev = [
-    { name = "httpx" },
-    { name = "pytest" },
-]
+dev = [{ name = "pytest" }]
 
 [[package]]
 name = "colorama"

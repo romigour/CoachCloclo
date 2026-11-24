@@ -15,6 +15,7 @@ dependencies = [
     "anthropic",
     "python-multipart",
     "libsql>=0.1.11",
+    "httpx",
 ]
 
 [project.scripts]
@@ -22,7 +23,7 @@ coach = "coach.cli:app"
 coachcloclo = "coach.cli:app"
 
 [dependency-groups]
-dev = ["pytest", "httpx"]
+dev = ["pytest"]
 desktop = ["pyinstaller", "pystray", "pillow"]
 
 [build-system]

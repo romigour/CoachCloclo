@@ -20,7 +20,9 @@
     session,
     weekMonday,
     readonly = false,
+    consult = READONLY,
     large = false,
+    when = "",
     activities = [],
     onchanged,
     onerror,
@@ -28,7 +30,11 @@
     session: Session;
     weekMonday: string;
     readonly?: boolean;
+    /** Consultation : statut et activité rattachée visibles, sans action (avec `readonly`). */
+    consult?: boolean;
     large?: boolean;
+    /** Date affichée en tête de carte (séance mise en avant). */
+    when?: string;
     activities?: Activity[];
     onchanged?: () => void;
     onerror?: (e: unknown) => void;
@@ -128,17 +134,36 @@
   }
 </script>
 
-<article class="session stack">
+{#snippet actionButtons()}
+  {#if session.status === "todo"}
+    <button class="primary" onclick={() => (dialog = "export")} disabled={busy}>Envoyer sur la montre</button>
+  {/if}
+  {#if session.status === "sync_error"}
+    <button class="primary" onclick={() => act(() => api.retry(session.id))} disabled={busy}>Réessayer</button>
+  {/if}
+  {#if session.status === "exported" || session.status === "sync_error"}
+    <button onclick={() => (dialog = "move")} disabled={busy}>Changer de jour</button>
+    <button class="danger" onclick={() => act(() => api.unschedule(session.id))} disabled={busy}>
+      Retirer de Garmin
+    </button>
+  {/if}
+{/snippet}
+
+<article class="session stack" class:large>
   <div class="row spread">
     <span class="row tight">
+      {#if when}<span class="when">{when}</span>{/if}
       <span class="chip {typeFamily(session.type)}">{TYPE_LABEL[session.type] ?? session.type}</span>
       {#if session.sport === "bike"}<span class="chip"><Icon name="bike" size={14} /> Vélo</span>{/if}
     </span>
-    {#if READONLY || !readonly}
+    {#if consult || !readonly}
       <span class="pill {session.status}">{STATUS_LABEL[session.status]}</span>
     {/if}
   </div>
 
+  <!-- en grand : résumé à gauche, étapes à droite ; sinon tout à la suite -->
+  <div class="session-body">
+  <div class="session-main">
   <div class="stack tight">
     <h2 class="session-title" class:lg={large}>{session.title}</h2>
     <div class="stats">
@@ -157,6 +182,8 @@
 
   {#if session.description}<p>{session.description}</p>{/if}
 
+  </div>
+  <div class="session-plan">
   {#if lines.length}
     <ol class="steps">
       {#each lines as line, i (i)}
@@ -166,8 +193,10 @@
   {/if}
 
   {#if session.chaining_note}<p class="tip">{session.chaining_note}</p>{/if}
+  </div>
+  </div>
 
-  {#if READONLY && (matched || session.status === "done")}
+  {#if consult && (matched || session.status === "done")}
     <p class="matched">
       <span class="meta">Activité :</span>
       {matched ? formatActivity(matched) : "rattachée"}
@@ -181,6 +210,9 @@
           <span class="meta">Activité :</span>
           {matched ? formatActivity(matched) : "rattachée"}
         </span>
+      {:else if large && session.status !== "missed"}
+        <!-- en grand : actions sur la même ligne que le rattachement -->
+        <span class="row tight">{@render actionButtons()}</span>
       {:else}
         <span></span>
       {/if}
@@ -255,21 +287,8 @@
 
   {#if session.sync_error}<p class="banner error">{session.sync_error}</p>{/if}
 
-  {#if !READONLY && !readonly && session.status !== "done" && session.status !== "missed"}
-    <div class="actions">
-      {#if session.status === "todo"}
-        <button class="primary" onclick={() => (dialog = "export")} disabled={busy}>Envoyer sur la montre</button>
-      {/if}
-      {#if session.status === "sync_error"}
-        <button class="primary" onclick={() => act(() => api.retry(session.id))} disabled={busy}>Réessayer</button>
-      {/if}
-      {#if session.status === "exported" || session.status === "sync_error"}
-        <button onclick={() => (dialog = "move")} disabled={busy}>Changer de jour</button>
-        <button class="danger" onclick={() => act(() => api.unschedule(session.id))} disabled={busy}>
-          Retirer de Garmin
-        </button>
-      {/if}
-    </div>
+  {#if !READONLY && !readonly && session.status !== "done" && session.status !== "missed" && (!large || matched)}
+    <div class="actions">{@render actionButtons()}</div>
   {/if}
 </article>
 

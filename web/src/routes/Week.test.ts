@@ -262,19 +262,11 @@ test("montre une carte Course le jour d'un objectif, et la semaine de course dan
   expect(screen.getByRole("button", { name: "Semaine 6 (course)" })).toBeVisible();
 });
 
-test("liste les objectifs de l'horizon sous le plan", async () => {
+test("la semaine est au-dessus du détail de la séance, sans liste Ensuite", async () => {
   mock({ ...plan, horizon: [later] });
-  render(Week, { today: "2026-11-03" });
-  const next = await screen.findByRole("region", { name: "Ensuite" });
-  expect(next).toHaveTextContent("Course sur route de 10 km");
-  expect(next).toHaveTextContent("Plaisir");
-  expect(next).toHaveTextContent("14 mars 2027");
-});
-
-test("sans horizon, pas de liste Ensuite", async () => {
-  mock();
-  render(Week, { today: "2026-11-03" });
-  await screen.findByRole("heading", { name: "Ma semaine" });
+  render(Week, { today: "2026-10-30" });
+  const week = await screen.findByRole("region", { name: "Cette semaine" });
+  expect(week.compareDocumentPosition(focus()) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   expect(screen.queryByRole("region", { name: "Ensuite" })).toBeNull();
 });
 

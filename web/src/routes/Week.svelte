@@ -2,7 +2,7 @@
   import { api, type Activity, type Plan, type Session, type Status, type Week } from "../lib/api";
   import { formatActivity } from "../lib/activity";
   import { goalLabel, nextRace } from "../lib/goals";
-  import { addDays, formatDate, formatDay, todayIso } from "../lib/dates";
+  import { addDays, formatDay, todayIso } from "../lib/dates";
   import { STATUS_LABEL, TYPE_SHORT, typeFamily } from "../lib/labels";
   import { formatDuration, totalSeconds } from "../lib/profile";
   import { currentWeek, days, daysUntil, focusSession, openSessions, sessionDate } from "../lib/week";
@@ -12,7 +12,6 @@
   import EventDialog from "../components/EventDialog.svelte";
   import EventList from "../components/EventList.svelte";
   import InjuryBanner from "../components/InjuryBanner.svelte";
-  import PriorityBadge from "../components/PriorityBadge.svelte";
   import RaceDayCard from "../components/RaceDayCard.svelte";
   import { READONLY } from "../lib/mode";
   import AdjustBanner from "../components/AdjustBanner.svelte";
@@ -167,6 +166,9 @@
     {#if !READONLY && plan?.cycle?.plan_accepted}
       <button class="ghost" onclick={() => (declaring = true)}>Signaler un imprévu</button>
     {/if}
+    {#if plan?.cycle && allSessions.length && (plan.cycle.plan_accepted || stale)}
+      <a class="head-link" href="#/program"><Icon name="calendar" size={16} /> Programme complet</a>
+    {/if}
     {#if goal}
       <div class="goal-pill">
         <span class="goal-what"><span class="meta">Objectif</span><strong>{goalLabel(goal)}{goal.type === "trail" ? ` · ${goal.d_plus_m} m D+` : ""}</strong></span>
@@ -232,60 +234,6 @@
 
     <InjuryBanner injury={plan.open_injury ?? null} {today} onproposal={goProposal} onresumed={load} />
 
-    <div class="focus-row">
-      <section class="focus" aria-label="Séance sélectionnée">
-        {#if focus && week}
-          <p class="when">
-            {focusDate === today ? "Aujourd'hui · " : ""}{capitalize(formatDay(focusDate ?? week.week_monday))} · S{week.week_index}
-          </p>
-          <SessionCard
-            session={focus}
-            weekMonday={week.week_monday}
-            large
-            readonly={stale}
-            {activities}
-            onchanged={load}
-            onerror={fail}
-          />
-        {:else}
-          <p class="when">{isCurrent ? "Aujourd'hui" : `Semaine ${week?.week_index ?? ""}`}</p>
-          <div class="stack rest">
-            <h2>{isCurrent ? "Repos aujourd'hui" : "Aucune séance"}</h2>
-            <p>{isCurrent ? "Plus aucune séance prévue cette semaine. Le repos fait partie du plan." : "Pas de séance prévue cette semaine-là."}</p>
-            {#if weeks[position + 1]}
-              <button class="primary" onclick={() => show(weeks[position + 1])}>Voir la semaine suivante</button>
-            {/if}
-          </div>
-        {/if}
-      </section>
-
-      <div class="side">
-        {#if week}
-          <section class="card stack" aria-label="Bilan de la semaine">
-            <span class="meta">Semaine {week.week_index} sur {weeks.length}</span>
-            <p class="tally"><strong>{done}</strong><span class="of">/{week.sessions.length}</span> <span>séances faites</span></p>
-            {#if week.sessions.length}
-              <div class="dots" aria-hidden="true">
-                {#each week.sessions as s (s.id)}<span class={s.status}></span>{/each}
-              </div>
-            {/if}
-            {#if volume}<p class="meta">{volume} d'entraînement prévues</p>{/if}
-          </section>
-        {/if}
-        {#if isCurrent}
-          <section class="card stack" aria-label="Dernière activité">
-            <span class="meta">Dernière activité</span>
-            {#if lastActivity}
-              <p>{formatActivity(lastActivity)}{#if lastActivity.avg_hr} · FC moy. {lastActivity.avg_hr}{/if}</p>
-              <p class="meta">{lastActivity.session_id != null ? "Rattachée à une séance du plan" : "Pas rattachée à une séance"}</p>
-            {:else}
-              <p class="empty">Aucune activité cette semaine.</p>
-            {/if}
-          </section>
-        {/if}
-      </div>
-    </div>
-
     {#if week}
       <section class="stack" aria-labelledby="week-heading">
         <div class="week-nav">
@@ -349,22 +297,59 @@
       </section>
     {/if}
 
-    <EventList {today} reload={reloads} onproposal={goProposal} onchanged={load} />
-
-    {#if plan.horizon.length}
-      <section class="card stack" aria-labelledby="plan-next">
-        <h2 id="plan-next">Ensuite</h2>
-        <p class="meta">Ces courses seront préparées par le cycle suivant.</p>
-        <ul class="plain stack" style:gap="8px">
-          {#each plan.horizon as g (g.id)}
-            <li class="row">
-              <PriorityBadge priority={g.priority} />
-              <span>{goalLabel(g)}{g.type === "trail" ? ` · ${g.d_plus_m} m D+` : ""} · {formatDate(g.race_date)}</span>
-            </li>
-          {/each}
-        </ul>
+    <div class="focus-row">
+      <section class="focus" aria-label="Séance sélectionnée">
+        {#if focus && week}
+          <SessionCard
+            session={focus}
+            weekMonday={week.week_monday}
+            large
+            when={`${focusDate === today ? "Aujourd'hui · " : ""}${capitalize(formatDay(focusDate ?? week.week_monday))} · S${week.week_index}`}
+            readonly={stale}
+            {activities}
+            onchanged={load}
+            onerror={fail}
+          />
+        {:else}
+          <p class="when">{isCurrent ? "Aujourd'hui" : `Semaine ${week?.week_index ?? ""}`}</p>
+          <div class="stack rest">
+            <h2>{isCurrent ? "Repos aujourd'hui" : "Aucune séance"}</h2>
+            <p>{isCurrent ? "Plus aucune séance prévue cette semaine. Le repos fait partie du plan." : "Pas de séance prévue cette semaine-là."}</p>
+            {#if weeks[position + 1]}
+              <button class="primary" onclick={() => show(weeks[position + 1])}>Voir la semaine suivante</button>
+            {/if}
+          </div>
+        {/if}
       </section>
-    {/if}
+
+      <div class="side">
+        {#if week}
+          <section class="card stack" aria-label="Bilan de la semaine">
+            <span class="meta">Semaine {week.week_index} sur {weeks.length}</span>
+            <p class="tally"><strong>{done}</strong><span class="of">/{week.sessions.length}</span> <span>séances faites</span></p>
+            {#if week.sessions.length}
+              <div class="dots" aria-hidden="true">
+                {#each week.sessions as s (s.id)}<span class={s.status}></span>{/each}
+              </div>
+            {/if}
+            {#if volume}<p class="meta">{volume} d'entraînement prévues</p>{/if}
+          </section>
+        {/if}
+        {#if isCurrent}
+          <section class="card stack" aria-label="Dernière activité">
+            <span class="meta">Dernière activité</span>
+            {#if lastActivity}
+              <p>{formatActivity(lastActivity)}{#if lastActivity.avg_hr} · FC moy. {lastActivity.avg_hr}{/if}</p>
+              <p class="meta">{lastActivity.session_id != null ? "Rattachée à une séance du plan" : "Pas rattachée à une séance"}</p>
+            {:else}
+              <p class="empty">Aucune activité cette semaine.</p>
+            {/if}
+          </section>
+        {/if}
+      </div>
+    </div>
+
+    <EventList {today} reload={reloads} onproposal={goProposal} onchanged={load} />
   {/if}
 {:else if !error}
   <p class="busy">Chargement…</p>

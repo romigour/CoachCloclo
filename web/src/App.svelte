@@ -9,16 +9,17 @@
   import Welcome from "./routes/Welcome.svelte";
   import Setup from "./routes/Setup.svelte";
   import Goal from "./routes/Goal.svelte";
+  import Program from "./routes/Program.svelte";
   import Week from "./routes/Week.svelte";
   import Proposal from "./routes/Proposal.svelte";
   import Race from "./routes/Race.svelte";
   import Stats from "./routes/Stats.svelte";
 
-  type Route = "week" | "race" | "stats" | "goal" | "setup" | "proposal" | "welcome" | "connection";
+  type Route = "week" | "program" | "race" | "stats" | "goal" | "setup" | "proposal" | "welcome" | "connection";
   // En lecture seule (PWA mobile) : seules les pages de consultation et la connexion existent.
   const ROUTES: readonly Route[] = READONLY
-    ? ["week", "stats", "connection"]
-    : ["week", "race", "stats", "goal", "setup", "proposal", "welcome"];
+    ? ["week", "program", "stats", "connection"]
+    : ["week", "program", "race", "stats", "goal", "setup", "proposal", "welcome"];
   // anciennes adresses (Aujourd'hui, Programme) : fusionnées dans « Ma semaine »
   const ALIASES: Record<string, Route> = { today: "week", plan: "week" };
 
@@ -265,13 +266,15 @@
         <Setup onchanged={refresh} onconnected={garminConnected} {syncing} />
       {:else if route === "goal"}
         <Goal onchanged={refresh} />
-      {:else if route === "week" && toPrepare}
+      {:else if (route === "week" || route === "program") && toPrepare}
         <p class="card">
           Ton cycle est terminé et une course t'attend encore.
           {#if !READONLY}<a href="#/goal">Préparer le cycle suivant</a>{/if}
         </p>
       {:else if route === "week"}
         <Week {version} {status} onerror={failed} />
+      {:else if route === "program"}
+        <Program {version} />
       {:else if route === "race"}
         {#if status?.next_goal}
           <Race

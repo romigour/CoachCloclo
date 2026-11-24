@@ -33,7 +33,7 @@
   </div>
 
   <nav class="nav" aria-label="Navigation principale">
-    <a href="#/week" class:active={route === "week" || route === "proposal"} aria-current={route === "week" ? "page" : undefined}>
+    <a href="#/week" class:active={route === "week" || route === "program" || route === "proposal"} aria-current={route === "week" ? "page" : undefined}>
       <Icon name="calendar" /> Ma semaine
       {#if status?.pending_proposal_id != null}
         <span class="count" aria-label="1 proposition en attente">1</span>

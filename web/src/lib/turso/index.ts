@@ -43,7 +43,6 @@ const UNAVAILABLE = new Set(["auth", "unreachable"]);
 /** Statut minimal quand la base est indisponible (miroir de `status()` côté Python). */
 function minimalStatus(code: string, detail: string): Status {
   return {
-    garmin: "unavailable",
     llm_mode: "cli",
     pending_proposal_id: null,
     cycle: null,

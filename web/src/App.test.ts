@@ -10,6 +10,11 @@ let statsCalls = 0;
 let syncInstant = false;
 let syncFails = false;
 let syncResent = 0;
+let syncChanged = true;
+let garminBody = "ok"; // réponse de GET /api/garmin/state
+let garminGate: Promise<unknown> | null = null; // retient cette réponse
+let setupGate: Promise<unknown> | null = null; // retient celle de /api/setup/status
+let phase: string | null = null;
 let afterSync: (() => void) | null = null;
 let setupBody: Record<string, unknown> | null = null; // null : 404, comme sous `coach start`
 
@@ -34,20 +39,32 @@ beforeEach(() => {
   syncInstant = false;
   syncFails = false;
   syncResent = 0;
+  syncChanged = true;
+  garminBody = "ok";
+  garminGate = setupGate = null;
+  phase = null;
+  syncDone = null;
   afterSync = null;
   setupBody = null;
   localStorage.clear();
-  statusBody = { garmin: "ok", llm_mode: "cli", pending_proposal_id: null, cycle, goals: [goal], next_goal: goal, has_activities: false, history: idle };
+  statusBody = { llm_mode: "cli", pending_proposal_id: null, cycle, goals: [goal], next_goal: goal, has_activities: false, history: idle };
   location.hash = "";
   vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
     const method = init?.method ?? "GET";
     calls.push({ url, method });
     let body: unknown = {};
     if (url === "/api/setup/status") {
+      await setupGate;
       if (!setupBody) return new Response(JSON.stringify({ code: "not_found", detail: "Not Found" }), { status: 404 });
       body = setupBody;
     }
     else if (url === "/api/status") body = statusBody;
+    else if (url === "/api/garmin/state") {
+      await garminGate;
+      if (garminBody === "échec") return new Response("{}", { status: 500 });
+      body = { garmin: garminBody };
+    }
+    else if (url === "/api/sync/phase") body = { phase };
     else if (url === "/api/stats/activities") { statsCalls++; body = { activities: [] }; }
     else if (url === "/api/stats/records") body = { records: [] };
     else if (url === "/api/plan") body = plan;
@@ -58,7 +75,7 @@ beforeEach(() => {
       if (!syncInstant) await new Promise<void>((r) => (syncDone = r));
       if (syncFails) return new Response(JSON.stringify({ code: "garmin_unavailable", detail: "Garmin coupé" }), { status: 503 });
       afterSync?.();
-      body = { new_activities: 0, matched: 0, missed: 0, proposal_id: null, resent: syncResent, hr_rest: 44 };
+      body = { new_activities: 0, matched: 0, missed: 0, proposal_id: null, resent: syncResent, hr_rest: 44, changed: syncChanged };
     }
     return new Response(JSON.stringify(body), { status: 200 });
   }));
@@ -70,13 +87,12 @@ afterEach(() => {
 
 const syncs = () => calls.filter((c) => c.url === "/api/sync" && c.method === "POST").length;
 
-test("auto-sync runs once per load, shows the Claude message, and survives navigation", async () => {
+test("auto-sync runs once per load and survives navigation", async () => {
   location.hash = "#/week";
   render(App);
-  expect(await screen.findAllByText("Analyse de ta séance par Claude…")).not.toHaveLength(0);
   await waitFor(() => expect(syncs()).toBe(1));
   syncDone!();
-  await waitFor(() => expect(screen.queryByRole("status")).toBeNull());
+  await screen.findByText(/Dernière synchro/);
 
   location.hash = "#/goal";
   window.dispatchEvent(new HashChangeEvent("hashchange"));
@@ -109,11 +125,11 @@ test("default route is the goal without plan nor activities", async () => {
   syncDone?.();
 });
 
-test("auto-sync runs without a goal and says Garmin", async () => {
+test("auto-sync runs without a goal, without any banner", async () => {
   statusBody = { ...statusBody, ...noGoal };
   render(App);
-  expect(await screen.findAllByText("Synchronisation Garmin…")).not.toHaveLength(0);
   await waitFor(() => expect(syncs()).toBe(1));
+  expect(screen.queryByText("Synchronisation Garmin…")).toBeNull();
   syncDone!();
 });
 
@@ -161,12 +177,13 @@ async function loginToGarmin() {
 
 test("first Garmin login syncs, then opens stats once activities exist", async () => {
   syncInstant = true;
-  statusBody = { ...statusBody, garmin: "auth_required", ...noGoal };
+  garminBody = "auth_required";
+  statusBody = { ...statusBody, ...noGoal };
   location.hash = "#/setup";
   render(App);
   await screen.findByLabelText("E-mail Garmin");
   expect(syncs()).toBe(0);
-  statusBody = { ...statusBody, garmin: "ok" };
+  garminBody = "ok";
   afterSync = () => (statusBody = { ...statusBody, has_activities: true });
   await loginToGarmin();
   await waitFor(() => expect(syncs()).toBe(1));
@@ -175,11 +192,12 @@ test("first Garmin login syncs, then opens stats once activities exist", async (
 
 test("first Garmin login without any activity after sync goes to the goal", async () => {
   syncInstant = true;
-  statusBody = { ...statusBody, garmin: "auth_required", ...noGoal };
+  garminBody = "auth_required";
+  statusBody = { ...statusBody, ...noGoal };
   location.hash = "#/setup";
   render(App);
   await screen.findByLabelText("E-mail Garmin"); // formulaire affiché tant que Garmin n'est pas connecté
-  statusBody = { ...statusBody, garmin: "ok" };
+  garminBody = "ok";
   await loginToGarmin();
   await waitFor(() => expect(syncs()).toBe(1));
   await waitFor(() => expect(location.hash).toBe("#/goal"));
@@ -188,12 +206,13 @@ test("first Garmin login without any activity after sync goes to the goal", asyn
 test("a failed sync after the first Garmin login stays on settings with its error", async () => {
   syncInstant = true;
   syncFails = true;
-  statusBody = { ...statusBody, garmin: "auth_required", ...noGoal };
+  garminBody = "auth_required";
+  statusBody = { ...statusBody, ...noGoal };
   location.hash = "#/setup";
   await new Promise((r) => setTimeout(r, 0)); // laisse passer le hashchange initial (il efface l'erreur)
   render(App);
   await screen.findByLabelText("E-mail Garmin"); // formulaire affiché tant que Garmin n'est pas connecté
-  statusBody = { ...statusBody, garmin: "ok" };
+  garminBody = "ok";
   await loginToGarmin();
   await waitFor(() => expect(syncs()).toBe(1));
   await screen.findByText("Garmin est indisponible pour le moment, réessaie plus tard.");
@@ -260,7 +279,7 @@ test("pas de lien Connecte Claude sous coach start (404)", async () => {
 
 test("revient à l'étape Garmin quand la connexion Garmin a expiré", async () => {
   setupBody = { ...setupOk, garmin: "auth_required" };
-  statusBody = { ...statusBody, garmin: "auth_required" };
+  garminBody = "auth_required";
   render(App);
   await waitFor(() => expect(location.hash).toBe("#/welcome"));
   expect(await screen.findByLabelText("E-mail Garmin")).toBeTruthy();
@@ -438,7 +457,7 @@ test("bascule de stockage depuis les Réglages : zones et état relus (appli et 
   render(App);
   const button = await screen.findByRole("button", { name: "Revenir au stockage local" });
   await waitFor(() => expect(syncs()).toBe(1));
-  await waitFor(() => expect(screen.queryByText("Analyse de ta séance par Claude…")).toBeNull());
+  await screen.findByRole("button", { name: "Synchroniser" });
   const count = (u: string) => calls.filter((c) => c.url === u).length;
   const [zones, status] = [count("/api/zones"), count("/api/status")];
   await fireEvent.click(button);
@@ -500,7 +519,7 @@ async function pendingSwitch(over: { status?: () => Promise<Response> | null; ge
   render(App);
   const button = await screen.findByRole("button", { name: "Revenir au stockage local" });
   await waitFor(() => expect(syncs()).toBe(1));
-  await waitFor(() => expect(screen.queryByText("Analyse de ta séance par Claude…")).toBeNull());
+  await screen.findByRole("button", { name: "Synchroniser" });
   await screen.findByRole("button", { name: /Réimporter/ });
   await fireEvent.click(button);
   return ctl;
@@ -633,4 +652,347 @@ test("bascule ratée : l'erreur du stockage reste affichée dans les Réglages",
   expect(await screen.findByText("Bascule impossible")).toBeVisible();
   await pause();
   expect(screen.getByText("Bascule impossible")).toBeVisible();
+});
+
+// --- démarrage sans attendre Garmin, synchro discrète ---
+
+const BANNER = "Analyse de ta séance par Claude…";
+const plans = () => calls.filter((c) => c.url === "/api/plan").length;
+const phases = () => calls.filter((c) => c.url === "/api/sync/phase").length;
+const states = () => calls.filter((c) => c.url === "/api/garmin/state").length;
+/** Réponse retenue jusqu'à `open()`. */
+function gate() {
+  let open = () => {};
+  const closed = new Promise<void>((r) => (open = r));
+  return { closed, open: () => open() };
+}
+const failSync = () => {
+  syncFails = true;
+  syncDone!();
+};
+/** Remplace certaines réponses ; `null` : réponse habituelle. */
+function override(custom: (url: string) => Promise<Response> | Response | null) {
+  const base = vi.mocked(fetch).getMockImplementation()!;
+  vi.mocked(fetch).mockImplementation(async (url, init) => custom(String(url)) ?? base(url, init));
+}
+
+test("affiche la semaine avant la réponse de Garmin", async () => {
+  const [g, i] = [gate(), gate()];
+  garminGate = g.closed;
+  setupGate = i.closed;
+  setupBody = { ...setupOk };
+  render(App);
+  await screen.findByText("Ma semaine", { selector: "h1" });
+  expect(await screen.findByText("Vérification de Garmin…")).toBeVisible();
+  expect(screen.queryByRole("button", { name: /Synchro/ })).toBeNull();
+  expect(screen.queryByRole("link", { name: "Se connecter" })).toBeNull();
+  await pause();
+  expect(syncs()).toBe(0);
+  g.open(); // l'installation (CLI Claude) n'a toujours pas répondu
+  expect(await screen.findByText("Garmin connecté")).toBeVisible();
+  await waitFor(() => expect(syncs()).toBe(1));
+  expect(states()).toBe(1);
+  i.open();
+  await pause();
+  expect(location.hash).toBe("#/week");
+  syncDone!();
+});
+
+test("aucun bandeau pendant la phase garmin", async () => {
+  phase = "garmin";
+  location.hash = "#/week";
+  vi.useFakeTimers();
+  render(App);
+  await vi.advanceTimersByTimeAsync(3000);
+  expect(syncs()).toBe(1);
+  expect(phases()).toBeGreaterThan(0);
+  expect(screen.queryByText(BANNER)).toBeNull();
+  expect(screen.queryByText("Synchronisation Garmin…")).toBeNull();
+  expect(screen.getByRole("button", { name: "Synchronisation…" })).toBeDisabled();
+  syncDone!();
+});
+
+test("bandeau Claude en phase claude seulement, retiré à la fin", async () => {
+  phase = "garmin";
+  location.hash = "#/week";
+  vi.useFakeTimers();
+  render(App);
+  await vi.advanceTimersByTimeAsync(2000);
+  expect(screen.queryByText(BANNER)).toBeNull();
+  phase = "claude";
+  await vi.advanceTimersByTimeAsync(1000);
+  expect(screen.getByText(BANNER)).toBeVisible();
+  syncDone!();
+  await vi.advanceTimersByTimeAsync(50);
+  expect(screen.queryByText(BANNER)).toBeNull();
+});
+
+test("une réponse de phase arrivée après la synchro ne réaffiche pas le bandeau", async () => {
+  const late: ((r: Response) => void)[] = [];
+  override((url) => (url === "/api/sync/phase" ? new Promise<Response>((r) => late.push(r)) : null));
+  location.hash = "#/week";
+  vi.useFakeTimers();
+  render(App);
+  await vi.advanceTimersByTimeAsync(3500);
+  expect(late).toHaveLength(1); // pas de nouveau sondage tant que le précédent n'a pas répondu
+  syncDone!();
+  await vi.advanceTimersByTimeAsync(50);
+  late[0](reply({ phase: "claude" }));
+  await vi.advanceTimersByTimeAsync(50);
+  expect(screen.queryByText(BANNER)).toBeNull();
+});
+
+test.each([false, true])("le sondage de phase s'arrête après la synchro, réussie ou non (échec : %s)", async (ko) => {
+  phase = "claude";
+  location.hash = "#/week";
+  vi.useFakeTimers();
+  render(App);
+  await vi.advanceTimersByTimeAsync(2500);
+  expect(phases()).toBeGreaterThan(0);
+  expect(screen.getByText(BANNER)).toBeVisible();
+  if (ko) failSync();
+  else syncDone!();
+  await vi.advanceTimersByTimeAsync(50);
+  expect(screen.queryByText(BANNER)).toBeNull();
+  const before = phases();
+  await vi.advanceTimersByTimeAsync(5000);
+  expect(phases()).toBe(before);
+});
+
+test.each([false, true])("synchro sans changement : /api/plan non relu (changement : %s)", async (changed) => {
+  syncChanged = changed;
+  location.hash = "#/week";
+  render(App);
+  await waitFor(() => expect(syncs()).toBe(1));
+  const before = plans();
+  const status = calls.filter((c) => c.url === "/api/status").length;
+  syncDone!();
+  await screen.findByText(/Dernière synchro/);
+  await pause();
+  expect(plans()).toBe(before + (changed ? 1 : 0));
+  expect(calls.filter((c) => c.url === "/api/status").length).toBeGreaterThan(status);
+});
+
+test("synchro en échec : pages relues, l'erreur reste affichée", async () => {
+  location.hash = "#/week";
+  render(App);
+  await waitFor(() => expect(syncs()).toBe(1));
+  const before = plans();
+  failSync();
+  const message = "Garmin est indisponible pour le moment, réessaie plus tard.";
+  await screen.findByText(message);
+  await waitFor(() => expect(plans()).toBe(before + 1));
+  await pause();
+  expect(screen.getByText(message)).toBeVisible();
+});
+
+test("garmin auth_required sans route demandée : renvoi vers #/setup", async () => {
+  const g = gate();
+  garminGate = g.closed;
+  garminBody = "auth_required";
+  render(App);
+  await waitFor(() => expect(location.hash).toBe("#/week"));
+  g.open();
+  await waitFor(() => expect(location.hash).toBe("#/setup"));
+  expect(await screen.findByLabelText("E-mail Garmin")).toBeVisible();
+  expect(syncs()).toBe(0);
+});
+
+test("garmin auth_required après navigation : pas de renvoi", async () => {
+  const g = gate();
+  garminGate = g.closed;
+  garminBody = "auth_required";
+  render(App);
+  await waitFor(() => expect(location.hash).toBe("#/week"));
+  goto("#/goal");
+  g.open();
+  expect(await screen.findByText("Connexion Garmin requise")).toBeVisible();
+  await pause();
+  expect(location.hash).toBe("#/goal");
+});
+
+test("route demandée au lancement : pas de renvoi", async () => {
+  garminBody = "auth_required";
+  setupBody = { ...setupOk, garmin: "auth_required" };
+  location.hash = "#/week";
+  render(App);
+  expect(await screen.findByText("Connexion Garmin requise")).toBeVisible();
+  await pause();
+  expect(location.hash).toBe("#/week");
+});
+
+test("installation incomplète avec un plan : accueil tout de suite, puis #/welcome", async () => {
+  const i = gate();
+  setupGate = i.closed;
+  setupBody = { ...setupOk, claude_auth: false };
+  render(App);
+  await waitFor(() => expect(location.hash).toBe("#/week"));
+  i.open();
+  await waitFor(() => expect(location.hash).toBe("#/welcome"));
+  syncDone?.();
+});
+
+test("premier lancement : attend l'installation puis #/welcome", async () => {
+  const i = gate();
+  setupGate = i.closed;
+  setupBody = { ...setupOk, claude_auth: false };
+  statusBody = { ...statusBody, ...noGoal };
+  render(App);
+  await screen.findByText("Garmin connecté");
+  await pause();
+  expect(location.hash).toBe("");
+  i.open();
+  await waitFor(() => expect(location.hash).toBe("#/welcome"));
+  syncDone?.();
+});
+
+test("premier lancement : attend aussi Garmin", async () => {
+  const g = gate();
+  garminGate = g.closed;
+  garminBody = "auth_required";
+  statusBody = { ...statusBody, ...noGoal };
+  render(App);
+  await screen.findByText("Vérification de Garmin…");
+  await pause();
+  expect(location.hash).toBe("");
+  g.open();
+  await waitFor(() => expect(location.hash).toBe("#/setup"));
+});
+
+test("garminState en échec : unavailable, pages consultables", async () => {
+  garminBody = "échec";
+  render(App);
+  expect(await screen.findByText("Garmin indisponible")).toBeVisible();
+  expect(await screen.findByText("Ma semaine", { selector: "h1" })).toBeVisible();
+  await pause();
+  expect(location.hash).toBe("#/week");
+  expect(screen.queryByRole("alert")).toBeNull();
+  expect(syncs()).toBe(0);
+});
+
+test("Garmin indisponible au lancement : relu à l'ouverture des Réglages", async () => {
+  garminBody = "unavailable";
+  location.hash = "#/week";
+  render(App);
+  await screen.findByText("Garmin indisponible");
+  garminBody = "ok";
+  goto("#/setup");
+  expect(await screen.findByText("Garmin connecté")).toBeVisible();
+  expect(await screen.findByRole("button", { name: "Changer de compte" })).toBeVisible();
+});
+
+test("session Garmin refusée pendant la synchro : état relu", async () => {
+  override((url) =>
+    url === "/api/sync" ? reply({ code: "garmin_auth", detail: "Session expirée" }, 401) : null);
+  const g = gate();
+  garminGate = g.closed;
+  location.hash = "#/setup";
+  render(App);
+  await screen.findByText("Vérification de Garmin…");
+  await pause();
+  g.open();
+  await screen.findByText("Garmin connecté");
+  garminBody = "auth_required";
+  expect(await screen.findByText("Connexion Garmin requise")).toBeVisible();
+  expect(await screen.findByLabelText("E-mail Garmin")).toBeVisible();
+});
+
+test.each([false, true])("la synchro attend la page, 5 s au plus (page bloquée : %s)", async (stuck) => {
+  const g = gate();
+  override((url) => (url === "/api/plan" ? g.closed.then(() => reply(plan)) : null));
+  location.hash = "#/week";
+  vi.useFakeTimers();
+  render(App);
+  await vi.advanceTimersByTimeAsync(4500);
+  expect(syncs()).toBe(0);
+  if (!stuck) g.open();
+  await vi.advanceTimersByTimeAsync(stuck ? 1000 : 100);
+  expect(syncs()).toBe(1);
+  g.open();
+  syncDone!();
+});
+
+test("clic sur Synchroniser avant la synchro de démarrage : une seule", async () => {
+  syncInstant = true;
+  const g = gate();
+  override((url) => (url === "/api/plan" ? g.closed.then(() => reply(plan)) : null));
+  location.hash = "#/week";
+  render(App);
+  await fireEvent.click(await screen.findByRole("button", { name: "Synchroniser" }));
+  await screen.findByText(/Dernière synchro/);
+  g.open();
+  await pause();
+  await pause();
+  expect(syncs()).toBe(1);
+});
+
+test("application fermée avant la synchro de démarrage : elle ne part pas", async () => {
+  const g = gate();
+  garminGate = g.closed;
+  location.hash = "#/week";
+  const { unmount } = render(App);
+  await screen.findByText("Vérification de Garmin…");
+  unmount();
+  g.open();
+  await pause();
+  await pause();
+  expect(syncs()).toBe(0);
+});
+
+test("connexion Garmin réussie : état relu avant la synchro", async () => {
+  syncInstant = true;
+  garminBody = "auth_required";
+  statusBody = { ...statusBody, has_activities: true };
+  location.hash = "#/setup";
+  render(App);
+  await screen.findByLabelText("E-mail Garmin");
+  const g = gate();
+  garminGate = g.closed;
+  garminBody = "ok";
+  const before = states();
+  await loginToGarmin();
+  await waitFor(() => expect(states()).toBeGreaterThan(before));
+  await pause();
+  expect(syncs()).toBe(0);
+  g.open();
+  await waitFor(() => expect(syncs()).toBe(1));
+  expect(location.hash).toBe("#/week");
+});
+
+test("PIN saisi : état Garmin relu puis synchro", async () => {
+  let locked = true;
+  override((url) => {
+    if (url === "/api/auth/pin") locked = false;
+    return locked ? reply({ code: "pin_required", detail: "PIN" }, 401) : null;
+  });
+  render(App);
+  await fireEvent.input(await screen.findByLabelText("Code PIN"), { target: { value: "1234" } });
+  await fireEvent.click(screen.getByRole("button", { name: "Entrer" }));
+  await waitFor(() => expect(location.hash).toBe("#/week"));
+  await waitFor(() => expect(syncs()).toBe(1));
+  syncDone!();
+});
+
+test("bascule de stockage pendant le premier lancement : pas de renvoi sans état", async () => {
+  const i = gate();
+  setupGate = i.closed;
+  setupBody = { ...setupOk };
+  let hang = false;
+  override((url) => {
+    if (url === "/api/status" && hang) return new Promise<Response>(() => {}); // nouvel état jamais lu
+    if (!url.startsWith("/api/storage")) return null;
+    return reply({ mode: "turso", turso_url: "libsql://x", has_turso_token: true });
+  });
+  statusBody = { ...statusBody, ...noGoal };
+  render(App);
+  await screen.findByText("Garmin connecté");
+  goto("#/setup");
+  const button = await screen.findByRole("button", { name: "Revenir au stockage local" });
+  hang = true;
+  await fireEvent.click(button);
+  await pause();
+  i.open();
+  await pause();
+  expect(location.hash).toBe("#/setup");
+  syncDone?.();
 });

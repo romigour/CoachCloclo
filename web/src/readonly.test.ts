@@ -125,6 +125,18 @@ test("App : accueil Ma semaine si plan accepté", async () => {
   await waitFor(() => expect(location.hash).toBe("#/week"));
 });
 
+test("App : aucune lecture d'installation ni de Garmin", async () => {
+  const setup = vi.spyOn(api, "setupStatus");
+  const fetchSpy = vi.spyOn(globalThis, "fetch");
+  render(App);
+  await waitFor(() => expect(location.hash).toBe("#/week"));
+  expect(setup).not.toHaveBeenCalled();
+  expect(fetchSpy.mock.calls.filter(([u]) => String(u).startsWith("/api/"))).toEqual([]);
+  expect(document.querySelector(".garmin-box")).toBeNull();
+  setup.mockRestore();
+  fetchSpy.mockRestore();
+});
+
 test("App : accueil stats si plan non accepté", async () => {
   over.status = { ...f.status, cycle: { ...f.status.cycle, plan_accepted: false } };
   render(App);

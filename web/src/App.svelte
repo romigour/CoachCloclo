@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { api, ApiError, claudeSkipped, setupDone, type SetupStatus, type Status } from "./lib/api";
-  import { clearCache, noteWrite } from "./lib/cache";
+  import { api, ApiError, claudeSkipped, setupDone, type GarminState, type SetupStatus, type Status } from "./lib/api";
+  import { clearCache, noteWrite, pendingLoads } from "./lib/cache";
   import { loadZones, resetZones } from "./lib/zones.svelte";
   import { READONLY } from "./lib/mode";
   import ErrorBanner from "./components/ErrorBanner.svelte";
@@ -27,6 +27,9 @@
   let route = $state<Route | null>(parse());
   let raceGoalId = $state<number | null>(parseGoalId()); // #/race/{id} : objectif choisi depuis la page Objectifs
   let status = $state<Status | null>(null);
+  let garmin = $state<GarminState>("checking");
+  let garminReads = 0; // numéro de la dernière lecture de l'état Garmin : une réponse plus ancienne est ignorée
+  let starts = 0; // numéro du dernier démarrage (premier chargement, PIN saisi) : la suite d'un plus ancien est ignorée
   let setupAvailable = $state(false); // appli de bureau : l'écran d'accueil existe
   let error = $state<unknown>(null);
   let version = $state(0);
@@ -36,6 +39,8 @@
   let syncing = $state(false);
   let resentNote = $state(""); // séances renvoyées à la montre par la dernière synchro
   let lastSync = $state<Date | null>(null);
+  let posting = $state(false); // POST /api/sync en cours : la phase est lue chaque seconde
+  let phase = $state<"garmin" | "claude" | null>(null);
   let autoSyncStarted = false; // une seule synchro automatique par chargement de l'app
 
   function parse(): Route | null {
@@ -55,14 +60,18 @@
   // cycle terminé et objectifs encore à venir : le cycle suivant est à préparer (page Objectifs)
   const toPrepare = $derived(!!status && status.cycle === null && status.goals.length > 0);
 
-  /** Page d'accueil : le plan en cours d'abord, sinon le cycle suivant à préparer, sinon les statistiques,
-   * sinon l'objectif à fixer. */
-  function home(): string {
+  /** Accueil selon les données : le plan en cours d'abord, sinon le cycle suivant à préparer, sinon les
+   * statistiques, sinon l'objectif à fixer. */
+  function dataHome(): string {
     if (READONLY) return status?.cycle?.plan_accepted ? "#/week" : "#/stats";
-    if (status?.garmin === "auth_required") return "#/setup";
     if (status?.cycle?.plan_accepted) return "#/week";
     if (toPrepare) return "#/goal";
     return status?.has_activities ? "#/stats" : "#/goal";
+  }
+
+  /** Page d'accueil : les Réglages si Garmin est à reconnecter. */
+  function home(): string {
+    return !READONLY && garmin === "auth_required" ? "#/setup" : dataHome();
   }
 
   /** La base a pu changer : oublie l'état de l'ancienne, y compris les lectures en vol. */
@@ -135,7 +144,28 @@
     }
   }
 
+  /** Relit l'état Garmin (un échec vaut `unavailable`) ; `null` si une lecture plus récente est partie. */
+  async function readGarmin(): Promise<GarminState | null> {
+    const mine = ++garminReads;
+    let next: GarminState;
+    try {
+      next = await api.garminState();
+    } catch {
+      next = "unavailable";
+    }
+    if (mine !== garminReads) return null;
+    garmin = next;
+    return next;
+  }
+
+  /** Change de page ; la route suit sans attendre l'événement `hashchange`. */
+  function go(hash: string) {
+    location.hash = hash;
+    route = parse();
+  }
+
   async function start() {
+    const mine = ++starts;
     if (READONLY) {
       // Import dynamique : libsql ne doit pas entrer dans le bundle bureau.
       const { loadCredentials } = await import("./lib/turso");
@@ -146,20 +176,75 @@
         return;
       }
     }
-    const [setup] = await Promise.all([readSetup(), refresh()]);
-    setupAvailable = setup !== null;
+    let reads: Promise<[SetupStatus | null, GarminState | null]> | null = null;
+    let garminRead: Promise<GarminState | null> | null = null;
+    if (!READONLY) {
+      garmin = "checking";
+      garminRead = readGarmin();
+      const setupRead = readSetup().then((s) => {
+        if (mine === starts) setupAvailable = s !== null;
+        return s;
+      });
+      reads = Promise.all([setupRead, garminRead]);
+    }
+    // Base changée pendant la lecture : la réponse a été ignorée, on relit.
+    let read: number;
+    do {
+      read = generation;
+      await refresh();
+    } while (read !== generation && mine === starts);
+    if (mine !== starts) return;
     ready = true;
-    if (!READONLY && !autoSyncStarted && !error && !storageError && status?.garmin === "ok") {
-      autoSyncStarted = true;
-      sync();
+    const usable = !!status && !error && !storageError;
+    if (!reads || !garminRead) {
+      if (!route) {
+        if (usable) location.hash = home();
+        // La lecture a échoué, la page de connexion évite une page blanche.
+        else if (error) location.hash = "#/connection";
+      }
+      return;
     }
-    if (!route) {
-      // Configuration incomplète : l'écran d'accueil, même si /api/status a échoué.
-      if (setup && !setupDone(setup, claudeSkipped())) location.hash = "#/welcome";
-      else if (!error && !storageError) location.hash = home();
-      // Lecture seule : la lecture a échoué, la page de connexion évite une page blanche.
-      else if (READONLY && error) location.hash = "#/connection";
+    const content = !!status && (!!status.cycle || status.goals.length > 0 || status.has_activities);
+    const chosen = !route; // aucune page demandée : on la choisit
+    if (chosen && usable && content) {
+      go(dataHome());
+    } else if (chosen) {
+      // Premier lancement ou état illisible : l'installation et Garmin décident de la page.
+      const [setup] = await reads;
+      if (mine !== starts) return;
+      if (!parse()) {
+        // Configuration incomplète : l'écran d'accueil, même si /api/status a échoué.
+        if (setup && !setupDone(setup, claudeSkipped())) go("#/welcome");
+        else if (status && !error && !storageError) go(home());
+      }
     }
+    if (usable) autoSync(garminRead, mine);
+    if (chosen && usable && content) reorient(reads, mine, location.hash);
+  }
+
+  /** Accueil déjà affiché : renvoi vers l'installation ou Garmin s'il en manque, sauf si on a changé de page. */
+  async function reorient(reads: Promise<[SetupStatus | null, GarminState | null]>, mine: number, shown: string) {
+    const [setup, state] = await reads;
+    // `state` nul : Garmin a été reconnecté entre-temps, ces réponses ne valent plus.
+    if (mine !== starts || state === null || location.hash !== shown) return;
+    if (setup && !setupDone(setup, claudeSkipped())) go("#/welcome");
+    else if (state === "auth_required") go("#/setup");
+  }
+
+  /** Synchro de démarrage : Garmin connecté et contenu de la page chargé (5 s au plus). */
+  async function autoSync(garminRead: Promise<GarminState | null>, mine: number) {
+    if ((await garminRead) !== "ok" || mine !== starts) return;
+    await contentLoaded();
+    if (mine === starts && !autoSyncStarted && !storageError) sync();
+  }
+
+  /** Fin des lectures de la page affichée, 5 s au plus (une fenêtre masquée ne dessine rien). */
+  async function contentLoaded() {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const limit = new Promise<void>((r) => (timer = setTimeout(r, 5000)));
+    const drawn = new Promise<void>((r) => requestAnimationFrame(() => r()));
+    await Promise.race([drawn.then(pendingLoads), limit]);
+    clearTimeout(timer);
   }
 
   /** « Réessayer » sur la page de base indisponible : relit l'état, puis oriente si la base est revenue. */
@@ -182,34 +267,66 @@
     return () => clearInterval(timer);
   });
 
+  // Pendant la synchro, la phase est lue chaque seconde ; une réponse arrivée après la fin est ignorée.
+  $effect(() => {
+    if (!posting) return;
+    let active = true;
+    let asking = false;
+    const timer = setInterval(async () => {
+      if (asking) return;
+      asking = true;
+      try {
+        const next = await api.syncPhase();
+        if (active) phase = next;
+      } catch {
+        // phase inconnue : on garde la précédente
+      } finally {
+        asking = false;
+      }
+    }, 1000);
+    return () => {
+      active = false;
+      clearInterval(timer);
+      phase = null;
+    };
+  });
+
   onMount(() => {
     const onhash = () => {
       route = parse();
+      // Réglages ouverts : l'état Garmin a pu changer depuis le lancement (connexion revenue, session expirée).
+      if (!READONLY && route === "setup" && garmin !== "checking") readGarmin();
       raceGoalId = parseGoalId();
       error = null;
       if (READONLY && route !== "connection") guard();
     };
     window.addEventListener("hashchange", onhash);
     start();
-    return () => window.removeEventListener("hashchange", onhash);
+    return () => {
+      starts++; // plus de synchro de démarrage une fois l'application fermée
+      window.removeEventListener("hashchange", onhash);
+    };
   });
 
   /** Renvoie `false` si la synchro a échoué (l'erreur est alors affichée). */
   async function sync(): Promise<boolean> {
     if (syncing) return true;
-    syncing = true;
+    autoSyncStarted = true;
+    syncing = posting = true;
     resentNote = "";
     try {
-      const r = await api.sync();
+      const r = await api.sync().finally(() => (posting = false));
       if (r.resent > 0) {
         resentNote = `${r.resent} ${r.resent > 1 ? "séances mises" : "séance mise"} à jour sur ta montre (FC repos ${r.hr_rest})`;
       }
       lastSync = new Date();
-      version++;
-      await refresh();
+      if (r.changed) version++;
+      await refresh(); // toujours : la synchro a pu lancer un import
       return true;
     } catch (e) {
       failed(e);
+      version++; // des données ont pu être écrites avant l'échec
+      await refresh(false);
       return false;
     } finally {
       syncing = false;
@@ -218,8 +335,8 @@
 
   /** Connexion Garmin réussie depuis les Réglages : synchronise (même si une synchro a déjà eu lieu) puis oriente. */
   async function garminConnected() {
-    await refresh();
     autoSyncStarted = true;
+    await Promise.all([refresh(), readGarmin()]);
     if (status?.has_activities) {
       // Activités déjà là : on les montre tout de suite, la synchro se fait en arrière-plan.
       location.hash = home();
@@ -234,6 +351,7 @@
 
   function failed(e: unknown) {
     error = e;
+    if (e instanceof ApiError && e.code === "garmin_auth") readGarmin();
   }
 
   async function importHistory() {
@@ -249,16 +367,14 @@
 </script>
 
 <div class="shell">
-  <Sidebar {route} {status} {syncing} {lastSync} onsync={sync} />
+  <Sidebar {route} {status} {garmin} {syncing} {lastSync} onsync={sync} />
 
   <main class="content">
     {#if !READONLY}<UpdateBanner />{/if}
     <ErrorBanner {error} onpin={start} {setupAvailable} />
 
-    {#if syncing}
-      <p class="card busy" role="status">
-        {status?.cycle ? "Analyse de ta séance par Claude…" : "Synchronisation Garmin…"}
-      </p>
+    {#if phase === "claude"}
+      <p class="card busy" role="status">Analyse de ta séance par Claude…</p>
     {/if}
     {#if resentNote}<p class="card busy" role="status">{resentNote}</p>{/if}
 
@@ -291,7 +407,7 @@
         {:else if route === "welcome"}
           <Welcome onconnected={garminConnected} />
         {:else if route === "setup"}
-          <Setup onchanged={refresh} onswitched={storageSwitched} onconnected={garminConnected} {syncing} />
+          <Setup onchanged={refresh} onswitched={storageSwitched} onconnected={garminConnected} {syncing} {garmin} />
         {:else if route === "goal"}
           <Goal onchanged={refresh} />
         {:else if (route === "week" || route === "program") && toPrepare}

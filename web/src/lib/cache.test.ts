@@ -198,3 +198,13 @@ test("toute écriture de l'API compte, réussie ou non ; pas les lectures", asyn
   expect(m.fetcher).toHaveBeenCalledTimes(1);
   vi.unstubAllGlobals();
 });
+
+test("pendingLoads n'attend pas les lectures d'avant clearCache", async () => {
+  const m = manual();
+  load("plan", m.fetcher, () => {});
+  clearCache();
+  let done = false;
+  pendingLoads().then(() => (done = true));
+  await tick();
+  expect(done).toBe(true);
+});

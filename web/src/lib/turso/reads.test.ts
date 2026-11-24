@@ -27,8 +27,7 @@ describe.each(["active", "between"] as const)("lectures (%s)", (s) => {
     expect(await zones(await loadFixtureDb(s))).toEqual(expected[s].zones);
   });
   it("status", async () => {
-    const { garmin, llm_mode, storage, ...rest } = await status(await loadFixtureDb(s), "2026-11-14");
-    expect(garmin).toBe("unavailable");
+    const { llm_mode, storage, ...rest } = await status(await loadFixtureDb(s), "2026-11-14");
     expect(llm_mode).toBe("cli");
     expect(storage).toBeNull();
     expect(rest).toEqual(expected[s].status);

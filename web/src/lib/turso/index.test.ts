@@ -85,7 +85,7 @@ test.each([
   const s = await turso.status();
   expect(s.cycle).toBeNull();
   expect(s.goals).toEqual([]);
-  expect(s.garmin).toBe("unavailable");
+  expect(s).not.toHaveProperty("garmin");
   expect(s.history).toEqual({ status: "idle", imported: 0, error: null, total: null, finished_at: null });
   expect(s.storage).toEqual({ code, detail: err.detail });
 });

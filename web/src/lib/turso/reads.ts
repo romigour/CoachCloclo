@@ -144,7 +144,6 @@ export async function status(db: Db, today: string): Promise<Status> {
     last = r ? cycleDict(r) : null;
   }
   return {
-    garmin: "unavailable",
     llm_mode: "cli",
     pending_proposal_id: proposal ? Number(proposal.id) : null,
     cycle,

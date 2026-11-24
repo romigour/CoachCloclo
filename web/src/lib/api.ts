@@ -271,8 +271,10 @@ export function cycleGoal(plan: Pick<Plan, "cycle" | "goals">): Goal | null {
   );
 }
 
+/** Connexion Garmin ; `checking` tant que GET /api/garmin/state n'a pas répondu. */
+export type GarminState = "checking" | "ok" | "auth_required" | "unavailable";
+
 export type Status = {
-  garmin: "ok" | "auth_required" | "unavailable";
   llm_mode: "cli" | "api";
   pending_proposal_id: number | null;
   /** Cycle actif (réglages et plan), nul sans plan en cours. */
@@ -314,7 +316,7 @@ export type SetupStatus = {
   claude_auth: boolean;
   claude_step: "idle" | "installing" | "logging_in" | "failed";
   claude_error: string | null;
-  garmin: "ok" | "auth_required" | "unavailable";
+  garmin: Exclude<GarminState, "checking">;
   llm_mode: "cli" | "api";
 };
 
@@ -363,6 +365,8 @@ export type SyncResult = {
   proposal_id: number | null;
   resent: number;
   hr_rest: number | null;
+  /** Faux : la synchro n'a rien changé de visible, les pages ne sont pas relues. */
+  changed: boolean;
 };
 
 /** Journaux de diagnostic (GET/PUT /api/diagnostics) ; `can_open` : appli de bureau, depuis ce PC. */
@@ -671,7 +675,11 @@ const rawApi = {
     get<Activity[]>(`/activities/free?days=${days}&sport=${sport}`),
   match: (activityId: number, sessionId: number | null) =>
     post<{ status: string }>(`/activities/${activityId}/match`, { session_id: sessionId }),
+  /** État de la connexion Garmin (lent : le serveur construit un client). */
+  garminState: async () => (await get<{ garmin: Exclude<GarminState, "checking"> }>("/garmin/state")).garmin,
   sync: () => post<SyncResult>("/sync"),
+  /** Phase de la synchro en cours, `null` sinon. */
+  syncPhase: async () => (await get<{ phase: "garmin" | "claude" | null }>("/sync/phase")).phase,
   pendingProposal: () => get<Proposal | null>("/proposals/pending"),
   acceptProposal: (id: number) => post<{ sync_error_ids: number[] }>(`/proposals/${id}/accept`),
   rejectProposal: (id: number) => post<{ status: string }>(`/proposals/${id}/reject`),

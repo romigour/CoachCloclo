@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { api, ApiError, type SettingsView, type Status } from "../lib/api";
+  import { api, ApiError, type GarminState, type SettingsView, type Status } from "../lib/api";
   import ErrorBanner from "../components/ErrorBanner.svelte";
   import GarminLogin from "../components/GarminLogin.svelte";
   import LanSettings from "../components/LanSettings.svelte";
@@ -18,7 +18,14 @@
     onswitched,
     onconnected,
     syncing = false,
-  }: { onchanged?: () => void; onconnected?: () => void; onswitched?: () => void; syncing?: boolean } = $props();
+    garmin,
+  }: {
+    onchanged?: () => void;
+    onconnected?: () => void;
+    onswitched?: () => void;
+    syncing?: boolean;
+    garmin: GarminState;
+  } = $props();
 
   let status = $state<Status | null>(null);
   let settings = $state<SettingsView | null>(null);
@@ -71,6 +78,7 @@
   });
 
   const GARMIN_LABEL = {
+    checking: "Vérification…",
     ok: "Connecté",
     auth_required: "Connexion requise",
     unavailable: "Indisponible",
@@ -187,23 +195,21 @@
         <div class="set-row">
           <div class="set-label">
             <h3>Connexion Garmin</h3>
-            {#if status?.garmin === "ok"}
+            {#if garmin === "ok"}
               <p>Compte Garmin Connect relié. Saisis un autre compte pour en changer.</p>
-            {:else}
+            {:else if garmin !== "checking"}
               <p>Connecte ton compte Garmin Connect pour importer tes activités.</p>
             {/if}
           </div>
           <div class="set-ctl">
-            {#if status}
-              <span class="state-pill" class:ok={status.garmin === "ok"} class:ko={status.garmin !== "ok"}>
-                {GARMIN_LABEL[status.garmin]}
-              </span>
-            {/if}
-            {#if status?.garmin === "ok" && !garminForm}
+            <span class="state-pill" class:ok={garmin === "ok"} class:ko={garmin !== "ok" && garmin !== "checking"}>
+              {GARMIN_LABEL[garmin]}
+            </span>
+            {#if garmin === "ok" && !garminForm}
               <button type="button" onclick={() => (garminForm = true)}>Changer de compte</button>
             {/if}
           </div>
-          {#if status && (status.garmin !== "ok" || garminForm)}
+          {#if garminForm || (garmin !== "ok" && garmin !== "checking")}
             <div class="set-extra boxed">
               <GarminLogin onconnected={connected} oncancel={garminForm ? () => (garminForm = false) : undefined} />
             </div>
@@ -290,7 +296,7 @@
           </div>
           {#if status}
             <div class="set-ctl">
-              <button type="button" onclick={reimport} disabled={status.history.status === "running" || status.garmin !== "ok"}>
+              <button type="button" onclick={reimport} disabled={status.history.status === "running" || garmin !== "ok"}>
                 <Icon name="sync" size={15} /> Réimporter l'historique
               </button>
             </div>

@@ -78,6 +78,7 @@ export function clearCache(): void {
   generation++;
   kept.clear();
   reads.clear();
+  pending.clear();
 }
 
 /** Fin des lectures en cours, y compris celles lancées entre-temps, réussies ou non. */

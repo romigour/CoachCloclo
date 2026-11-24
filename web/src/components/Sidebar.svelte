@@ -1,23 +1,26 @@
 <script lang="ts">
-  import type { Status } from "../lib/api";
+  import type { GarminState, Status } from "../lib/api";
   import Icon from "./Icon.svelte";
   import { READONLY } from "../lib/mode";
 
   let {
     route,
     status,
+    garmin = "checking",
     syncing = false,
     lastSync = null,
     onsync,
   }: {
     route: string | null;
     status: Status | null;
+    garmin?: GarminState;
     syncing?: boolean;
     lastSync?: Date | null;
     onsync?: () => void;
   } = $props();
 
   const GARMIN = {
+    checking: "Vérification de Garmin…",
     ok: "Garmin connecté",
     auth_required: "Connexion Garmin requise",
     unavailable: "Garmin indisponible",
@@ -64,16 +67,16 @@
   {#if status && !READONLY}
     <div class="garmin-box">
       <span class="state">
-        <span class="dot" class:ok={status.garmin === "ok"} class:ko={status.garmin !== "ok"}></span>
-        {GARMIN[status.garmin]}
+        <span class="dot" class:ok={garmin === "ok"} class:ko={garmin !== "ok" && garmin !== "checking"}></span>
+        {GARMIN[garmin]}
       </span>
-      {#if status.garmin === "ok"}
+      {#if garmin === "ok"}
         {#if lastSync}<span class="meta">Dernière synchro à {time(lastSync)}</span>{/if}
         <button onclick={() => onsync?.()} disabled={syncing} aria-busy={syncing}>
           <Icon name="sync" size={15} />
           {syncing ? "Synchronisation…" : "Synchroniser"}
         </button>
-      {:else}
+      {:else if garmin !== "checking"}
         <a class="more" href="#/setup">Se connecter</a>
       {/if}
     </div>

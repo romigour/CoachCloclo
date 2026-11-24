@@ -6,7 +6,20 @@ import pytest
 from coach.garmin.port import LapSummary
 from coach.llm.schemas import RepeatSpec, StepSpec
 from coach.plan.models import Activity, AthleteSnapshot, Event, Goal, Proposal, Session
-from coach.plan.repo import Repo, make_engine
+from coach.plan.repo import (
+    Repo,
+    active_cycle_stmt,
+    count_activities_stmt,
+    last_done_cycle_stmt,
+    make_engine,
+    open_injury_stmt,
+    past_goals_stmt,
+    pending_proposal_stmt,
+    recent_done_goals_stmt,
+    sessions_stmt,
+    state_stmt,
+    upcoming_goals_stmt,
+)
 from tests.llm.factories import make_session
 from tests.plan.factories import make_activity, make_cycle, make_db_session, make_goal
 
@@ -613,3 +626,105 @@ def test_has_activity_on(repo):
     repo.add(make_activity(date=date(2026, 11, 20)))
     assert repo.has_activity_on(date(2026, 11, 20)) is True
     assert repo.has_activity_on(date(2026, 11, 21)) is False
+
+
+# --- lectures groupées -------------------------------------------------------------------------------
+
+
+@pytest.fixture(params=["sqlite", "hrana"])
+def grouped(request, tmp_path):
+    """(dépôt, serveur) : SQLite local (serveur None) ou base distante simulée, déjà échauffée."""
+    from coach.storage.libsql_dialect import remote_engine
+    from tests.storage.fake_hrana import FakeHrana
+
+    if request.param == "sqlite":
+        yield Repo(make_engine(tmp_path / "g.db")), None
+        return
+    server = FakeHrana(tmp_path / "g.db")
+    engine = remote_engine("libsql://x.turso.io", "tok", transport=server.transport)
+    from coach.plan.repo import prepare_engine
+
+    repo = Repo(prepare_engine(engine))
+    repo.get_state("warmup")  # la première connexion envoie un PRAGMA de plus
+    yield repo, server
+    engine.dispose()
+
+
+def _seed(repo: Repo) -> None:
+    repo.add(make_goal(race_date=date(2027, 1, 31), include_bike=True))
+    repo.add(make_goal(race_date=date(2026, 11, 20), status="done"))
+    repo.add(make_goal(race_date=date(2026, 6, 1), status="done"))
+    repo.add(make_cycle(status="done", end_date=date(2026, 9, 1)))
+    repo.add(make_cycle())
+    repo.add(make_db_session(2, week_index=1))
+    repo.add(make_db_session(2, week_index=2))
+    repo.add(Event(cycle_id=2, kind="injury", start_date=date(2026, 11, 1), end_date=None))
+    repo.add(Proposal(status="pending", analysis="a", changes_json="[]"))
+    repo.add(make_activity())
+    repo.set_state("k", {"v": 1})
+
+
+def test_read_batch_matches_single_reads(grouped):
+    repo, _ = grouped
+    _seed(repo)
+    today = date(2026, 11, 24)
+    got = repo.read_batch(
+        active_cycle_stmt(),
+        upcoming_goals_stmt(),
+        past_goals_stmt(),
+        recent_done_goals_stmt(today),
+        last_done_cycle_stmt(today),
+        sessions_stmt(2),
+        sessions_stmt(2, 2),
+        open_injury_stmt(2),
+        pending_proposal_stmt(),
+        count_activities_stmt(),
+        state_stmt("k"),
+    )
+    assert got[0] == [repo.active_cycle()]
+    assert got[1] == repo.upcoming_goals() and got[1][0].include_bike is True
+    assert got[2] == repo.past_goals()
+    assert got[3] == repo.recent_done_goals(today) and len(got[3]) == 1
+    assert got[4] == [repo.last_done_cycle(today)]
+    assert got[5] == repo.sessions(2) and len(got[5]) == 2
+    assert got[6] == repo.sessions(2, 2) and len(got[6]) == 1
+    assert got[7] == [repo.open_injury(2)]
+    assert got[8] == [repo.pending_proposal()]
+    assert got[9] == [repo.count_activities()] == [1]
+    assert [r.key for r in got[10]] == ["k"]
+    assert got[1][0].race_date == date(2027, 1, 31)
+
+
+def test_read_batch_is_one_send(grouped):
+    repo, server = grouped
+    _seed(repo)
+    before = server.sends if server else 0
+    repo.read_batch(
+        active_cycle_stmt(), upcoming_goals_stmt(), pending_proposal_stmt(), count_activities_stmt(), state_stmt("k")
+    )
+    if server:
+        assert server.sends == before + 1
+
+
+def test_read_batch_is_one_send_with_repeated_statement(grouped):
+    repo, server = grouped
+    before = server.sends if server else 0
+    out = repo.read_batch(count_activities_stmt(), count_activities_stmt())
+    assert out == [[0], [0]]
+    if server:
+        assert server.sends == before + 1
+
+
+def test_read_batch_empty_results(grouped):
+    repo, _ = grouped
+    assert repo.read_batch(active_cycle_stmt(), upcoming_goals_stmt(), count_activities_stmt()) == [[], [], [0]]
+
+
+def test_read_batch_value_with_colon_and_quote(grouped):
+    repo, server = grouped
+    repo.set_state("a:b'c", {"v": 2})
+    before = server.sends if server else 0
+    (rows,) = repo.read_batch(state_stmt("a:b'c"))
+    assert [r.key for r in rows] == ["a:b'c"]
+    if server:
+        assert server.sends == before + 1

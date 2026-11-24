@@ -9,6 +9,7 @@ from pathlib import Path
 from pydantic import TypeAdapter
 from sqlalchemy import func, inspect, text
 from sqlalchemy.engine import Engine
+from sqlalchemy.sql import Select
 from sqlmodel import Session as DbSession
 from sqlmodel import SQLModel, create_engine, delete, select
 
@@ -154,12 +155,102 @@ def _migrate(engine: Engine) -> None:
         _add_columns(conn, "session", {"export_hr_zones_json": "VARCHAR"})
 
 
+def active_cycle_stmt() -> Select:
+    return select(Cycle).where(Cycle.status == "active").order_by(Cycle.id.desc()).limit(1)
+
+
+def upcoming_goals_stmt() -> Select:
+    """Objectifs actifs, du plus proche au plus lointain."""
+    return select(Goal).where(Goal.status == "active").order_by(Goal.race_date, Goal.id)
+
+
+def past_goals_stmt() -> Select:
+    """Objectifs courus (`done`), du plus récent au plus ancien."""
+    return select(Goal).where(Goal.status == "done").order_by(Goal.race_date.desc(), Goal.id.desc())
+
+
+def recent_done_goals_stmt(today: date, days: int = 14) -> Select:
+    """Objectifs courus (`done`) dans les `days` derniers jours, du plus ancien au plus récent."""
+    return (
+        select(Goal)
+        .where(Goal.status == "done", Goal.race_date >= today - timedelta(days=days), Goal.race_date <= today)
+        .order_by(Goal.race_date, Goal.id)
+    )
+
+
+def last_done_cycle_stmt(before: date) -> Select:
+    """Dernier cycle terminé avant `before` (par date de fin)."""
+    return (
+        select(Cycle)
+        .where(Cycle.status == "done", Cycle.end_date < before)
+        .order_by(Cycle.end_date.desc(), Cycle.id.desc())
+        .limit(1)
+    )
+
+
+def sessions_stmt(cycle_id: int, week_index: int | None = None) -> Select:
+    stmt = select(Session).where(Session.cycle_id == cycle_id)
+    if week_index is not None:
+        stmt = stmt.where(Session.week_index == week_index)
+    return stmt.order_by(Session.week_index, Session.order)
+
+
+def open_injury_stmt(cycle_id: int) -> Select:
+    """Arrêt en cours (blessure sans date de fin) du cycle."""
+    return (
+        select(Event)
+        .where(Event.cycle_id == cycle_id, Event.kind == "injury", Event.end_date == None)  # noqa: E711
+        .order_by(Event.id.desc())
+        .limit(1)
+    )
+
+
+def pending_proposal_stmt() -> Select:
+    return select(Proposal).where(Proposal.status == "pending").order_by(Proposal.id.desc()).limit(1)
+
+
+def count_activities_stmt() -> Select:
+    return select(func.count()).select_from(Activity)
+
+
+def state_stmt(key: str) -> Select:
+    return select(AppState).where(AppState.key == key)
+
+
 class Repo:
     def __init__(self, engine: Engine):
         self.engine = engine
 
     def _open(self) -> DbSession:
         return DbSession(self.engine, expire_on_commit=False)
+
+    def read_batch(self, *statements: Select) -> list[list]:
+        """Exécute ces lectures ; rend pour chacune ses entités ou ses scalaires (une colonne), dans l'ordre.
+
+        Sur une base distante, toutes partent en un seul envoi : chaque requête est compilée avec ses
+        valeurs en clair (`literal_binds`), préchargée, puis exécutée avec le même texte, qui consomme
+        le résultat préchargé. N'accepter que des valeurs produites par l'appli (entiers, dates,
+        constantes), jamais une saisie brute. Sans préchargement (SQLite local), elles s'exécutent une à une.
+        """
+        with self._open() as db:
+            raw = db.connection().connection.driver_connection
+            if not hasattr(raw, "prefetch"):
+                return [list(db.exec(stmt)) for stmt in statements]
+            dialect = self.engine.dialect
+            sqls = [str(stmt.compile(dialect=dialect, compile_kwargs={"literal_binds": True})) for stmt in statements]
+            raw.prefetch(sqls)
+            done: dict[str, list] = {}  # une requête répétée n'est exécutée qu'une fois
+            results = []
+            for stmt, sql in zip(statements, sqls, strict=True):
+                if sql not in done:
+                    query = text(sql.replace(":", "\\:"))  # `:` échappé : text() y verrait un paramètre
+                    entity = stmt.column_descriptions[0]["entity"]
+                    if entity is not None:
+                        done[sql] = list(db.execute(select(entity).from_statement(query)).scalars())
+                    else:
+                        done[sql] = [row[0] for row in db.execute(query)]
+                results.append(list(done[sql]))
+            return results
 
     @contextmanager
     def transaction(self) -> Iterator[DbSession]:
@@ -207,42 +298,29 @@ class Repo:
 
     def active_cycle(self) -> Cycle | None:
         with self._open() as db:
-            stmt = select(Cycle).where(Cycle.status == "active").order_by(Cycle.id.desc())
-            return db.exec(stmt).first()
+            return db.exec(active_cycle_stmt()).first()
 
     def upcoming_goals(self) -> list[Goal]:
         """Objectifs actifs, du plus proche au plus lointain."""
-        stmt = select(Goal).where(Goal.status == "active").order_by(Goal.race_date, Goal.id)
         with self._open() as db:
-            return list(db.exec(stmt))
+            return list(db.exec(upcoming_goals_stmt()))
 
     def past_goals(self) -> list[Goal]:
         """Objectifs courus (`done`), du plus récent au plus ancien."""
-        stmt = select(Goal).where(Goal.status == "done").order_by(Goal.race_date.desc(), Goal.id.desc())
         with self._open() as db:
-            return list(db.exec(stmt))
+            return list(db.exec(past_goals_stmt()))
 
     def recent_done_goals(self, today: date, days: int = 14) -> list[Goal]:
         """Objectifs courus (`done`) dans les `days` derniers jours, du plus ancien au plus récent :
         ils forment encore des blocs et des courses rapprochées avec les objectifs à venir."""
-        stmt = (
-            select(Goal)
-            .where(Goal.status == "done", Goal.race_date >= today - timedelta(days=days), Goal.race_date <= today)
-            .order_by(Goal.race_date, Goal.id)
-        )
         with self._open() as db:
-            return list(db.exec(stmt))
+            return list(db.exec(recent_done_goals_stmt(today, days)))
 
     def last_done_cycle(self, before: date) -> Cycle | None:
         """Dernier cycle terminé avant `before` (par date de fin) ; ignore les cycles clos d'avance,
         par exemple ceux créés à la migration pour un objectif retiré encore à venir."""
-        stmt = (
-            select(Cycle)
-            .where(Cycle.status == "done", Cycle.end_date < before)
-            .order_by(Cycle.end_date.desc(), Cycle.id.desc())
-        )
         with self._open() as db:
-            return db.exec(stmt).first()
+            return db.exec(last_done_cycle_stmt(before)).first()
 
     def goals_in(self, cycle: Cycle) -> list[Goal]:
         """Objectifs actifs dont la course tombe dans le cycle."""
@@ -257,12 +335,8 @@ class Repo:
             return db.exec(select(RaceStrategy).where(RaceStrategy.goal_id == goal_id)).first()
 
     def sessions(self, cycle_id: int, week_index: int | None = None) -> list[Session]:
-        stmt = select(Session).where(Session.cycle_id == cycle_id)
-        if week_index is not None:
-            stmt = stmt.where(Session.week_index == week_index)
-        stmt = stmt.order_by(Session.week_index, Session.order)
         with self._open() as db:
-            return list(db.exec(stmt))
+            return list(db.exec(sessions_stmt(cycle_id, week_index)))
 
     def events(self, cycle_id: int) -> list[Event]:
         """Imprévus du cycle, le plus récent d'abord."""
@@ -276,13 +350,8 @@ class Repo:
 
     def open_injury(self, cycle_id: int) -> Event | None:
         """Arrêt en cours (blessure sans date de fin), s'il y en a un."""
-        stmt = (
-            select(Event)
-            .where(Event.cycle_id == cycle_id, Event.kind == "injury", Event.end_date == None)  # noqa: E711
-            .order_by(Event.id.desc())
-        )
         with self._open() as db:
-            return db.exec(stmt).first()
+            return db.exec(open_injury_stmt(cycle_id)).first()
 
     def session(self, id: int) -> Session:
         with self._open() as db:
@@ -302,9 +371,8 @@ class Repo:
             return db.exec(stmt).first()
 
     def pending_proposal(self) -> Proposal | None:
-        stmt = select(Proposal).where(Proposal.status == "pending").order_by(Proposal.id.desc())
         with self._open() as db:
-            return db.exec(stmt).first()
+            return db.exec(pending_proposal_stmt()).first()
 
     def latest_snapshot(self) -> AthleteSnapshot | None:
         stmt = select(AthleteSnapshot).order_by(AthleteSnapshot.date.desc(), AthleteSnapshot.id.desc())
@@ -338,7 +406,7 @@ class Repo:
 
     def count_activities(self) -> int:
         with self._open() as db:
-            return db.exec(select(func.count()).select_from(Activity)).one()
+            return db.exec(count_activities_stmt()).one()
 
     def has_activities(self) -> bool:
         with self._open() as db:

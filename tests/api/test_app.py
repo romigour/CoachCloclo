@@ -1,6 +1,7 @@
 import logging
 import sqlite3
 import threading
+import time
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
@@ -21,12 +22,15 @@ from coach.plan.models import Activity, AthleteSnapshot, LlmUsage, Race
 from coach.services.history import HistoryState, save_state
 from coach.services.sync import load_sync_state
 from tests.llm.factories import valid_plan_json
-from coach.plan.repo import Repo, SchemaTooNew, make_engine
+from coach.plan.repo import Repo, SchemaTooNew, make_engine, prepare_engine
 from coach.storage import switch as switch_mod
 from coach.storage.cloud_errors import CloudUnreachable
+from coach.storage.hrana import CloudNetworkError
+from coach.storage.libsql_dialect import remote_engine
 from coach.storage.source import LocalSource
 from tests.plan.factories import make_activity, make_cycle, make_db_session, zones_rest
 from tests.services.test_sync import adjustment_json
+from tests.storage.fake_hrana import FakeHrana
 
 FIXTURES = Path(__file__).parent.parent / "fixtures" / "gpx"
 METRICS = Metrics(hr_max=190, hr_rest=50, threshold_pace_s_km=300)
@@ -1620,6 +1624,7 @@ class FakeCloud:
         self.path = path
         self.fail: Exception | None = None
         self.opened: list[tuple[str, str]] = []
+        self.open = lambda: make_engine(path)
 
     def source_for(self, settings):
         if settings.storage_mode != "turso":
@@ -1633,7 +1638,7 @@ class FakeCloud:
                 cloud.opened.append((settings.turso_url, settings.turso_token))
                 if cloud.fail is not None:
                     raise cloud.fail
-                return make_engine(cloud.path)
+                return cloud.open()
 
         return _Source()
 
@@ -1847,9 +1852,33 @@ def test_libsql_network_error_returns_503(storage_client):
 
     @event.listens_for(client.app.state.repo.engine, "before_cursor_execute")
     def coupure(*args):
-        raise ValueError("Hrana: `http error: `error trying to connect: dns error``")
+        raise CloudNetworkError("Base distante injoignable")
 
     assert client.get("/api/plan").status_code == 503
+
+
+def test_slow_read_does_not_block_version(storage_client, cloud, tmp_path):
+    server = FakeHrana(tmp_path / "hrana.db")
+    save_settings(load_settings().model_copy(update=TURSO_SETTINGS))
+    cloud.open = lambda: prepare_engine(remote_engine("x.turso.io", STORAGE_TOKEN, transport=server.transport))
+    with storage_client() as client:  # une seule boucle asyncio pour les deux appels
+        client.get("/api/plan")
+        sends = server.sends
+        server.delay_s = 0.5
+        statuses = []
+        reader = threading.Thread(target=lambda: statuses.append(client.get("/api/plan").status_code))
+        reader.start()
+        while server.sends == sends:  # première lecture partie
+            assert reader.is_alive()
+            time.sleep(0.005)
+        start = time.perf_counter()
+        status = client.get("/api/version").status_code
+        elapsed = time.perf_counter() - start
+        assert reader.is_alive()  # la lecture lente était bien en cours
+        server.delay_s = 0
+        reader.join(30)
+    assert (status, statuses) == (200, [200])
+    assert elapsed < 0.2
 
 
 def test_local_mode_db_error_is_not_cloud_unreachable(storage_client):

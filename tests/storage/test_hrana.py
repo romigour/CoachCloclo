@@ -704,6 +704,25 @@ def test_closed_client_stays_closed():
     assert client.pool.client.is_closed
 
 
+def test_close_spares_requests_in_flight(real):
+    results = []
+    client = hrana.make_client()
+    slow = threading.Thread(
+        target=lambda: results.append(real.connect(client).cursor().execute("SELECT 'lent'").fetchall())
+    )
+    slow.start()
+    assert real.slow_started.wait(5)
+    client.close()
+    with pytest.raises(hrana.CloudNetworkError):  # plus rien de neuf ne part
+        real.connect(client).cursor().execute("SELECT 1")
+    assert not client.pool.client.is_closed
+    real.release.set()
+    slow.join()
+    assert results == [[(1,)]]
+    assert client.pool.client.is_closed
+    assert real.received == 1
+
+
 def test_sql_error_is_not_operational(conn):
     with pytest.raises(hrana.DatabaseError) as e:
         conn.cursor().execute("SELECT * FROM absente")

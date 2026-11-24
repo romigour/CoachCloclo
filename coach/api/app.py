@@ -71,6 +71,7 @@ from coach.services.events import EventInput, EventResult, create_event, delete_
 from coach.storage.legacy import import_legacy_files
 from coach.storage.lock import SYNC_TTL, GarminLocked, LockedGarmin, garmin_lock, held_elsewhere, machine_id
 from coach.storage.cloud_errors import UNREACHABLE_MSG, CloudUnreachable, is_cloud_failure
+from coach.storage.hrana_errors import CloudAuthError, CloudNetworkError
 from coach.storage.source import DataSource, LocalSource, same_turso_url, source_from_settings
 from coach.storage.switch import (
     Adopted,
@@ -320,15 +321,15 @@ def _register_errors(app: FastAPI) -> None:
     add(CloudUnreachable, 503, "cloud_unreachable", UNREACHABLE_MSG)
 
     async def database_handler(request: Request, exc: Exception) -> JSONResponse:
-        # libsql lève des ValueError brutes : seules les pannes réseau en mode cloud sont traduites,
+        # Seules les pannes réseau en mode cloud sont traduites :
         # toute autre erreur (bug, erreur SQL, mode local) reste une erreur serveur.
         if request.app.state.cloud and is_cloud_failure(exc):
             log.warning("Base cloud injoignable : %s", type(exc).__name__)
             return _error(503, "cloud_unreachable", UNREACHABLE_MSG)
         raise exc
 
-    app.add_exception_handler(ValueError, database_handler)  # après CoachError et GpxError, plus précises
-    app.add_exception_handler(DBAPIError, database_handler)
+    for exc_type in (DBAPIError, CloudNetworkError, CloudAuthError):  # enveloppées par SQLAlchemy, ou brutes
+        app.add_exception_handler(exc_type, database_handler)
 
     async def validation_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
         return _invalid(exc.errors())

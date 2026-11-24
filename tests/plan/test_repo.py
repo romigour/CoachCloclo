@@ -527,12 +527,11 @@ def test_make_engine_refuses_newer_schema(tmp_path):
 
 
 def test_check_schema_version_on_libsql_engine(tmp_path):
-    import coach.storage.libsql_dialect  # noqa: F401  (enregistre le dialecte)
-    from sqlmodel import create_engine
-
     from coach.plan.repo import SCHEMA_VERSION, SchemaTooNew, _check_schema_version
+    from coach.storage.libsql_dialect import remote_engine
+    from tests.storage.fake_hrana import FakeHrana
 
-    engine = create_engine(f"sqlite+libsql:///{tmp_path / 'l.db'}")
+    engine = remote_engine("libsql://x.turso.io", "tok", transport=FakeHrana(tmp_path / "l.db").transport)
     _check_schema_version(engine)  # base neuve : version écrite
     repo = Repo(engine)
     assert repo.get_state("schema_version") == {"v": SCHEMA_VERSION}

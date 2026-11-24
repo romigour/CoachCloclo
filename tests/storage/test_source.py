@@ -46,10 +46,33 @@ def test_local_source_engine_creates_db(tmp_path):
 
 def test_turso_network_failure_is_cloud_unreachable(monkeypatch):
     from coach.storage.cloud_errors import CloudUnreachable
+    from coach.storage.hrana import CloudNetworkError
 
     def unreachable(engine):
-        raise ValueError("Hrana: `http error: `error trying to connect: dns error``")
+        raise CloudNetworkError("Base distante injoignable")
 
     monkeypatch.setattr(source_mod, "prepare_engine", unreachable)
     with pytest.raises(CloudUnreachable):
         TursoSource("libsql://x.turso.io", "tok").engine()
+
+
+def test_network_and_auth_messages(monkeypatch, tmp_path):
+    from coach.storage.cloud_errors import BAD_TOKEN_MSG, PROBE_UNREACHABLE_MSG, CloudUnreachable
+    from tests.storage.fake_hrana import FakeHrana
+
+    server = FakeHrana(tmp_path / "c.db")
+    real = source_mod.remote_engine
+    monkeypatch.setattr(source_mod, "remote_engine", lambda u, t: real(u, t, transport=server.transport))
+
+    def message(token: str = "tok") -> str:
+        with pytest.raises(CloudUnreachable) as e:
+            TursoSource("libsql://x.turso.io", token).engine()
+        return str(e.value)
+
+    for _ in range(2):  # une lecture est rejouée une fois
+        server.fail_next("drop_before")
+    assert message() == PROBE_UNREACHABLE_MSG
+    server.fail_next("http_401")
+    assert message() == BAD_TOKEN_MSG
+    assert message(token="jeton\ncoupé") == BAD_TOKEN_MSG
+    TursoSource("libsql://x.turso.io", "tok").engine().dispose()

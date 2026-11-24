@@ -5,11 +5,10 @@ Lancer : `uv run pytest -m live tests/storage -v` avec une base Turso de TEST :
     COACH_TURSO_TOKEN = jeton d'accès de la base
 Sans ces variables, les tests sont ignorés (skip). Ne pas lancer en CI.
 
-Format : dialecte maison `coach.storage.libsql_dialect` (paquet `libsql`, roues Windows) :
-  - URL SQLAlchemy : `sqlite+libsql://<hôte>?secure=true` (secure -> https, sinon http) ;
+Format : dialecte maison `coach.storage.libsql_dialect`, pilote HTTP `coach.storage.hrana` :
+  - URL SQLAlchemy : `sqlite+libsql://<hôte>?secure=true` (toujours https) ;
     l'hôte est celui de COACH_TURSO_URL sans le schéma `libsql://`.
-  - Jeton : PAS dans l'URL mais `create_engine(url, connect_args={"auth_token": token})`.
-  - Non vérifié hors réseau : que `libsql.connect("https://<hôte>", auth_token=...)` accepte le mode distant pur."""
+  - Jeton : PAS dans l'URL mais dans les arguments de connexion (voir `remote_engine`)."""
 
 import os
 from concurrent.futures import ThreadPoolExecutor

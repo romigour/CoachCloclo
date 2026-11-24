@@ -4,12 +4,11 @@ import re
 from datetime import date, datetime, timedelta, timezone
 
 import pytest
-from sqlalchemy import create_engine
 
-import coach.storage.libsql_dialect  # noqa: F401  (enregistre le dialecte)
 from coach.garmin.port import FakeGarminClient, GarminUnavailable
 from coach.plan.models import GarminLock
 from coach.plan.repo import Repo, prepare_engine
+from coach.storage.libsql_dialect import remote_engine
 from coach.storage.lock import (
     LOCK_MSG,
     WRITE_TTL,
@@ -21,6 +20,7 @@ from coach.storage.lock import (
     release,
     try_acquire,
 )
+from tests.storage.fake_hrana import FakeHrana
 
 T0 = datetime(2026, 11, 14, 10, 0, tzinfo=timezone.utc)
 TTL = timedelta(minutes=2)
@@ -28,10 +28,11 @@ TTL = timedelta(minutes=2)
 
 @pytest.fixture(params=["sqlite", "libsql"])
 def any_repo(request, repo, tmp_path):
-    """Même comportement attendu sur SQLite et sur le pilote libsql (fichier local)."""
+    """Même comportement attendu sur SQLite et sur une base distante."""
     if request.param == "sqlite":
         return repo
-    return Repo(prepare_engine(create_engine(f"sqlite+libsql:///{tmp_path / 'l.db'}")))
+    transport = FakeHrana(tmp_path / "l.db").transport
+    return Repo(prepare_engine(remote_engine("libsql://x.turso.io", "tok", transport=transport)))
 
 
 def test_lock_free_then_held(any_repo):

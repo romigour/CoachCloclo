@@ -15,61 +15,27 @@ from typing import Any, NamedTuple
 
 import httpx
 
+from coach.storage.hrana_errors import (  # exposées ici aussi : la PEP 249 les veut dans le module du pilote
+    CloudAuthError,
+    CloudNetworkError,
+    DatabaseError,
+    DataError,
+    Error,
+    IntegrityError,
+    InterfaceError,  # noqa: F401
+    InternalError,  # noqa: F401
+    NotSupportedError,  # noqa: F401
+    OperationalError,
+    ProgrammingError,
+    Warning,  # noqa: A004, F401
+)
+
 apilevel = "2.0"
 threadsafety = 1
 paramstyle = "qmark"
 sqlite_version_info = (3, 45, 0)
 sqlite_version = "3.45.0"
 Binary = bytes
-
-
-class Warning(Exception):  # noqa: A001  (nom imposé par la PEP 249)
-    pass
-
-
-class Error(Exception):
-    # vrai si l'erreur n'annule que sa requête, la transaction restant ouverte
-    statement_only = False
-
-
-class InterfaceError(Error):
-    pass
-
-
-class DatabaseError(Error):
-    pass
-
-
-class DataError(DatabaseError):
-    pass
-
-
-class OperationalError(DatabaseError):
-    pass
-
-
-class IntegrityError(DatabaseError):
-    pass
-
-
-class InternalError(DatabaseError):
-    pass
-
-
-class ProgrammingError(DatabaseError):
-    pass
-
-
-class NotSupportedError(DatabaseError):
-    pass
-
-
-class CloudNetworkError(OperationalError):
-    """Base injoignable, réponse inexploitable ou flux expiré."""
-
-
-class CloudAuthError(OperationalError):
-    """Jeton refusé."""
 
 
 _BLANK = re.compile(r"(?:\s+|--[^\n]*(?:\n|$)|/\*.*?\*/)+", re.DOTALL)
@@ -101,7 +67,8 @@ class RenewableClient(httpx.Client):
     """Client partagé dont le jeu de connexions se remplace quand l'une d'elles est morte.
 
     Après une veille, toutes le sont souvent sans que `httpx` le sache. L'ancien jeu n'est fermé
-    qu'à la fin de ses requêtes en cours : celles des autres fils ne sont pas coupées.
+    qu'à la fin de ses requêtes en cours : celles des autres fils ne sont pas coupées. Il en va de même
+    à la fermeture du client : un COMMIT en vol se termine.
     """
 
     def __init__(self) -> None:
@@ -116,6 +83,8 @@ class RenewableClient(httpx.Client):
 
     def send(self, request: httpx.Request, **kwargs) -> httpx.Response:
         with self._lock:
+            if self.is_closed:
+                raise RuntimeError("Client fermé")
             pool = self.pool
             pool.users += 1
         try:
@@ -123,7 +92,7 @@ class RenewableClient(httpx.Client):
         finally:
             with self._lock:
                 pool.users -= 1
-                finished = pool is not self.pool and pool.users == 0
+                finished = (pool is not self.pool or self.is_closed) and pool.users == 0
             if finished:
                 pool.client.close()
 
@@ -140,7 +109,9 @@ class RenewableClient(httpx.Client):
     def close(self) -> None:
         with self._lock:
             super().close()
-        self.pool.client.close()
+            finished = self.pool.users == 0
+        if finished:
+            self.pool.client.close()
 
     def __exit__(self, *exc_info) -> None:
         self.close()
@@ -360,6 +331,10 @@ class Connection:
             if pool is not None and isinstance(e, _REPLAYABLE):
                 client.renew(pool)  # le rejeu, et tout envoi suivant, part sur une connexion neuve
             return None, e
+        except RuntimeError as e:
+            if client.is_closed:  # moteur fermé pendant une bascule de base
+                return None, e
+            raise
 
 
 class Cursor:

@@ -37,9 +37,9 @@ hiddenimports = (
     + ["pystray._win32"]
     # garminconnect importe ses sous-modules (auth, workout...) à la demande
     + collect_submodules("garminconnect")
-    # Stockage cloud : pilote libsql (extension compilée) et dialecte SQLAlchemy maison,
+    # Stockage cloud : pilote HTTP et dialecte SQLAlchemy maison,
     # enregistré par import au moment de créer le moteur distant
-    + ["libsql", "coach.storage.libsql_dialect"]
+    + ["coach.storage.hrana", "coach.storage.libsql_dialect"]
 )
 
 a = Analysis(

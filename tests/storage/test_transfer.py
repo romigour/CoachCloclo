@@ -3,16 +3,17 @@
 import datetime as dt
 
 import pytest
-from sqlalchemy import create_engine, delete, func, insert, select
+from sqlalchemy import delete, func, insert, select
 from sqlmodel import SQLModel
 
-import coach.storage.libsql_dialect  # noqa: F401  (enregistre le dialecte)
 from coach.plan import repo as repo_mod
 from coach.plan.models import Activity, Cycle, GarminLock, Goal, Session
 from coach.plan.repo import Repo, make_engine, prepare_engine
 from coach.storage import transfer
+from coach.storage.libsql_dialect import remote_engine
 from coach.storage.transfer import CopyMismatch, copy_all, is_empty, verify_copy, wipe
 from tests.plan.factories import make_activity, make_cycle, make_db_session, make_goal
+from tests.storage.fake_hrana import FakeHrana
 
 
 def _fill(engine) -> Repo:
@@ -104,8 +105,9 @@ def test_wipe_empties(src, dst):
             assert c.execute(select(func.count()).select_from(table)).scalar() == 0
 
 
-def test_copy_to_libsql_file(src, tmp_path):
-    dst = prepare_engine(create_engine(f"sqlite+libsql:///{tmp_path / 'l.db'}"))
+def test_copy_to_remote(src, tmp_path):
+    transport = FakeHrana(tmp_path / "l.db").transport
+    dst = prepare_engine(remote_engine("libsql://x.turso.io", "tok", transport=transport))
     copy_all(src, dst)
     verify_copy(src, dst)
     assert not is_empty(dst)

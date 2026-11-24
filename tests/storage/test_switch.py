@@ -7,6 +7,7 @@ from sqlalchemy.exc import IntegrityError, OperationalError
 from coach.plan.models import Activity, Goal, Session
 from coach.plan.repo import Repo, SchemaTooNew, make_engine
 from coach.storage import switch
+from coach.storage import hrana
 from coach.storage.cloud_errors import CloudUnreachable, is_cloud_failure
 from coach.storage.source import LocalSource
 from coach.storage.switch import (
@@ -22,9 +23,8 @@ from coach.storage.switch import (
 from coach.storage.transfer import is_empty
 from tests.plan.factories import make_activity, make_cycle, make_db_session, make_goal
 
-HRANA_DNS = "Hrana: `http error: `error trying to connect: dns error: hôte inconnu``"
-HRANA_401 = "Hrana: `api error: `status=401 Unauthorized, body=`` "
-HRANA_SQL = 'Hrana: `stream error: `Error { message: "SQLite error: no such table: x", code: "SQLITE_UNKNOWN" }``'
+NETWORK = hrana.CloudNetworkError("Base distante injoignable (ConnectError)")
+AUTH = hrana.CloudAuthError("Jeton refusé par la base distante (HTTP 401)")
 
 
 class FakeSource:
@@ -75,7 +75,7 @@ def test_probe_reads_and_writes(tmp_path):
     assert Repo(engine).get_state("probe") is not None
 
 
-@pytest.mark.parametrize("error", [ValueError(HRANA_DNS), OperationalError("x", {}, Exception("réseau"))])
+@pytest.mark.parametrize("error", [NETWORK, OperationalError("x", {}, Exception("réseau"))])
 def test_probe_network_failure_is_cloud_unreachable(error):
     with pytest.raises(CloudUnreachable):
         probe(FakeSource(fail=error))
@@ -83,7 +83,7 @@ def test_probe_network_failure_is_cloud_unreachable(error):
 
 def test_probe_bad_token_message():
     with pytest.raises(CloudUnreachable, match="[Jj]eton"):
-        probe(FakeSource(fail=ValueError(HRANA_401)))
+        probe(FakeSource(fail=AUTH))
 
 
 def test_probe_lets_schema_too_new_through():
@@ -97,11 +97,11 @@ def test_probe_programming_error_is_not_masked():
 
 
 def test_cloud_failure_classification():
-    assert is_cloud_failure(ValueError(HRANA_DNS))
-    assert is_cloud_failure(ValueError(HRANA_401))
+    assert is_cloud_failure(NETWORK)
+    assert is_cloud_failure(AUTH)
     assert is_cloud_failure(OperationalError("x", {}, Exception("réseau")))
     assert is_cloud_failure(CloudUnreachable("x"))
-    assert not is_cloud_failure(ValueError(HRANA_SQL))  # erreur SQL, pas réseau
+    assert not is_cloud_failure(hrana.DatabaseError("no such table: x"))  # erreur SQL, pas réseau
     assert not is_cloud_failure(ValueError("bug"))
     assert not is_cloud_failure(IntegrityError("x", {}, Exception("unique")))
 
@@ -213,7 +213,7 @@ def test_probe_disposes_engine_when_read_write_fails(tmp_path, monkeypatch):
             return eng
 
     def refuse(self, key, value):
-        raise ValueError(HRANA_401)
+        raise AUTH
 
     monkeypatch.setattr(Repo, "set_state", refuse)
     with pytest.raises(CloudUnreachable):

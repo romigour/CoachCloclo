@@ -47,7 +47,7 @@ def _check_schema_version(engine: Engine) -> None:
 
     Fonctionne sur tout moteur (fichier local ou base distante).
     """
-    # has_table plutôt qu'un except : le type d'erreur « table absente » varie selon le driver (libsql : ValueError)
+    # has_table plutôt qu'un except : le type d'erreur « table absente » varie selon le driver
     if inspect(engine).has_table(AppState.__tablename__):
         with DbSession(engine) as db:
             row = db.get(AppState, "schema_version")

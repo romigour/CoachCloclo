@@ -159,3 +159,25 @@ def test_latest_zones(repo):
     )
     repo.add(AthleteSnapshot(date=date(2026, 11, 1), zones_json=zones.model_dump_json()))
     assert latest_zones(repo) == zones
+
+
+def test_missing_laps_single_query(tmp_path):
+    from coach.plan.repo import Repo, prepare_engine
+    from coach.storage.libsql_dialect import remote_engine
+    from tests.storage.fake_hrana import FakeHrana
+
+    server = FakeHrana(tmp_path / "m.db")
+    repo = Repo(prepare_engine(remote_engine("x.turso.io", "tok", transport=server.transport)))
+    cycle = repo.add(make_cycle())
+    ids = []
+    for gid in (1, 2, 3):
+        session = repo.add(make_db_session(cycle.id))
+        ids.append(repo.add(make_activity(garmin_activity_id=gid, session_id=session.id)).id)
+    repo.add(make_activity(garmin_activity_id=4))  # libre : jamais concernée
+    repo.save_laps(ids[1], [LAP])
+    repo.get_state("warmup")
+    before = server.sends
+    missing = repo.activities_missing_laps()
+    assert server.sends - before == 1
+    assert sorted(a.garmin_activity_id for a in missing) == [1, 3]
+    assert not any("raw_json" in sql for sql in server.statements()[-1:])

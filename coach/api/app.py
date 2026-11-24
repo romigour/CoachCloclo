@@ -49,7 +49,23 @@ from coach.llm.provider import (
 from coach.plan import calendar
 from coach.plan.goals import Proximity, proximity, proximity_label, proximity_notice
 from coach.plan.models import Activity, Cycle, Event, Goal, Proposal, Session
-from coach.plan.repo import SCHEMA_VERSION, Repo, SchemaTooNew
+from coach.plan.repo import (
+    SCHEMA_VERSION,
+    Repo,
+    SchemaTooNew,
+    active_cycle_stmt,
+    activities_between_stmt,
+    count_activities_stmt,
+    last_done_cycle_stmt,
+    open_injury_stmt,
+    past_goals_stmt,
+    pending_proposal_stmt,
+    recent_done_goals_stmt,
+    sessions_stmt,
+    state_stmt,
+    upcoming_goals_stmt,
+    week_session_activities_stmt,
+)
 from coach.services import CoachError
 from coach.services import garmin_export as export
 from coach.services.goals import (
@@ -85,7 +101,7 @@ from coach.storage.switch import (
     sessions_on_watch,
     wipe_cloud,
 )
-from coach.services.history import HistoryRunner, load_state, recover_orphan
+from coach.services.history import HistoryRunner, STATE_KEY, load_state, parse_state, recover_orphan
 from coach.services.laps import fetch_laps, latest_zones, session_comparison
 from coach.services.rest_hr import apply_manual, rest_hr_view
 from coach.services.sync import add_pending_done, remove_pending_done, sync
@@ -595,11 +611,24 @@ def create_app(
                 "history": {"status": "idle", "imported": 0, "error": None, "total": None, "finished_at": None},
                 "storage": {"code": code, "detail": detail},
             }
-        cycle = repo.active_cycle()
-        goals = repo.upcoming_goals()
-        prox = _prox(repo)
-        proposal = repo.pending_proposal()
-        history = load_state(repo)
+        # une seule lecture groupée : sur une base distante, chaque envoi coûte un aller-retour réseau
+        cycles, goals, recent, past, proposals, counts, states = repo.read_batch(
+            active_cycle_stmt(),
+            upcoming_goals_stmt(),
+            recent_done_goals_stmt(date.today()),
+            past_goals_stmt(),
+            pending_proposal_stmt(),
+            count_activities_stmt(),
+            state_stmt(STATE_KEY),
+        )
+        cycle = cycles[0] if cycles else None
+        proposal = proposals[0] if proposals else None
+        prox = proximity([*goals, *recent])
+        history = parse_state(json.loads(states[0].value_json) if states else None)
+        last = None
+        if cycle is None:
+            (lasts,) = repo.read_batch(last_done_cycle_stmt(date.today()))
+            last = lasts[0] if lasts else None
         # le thread peut ne pas avoir encore écrit son état : le runner fait foi
         history_status = "running" if app.state.history.running else history.status
         return {
@@ -609,15 +638,15 @@ def create_app(
             "cycle": _cycle_dict(cycle) if cycle else None,
             "goals": [_goal_dict(g, prox) for g in goals],
             "next_goal": _goal_dict(goals[0], prox) if goals else None,
-            "past_goals": [_goal_dict(g, prox) for g in repo.past_goals()],
+            "past_goals": [_goal_dict(g, prox) for g in past],
             # réglages à reprendre pour « Préparer le cycle suivant » (sans cycle actif seulement)
-            "last_cycle": _cycle_dict(last) if cycle is None and (last := repo.last_done_cycle(date.today())) else None,
-            "has_activities": repo.has_activities(),
+            "last_cycle": _cycle_dict(last) if last else None,
+            "has_activities": counts[0] > 0,
             "history": {
                 "status": history_status,
                 "imported": history.imported,
                 "error": history.error,
-                "total": repo.count_activities(),
+                "total": counts[0],
                 "finished_at": history.model_dump(mode="json")["finished_at"],
             },
             "storage": None,
@@ -776,18 +805,25 @@ def create_app(
 
     @api.get("/plan")
     def get_plan(repo: RepoDep):
-        cycle = repo.active_cycle()
-        if cycle is None:
+        (cycles,) = repo.read_batch(active_cycle_stmt())
+        if not cycles:
             return {"cycle": None, "goals": [], "horizon": [], "open_injury": None, "weeks": []}
+        cycle = cycles[0]
+        upcoming, recent, sessions, injuries = repo.read_batch(
+            upcoming_goals_stmt(),
+            recent_done_goals_stmt(date.today()),
+            sessions_stmt(cycle.id),
+            open_injury_stmt(cycle.id),
+        )
         weeks: dict[int, list[dict]] = {}
-        for s in repo.sessions(cycle.id):
+        for s in sessions:
             weeks.setdefault(s.week_index, []).append(_session_dict(s))
-        injury = repo.open_injury(cycle.id)
-        prox = _prox(repo)
+        injury = injuries[0] if injuries else None
+        prox = proximity([*upcoming, *recent])
         return {
             "cycle": _cycle_dict(cycle),
-            "goals": [_goal_dict(g, prox) for g in repo.goals_in(cycle)],
-            "horizon": [_goal_dict(g, prox) for g in repo.horizon_goals(cycle)],
+            "goals": [_goal_dict(g, prox) for g in upcoming if cycle.plan_start <= g.race_date <= cycle.end_date],
+            "horizon": [_goal_dict(g, prox) for g in upcoming if g.race_date > cycle.end_date],
             "open_injury": _event_dict(injury) if injury else None,
             "weeks": [
                 {
@@ -896,14 +932,16 @@ def create_app(
     def get_activities(week: int, repo: RepoDep):
         """Activités de la semaine `week` du plan du cycle actif (lundi..dimanche), plus celles
         rattachées à une séance de cette semaine même datées d'une autre semaine."""
-        cycle = repo.active_cycle()
-        if cycle is None:
+        (cycles,) = repo.read_batch(active_cycle_stmt())
+        if not cycles:
             return []
+        cycle = cycles[0]
         monday = calendar.week_monday(cycle, week)
-        sunday = monday + timedelta(days=6)
-        rows = {a.id: a for a in repo.activities_since(monday) if a.date <= sunday}
-        session_ids = [s.id for s in repo.sessions(cycle.id, week)]
-        rows.update({a.id: a for a in repo.activities_of_sessions(session_ids)})
+        in_week, attached = repo.read_batch(
+            activities_between_stmt(monday, monday + timedelta(days=6)),
+            week_session_activities_stmt(cycle.id, week),
+        )
+        rows = {a.id: a for a in [*in_week, *attached]}
         return [_activity_row(a) for a in sorted(rows.values(), key=lambda a: (a.date, a.id))]
 
     @api.get("/activities/free")

@@ -46,7 +46,7 @@ def fetch_missing_laps(repo: Repo, garmin: GarminPort) -> int:
     S'arrête dès que Garmin limite le débit ou exige une authentification, et ne fait pas plus de
     `MAX_FETCHES_PAR_SYNCHRO` appels : le reste sera repris à la synchro suivante.
     """
-    pending = [a for a in repo.all_activities() if a.session_id is not None and repo.laps(a.id) is None]
+    pending = repo.activities_missing_laps()
     fetched = 0
     for activity in pending[:MAX_FETCHES_PAR_SYNCHRO]:
         try:

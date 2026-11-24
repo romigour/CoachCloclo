@@ -44,14 +44,18 @@ class HistoryState(BaseModel):
 STATE_KEY = "history"
 
 
-def load_state(repo: Repo) -> HistoryState:
-    raw = repo.get_state(STATE_KEY)
+def parse_state(raw: dict | None) -> HistoryState:
+    """État d'import depuis sa forme stockée ; vide ou illisible : état initial."""
     if raw is None:
         return HistoryState()
     try:
         return HistoryState.model_validate(raw)
     except ValueError:
         return HistoryState()
+
+
+def load_state(repo: Repo) -> HistoryState:
+    return parse_state(repo.get_state(STATE_KEY))
 
 
 def save_state(repo: Repo, s: HistoryState) -> None:

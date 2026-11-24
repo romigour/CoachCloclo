@@ -2349,3 +2349,83 @@ def test_delete_goal_from_block_clears_label(make_client):
     assert client.delete(f"/api/goals/{sat['id']}").status_code == 200
     labels = {g["race_date"]: g["proximity_label"] for g in client.get("/api/status").json()["goals"]}
     assert labels["2027-04-12"] is None
+
+
+# --- lectures groupées : envois vers la base distante ------------------------------------------------
+
+
+def _seed_cloud(repo: Repo, *, with_cycle: bool = True) -> None:
+    from coach.plan.models import Event, Goal
+    from tests.plan.factories import make_db_session, make_goal
+
+    repo.add(make_goal(race_date=date(2027, 1, 31)))
+    repo.add(make_goal(race_date=date(2027, 6, 1), priority="secondaire"))
+    repo.add(make_goal(race_date=date(2026, 6, 1), status="done"))
+    repo.add(make_cycle(status="done", end_date=date(2026, 9, 1)))
+    if with_cycle:
+        cycle = repo.add(make_cycle())
+        s1 = repo.add(make_db_session(cycle.id, week_index=1))
+        repo.add(make_db_session(cycle.id, week_index=2))
+        repo.add(Event(cycle_id=cycle.id, kind="injury", start_date=date(2026, 11, 1), end_date=None))
+        repo.add(make_activity(garmin_activity_id=1, date=date(2026, 10, 27), session_id=s1.id))
+        repo.add(make_activity(garmin_activity_id=2, date=date(2026, 10, 28)))
+        repo.add(make_activity(garmin_activity_id=3, date=date(2026, 12, 20)))
+
+
+@pytest.fixture
+def cloud_pair(make_client, tmp_path):
+    """(client sur base distante simulée, serveur, client sur SQLite local), même contenu, échauffés."""
+    server = FakeHrana(tmp_path / "hrana.db")
+    remote = Repo(prepare_engine(remote_engine("x.turso.io", STORAGE_TOKEN, transport=server.transport)))
+    local = Repo(make_engine(tmp_path / "local.db"))
+    for r in (remote, local):
+        _seed_cloud(r)
+        save_state(r, HistoryState(status="done"))
+    remote.get_state("warmup")
+    return make_client(db=remote), server, make_client(db=local)
+
+
+def _sends_of(server: FakeHrana, client, url: str) -> int:
+    before = server.sends
+    assert client.get(url).status_code == 200
+    return server.sends - before
+
+
+def test_plan_at_most_3_sends(cloud_pair):
+    client, server, _ = cloud_pair
+    assert _sends_of(server, client, "/api/plan") <= 3
+
+
+def test_status_at_most_3_sends(cloud_pair, make_client, tmp_path):
+    client, server, _ = cloud_pair
+    assert _sends_of(server, client, "/api/status") <= 3
+    # sans cycle actif : last_cycle est lu en plus
+    server2 = FakeHrana(tmp_path / "h2.db")
+    remote = Repo(prepare_engine(remote_engine("x.turso.io", STORAGE_TOKEN, transport=server2.transport)))
+    _seed_cloud(remote, with_cycle=False)
+    remote.get_state("warmup")
+    client2 = make_client(db=remote)
+    sends = _sends_of(server2, client2, "/api/status")
+    assert sends <= 3
+    assert client2.get("/api/status").json()["last_cycle"] is not None
+
+
+def test_activities_at_most_3_sends(cloud_pair):
+    client, server, _ = cloud_pair
+    assert _sends_of(server, client, "/api/activities?week=1") <= 3
+
+
+def test_cloud_and_local_json_identical(cloud_pair):
+    client, _, local = cloud_pair
+    for url in ("/api/plan", "/api/activities?week=1", "/api/status"):
+        got, expected = client.get(url).json(), local.get(url).json()
+        if url == "/api/status":  # l'état Garmin et les réglages ne dépendent pas de la base
+            got.pop("history"), expected.pop("history")
+        assert got == expected, url
+
+
+def test_activities_do_not_load_raw_json(cloud_pair):
+    client, server, _ = cloud_pair
+    client.get("/api/activities?week=1")
+    assert not any("raw_json" in sql for sql in server.statements()[-4:])
+    assert client.get("/api/activities?week=1").json()

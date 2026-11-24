@@ -9,6 +9,7 @@ from pathlib import Path
 from pydantic import TypeAdapter
 from sqlalchemy import func, inspect, text
 from sqlalchemy.engine import Engine
+from sqlalchemy.orm import defer
 from sqlalchemy.sql import Select
 from sqlmodel import Session as DbSession
 from sqlmodel import SQLModel, create_engine, delete, select
@@ -213,6 +214,33 @@ def count_activities_stmt() -> Select:
     return select(func.count()).select_from(Activity)
 
 
+def activities_between_stmt(start: date, end: date) -> Select:
+    """Activités du `start` au `end` inclus, sans le JSON brut (lourd, inutile à l'affichage)."""
+    return (
+        select(Activity)
+        .where(Activity.date >= start, Activity.date <= end)
+        .order_by(Activity.date, Activity.id)
+        .options(defer(Activity.raw_json))
+    )
+
+
+def week_session_activities_stmt(cycle_id: int, week_index: int) -> Select:
+    """Activités rattachées à une séance de cette semaine du cycle, sans le JSON brut."""
+    ids = select(Session.id).where(Session.cycle_id == cycle_id, Session.week_index == week_index)
+    return select(Activity).where(Activity.session_id.in_(ids)).options(defer(Activity.raw_json))
+
+
+def missing_laps_stmt() -> Select:
+    """Activités rattachées à une séance et sans ligne de tours, sans le JSON brut."""
+    fetched = select(ActivityLaps.activity_id)
+    return (
+        select(Activity)
+        .where(Activity.session_id != None, Activity.id.not_in(fetched))  # noqa: E711
+        .order_by(Activity.date, Activity.id)
+        .options(defer(Activity.raw_json))
+    )
+
+
 def state_stmt(key: str) -> Select:
     return select(AppState).where(AppState.key == key)
 
@@ -246,7 +274,9 @@ class Repo:
                     query = text(sql.replace(":", "\\:"))  # `:` échappé : text() y verrait un paramètre
                     entity = stmt.column_descriptions[0]["entity"]
                     if entity is not None:
-                        done[sql] = list(db.execute(select(entity).from_statement(query)).scalars())
+                        # les options (defer...) de la requête d'origine s'appliquent au résultat préchargé
+                        shaped = select(entity).from_statement(query).options(*stmt._with_options)
+                        done[sql] = list(db.execute(shaped).scalars())
                     else:
                         done[sql] = [row[0] for row in db.execute(query)]
                 results.append(list(done[sql]))
@@ -364,6 +394,16 @@ class Repo:
         stmt = select(Activity).where(Activity.date >= d).order_by(Activity.date, Activity.id)
         with self._open() as db:
             return list(db.exec(stmt))
+
+    def activities_between(self, start: date, end: date) -> list[Activity]:
+        """Activités du `start` au `end` inclus (sans `raw_json`)."""
+        with self._open() as db:
+            return list(db.exec(activities_between_stmt(start, end)))
+
+    def activities_missing_laps(self) -> list[Activity]:
+        """Activités rattachées à une séance dont les tours n'ont jamais été récupérés, en une requête."""
+        with self._open() as db:
+            return list(db.exec(missing_laps_stmt()))
 
     def activity_by_garmin_id(self, gid: int) -> Activity | None:
         stmt = select(Activity).where(Activity.garmin_activity_id == gid)

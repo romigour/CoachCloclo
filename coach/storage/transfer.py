@@ -7,11 +7,13 @@ Hypothèse : `dst` n'a pas de colonne NOT NULL absente du modèle (schéma prép
 
 import datetime as dt
 import json
+from collections.abc import Iterator
 
-from sqlalchemy import Engine, Table, delete, func, insert, select
+from sqlalchemy import Connection, Engine, Table, delete, func, insert, select
 from sqlmodel import SQLModel
 
 from coach.plan.models import AppState, GarminLock
+from coach.storage.pages import ROWID, is_remote, pages
 
 BATCH = 500  # lignes par INSERT : borne la taille de chaque requête vers la base distante
 COMPLETE_KEY = "copy_complete"
@@ -58,6 +60,24 @@ def _insert_rows(conn, table: Table, rows: list[dict]) -> None:
     conn.execute(insert(table), rows)
 
 
+def _batches(conn: Connection, table: Table) -> Iterator[list[dict]]:
+    """Lignes à copier, par lots. Une base distante est lue page par page : sa réponse est limitée en taille."""
+    where = _not_marker(table)
+    query = select(table).where(*where)
+    plan = pages(conn, table, *where) if is_remote(conn.engine) else []
+    if len(plan) <= 1:
+        result = conn.execute(query).mappings()
+        while batch := result.fetchmany(BATCH):
+            yield [dict(r) for r in batch]
+        return
+    for page in plan:
+        rows = conn.execute(query.where(page.where()).order_by(ROWID)).mappings().all()
+        yield [dict(r) for r in rows]
+    # pages lues l'une après l'autre : une écriture d'un autre PC entre deux donnerait une copie incohérente
+    if pages(conn, table, *where) != plan:
+        raise CopyMismatch(table.name)
+
+
 def copy_all(src: Engine, dst: Engine) -> None:
     """Vide `dst` puis y copie toutes les tables (sauf le verrou Garmin), en une transaction."""
     # Marqueur effacé et validé d'abord : une copie interrompue n'est jamais « complète ».
@@ -68,9 +88,8 @@ def copy_all(src: Engine, dst: Engine) -> None:
         for table in reversed(tables):
             dconn.execute(delete(table))
         for table in tables:
-            result = sconn.execute(select(table).where(*_not_marker(table)))
-            while batch := result.mappings().fetchmany(BATCH):
-                _insert_rows(dconn, table, [dict(r) for r in batch])
+            for batch in _batches(sconn, table):
+                _insert_rows(dconn, table, batch)
 
 
 def verify_copy(src: Engine, dst: Engine) -> None:

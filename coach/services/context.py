@@ -120,7 +120,7 @@ def long_history(repo: Repo, today: date) -> LongHistory | None:
     """Historique long lu en base (import de l'historique) ; None si la base n'a aucune activité."""
     if not repo.has_activities():
         return None
-    activities = repo.all_activities()
+    activities = repo.all_activities(raw=False)
     # pas de mois avant la plus ancienne activité en base : sans import complet (synchro seule),
     # ils passeraient pour des mois d'arrêt
     oldest = min(a.date for a in activities)

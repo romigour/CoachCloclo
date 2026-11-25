@@ -728,3 +728,129 @@ def test_read_batch_value_with_colon_and_quote(grouped):
     assert [r.key for r in rows] == ["a:b'c"]
     if server:
         assert server.sends == before + 1
+
+
+# --- ouverture d'une base --------------------------------------------------------------------------
+
+
+@pytest.fixture
+def remote_db(tmp_path):
+    """(serveur, fabrique de moteurs neufs, chemin du fichier)."""
+    from coach.storage.libsql_dialect import remote_engine
+    from tests.storage.fake_hrana import FakeHrana
+
+    path = tmp_path / "r.db"
+    server = FakeHrana(path)
+    engines = []
+
+    def make():
+        engines.append(remote_engine("libsql://x.turso.io", "tok", transport=server.transport))
+        return engines[-1]
+
+    yield server, make, path
+    for e in engines:
+        e.dispose()
+
+
+@pytest.fixture(params=["sqlite", "hrana"])
+def opened(request, remote_db):
+    """(fabrique de moteurs neufs, chemin), en local et à distance."""
+    _, make, path = remote_db
+    return (make if request.param == "hrana" else lambda: make_engine_raw(path)), path
+
+
+def _sql(path, *statements):
+    conn = sqlite3.connect(path)
+    rows = [conn.execute(s).fetchall() for s in statements]
+    conn.commit()
+    conn.close()
+    return rows
+
+
+def _writes(statements):
+    return [s for s in statements if not s.lstrip().upper().startswith(("SELECT", "PRAGMA"))]
+
+
+_SCHEMA = "SELECT type, name, tbl_name FROM sqlite_master ORDER BY name"
+_VERSION = "SELECT value_json FROM appstate WHERE key = 'schema_version'"
+
+
+def test_up_to_date_remote_opens_in_few_sends(remote_db):
+    from coach.plan.repo import prepare_engine
+
+    server, make, _ = remote_db
+    prepare_engine(make())
+    sends, seen = server.sends, len(server.statements())
+    prepare_engine(make())
+    assert server.sends - sends <= 4
+    assert _writes(server.statements()[seen:]) == []
+
+
+def test_too_new_remote_is_not_written(remote_db):
+    from coach.plan.repo import SchemaTooNew, prepare_engine
+
+    server, make, path = remote_db
+    prepare_engine(make())
+    _sql(path, "UPDATE appstate SET value_json = '{\"v\": 99}'", "DROP TABLE race", "ALTER TABLE goal DROP COLUMN notes")
+    seen = len(server.statements())
+    with pytest.raises(SchemaTooNew):
+        prepare_engine(make())
+    assert _writes(server.statements()[seen:]) == []
+
+
+def test_open_repairs_missing_table_column_and_version(opened):
+    from coach.plan.repo import prepare_engine
+
+    make, path = opened
+    prepare_engine(make())
+    want = _sql(path, _SCHEMA)
+    _sql(path, "DROP TABLE race", "ALTER TABLE goal DROP COLUMN notes", "DELETE FROM appstate")
+    prepare_engine(make())
+    assert _sql(path, _SCHEMA) == want
+    assert "notes" in {r[1] for r in _sql(path, "PRAGMA table_info(goal)")[0]}
+    assert _sql(path, _VERSION) == [[('{"v": 3}',)]]
+
+
+def test_open_migrates_base_from_before_cycles(opened):
+    """goal_id devient cycle_id, un cycle par objectif, temps visé repris de la stratégie."""
+    from coach.plan.repo import prepare_engine
+
+    make, path = opened
+    first = make()
+    repo = Repo(prepare_engine(first))
+    goal = repo.add(make_goal())
+    repo.add(make_db_session(goal.id))
+    first.dispose()
+    settings = '{"target_time_s": 5400}'
+    _sql(
+        path,
+        "DROP TABLE cycle",
+        "ALTER TABLE session RENAME COLUMN cycle_id TO goal_id",
+        "ALTER TABLE event RENAME COLUMN cycle_id TO goal_id",
+        "ALTER TABLE goal DROP COLUMN target_time_s",
+        "ALTER TABLE goal DROP COLUMN target_source",
+        f"INSERT INTO racestrategy (goal_id, settings_json, basis_json) VALUES ({goal.id}, '{settings}', '')",
+        "UPDATE appstate SET value_json = '{\"v\": 1}' WHERE key = 'schema_version'",
+    )
+    repo = Repo(prepare_engine(make()))
+    assert repo.active_cycle().id == goal.id
+    assert len(repo.sessions(goal.id)) == 1
+    assert repo.upcoming_goals()[0].target_time_s == 5400
+    assert repo.get_state("schema_version") == {"v": 3}
+
+
+def test_missing_index_goes_through_create_all(remote_db, monkeypatch):
+    from coach.plan import repo as repo_mod
+
+    _, make, path = remote_db
+    repo_mod.prepare_engine(make())
+    called = []
+    real = repo_mod.SQLModel.metadata.create_all
+    monkeypatch.setattr(
+        repo_mod.SQLModel.metadata, "create_all", lambda *a, **k: (called.append(k), real(*a, **k))
+    )
+    repo_mod.prepare_engine(make())
+    assert called == []
+    _sql(path, "DROP INDEX ix_session_cycle_id")
+    repo_mod.prepare_engine(make())
+    assert len(called) == 1

@@ -53,7 +53,7 @@ class TursoSource:
         self.token = token
 
     def engine(self) -> Engine:
-        """Lève `CloudUnreachable` si la base ne répond pas ou refuse le jeton."""
+        """Lève `CloudUnreachable` si l'adresse est invalide, si la base ne répond pas ou refuse le jeton."""
         host = turso_host(self.url)
         engine = remote_engine(host, self.token)
         try:

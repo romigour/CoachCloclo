@@ -7,8 +7,8 @@ from datetime import date, timedelta
 from pathlib import Path
 
 from pydantic import TypeAdapter
-from sqlalchemy import func, inspect, text
-from sqlalchemy.engine import Engine
+from sqlalchemy import func, text
+from sqlalchemy.engine import Connection, Engine
 from sqlalchemy.orm import defer
 from sqlalchemy.sql import Select
 from sqlmodel import Session as DbSession
@@ -33,6 +33,7 @@ from coach.plan.models import (
     Session,
     _now,
 )
+from coach.storage.pages import is_remote, pages
 
 _LAPS = TypeAdapter(list[LapSummary])
 
@@ -44,23 +45,49 @@ class SchemaTooNew(Exception):
     """La base a un schéma plus récent que cette version de l'app."""
 
 
+def _prefetch(conn: Connection, *sqls: str) -> None:
+    """Sur une base distante, envoie ces lectures ensemble ; leur `execute` consommera le résultat."""
+    raw = conn.connection.driver_connection
+    if hasattr(raw, "prefetch"):
+        raw.prefetch(list(sqls))
+
+
+_OBJECTS = "SELECT type, name FROM sqlite_master"
+_VERSION = "SELECT value_json FROM appstate WHERE key = 'schema_version'"
+
+
+def _read_schema(conn: Connection) -> tuple[set[str], set[str], int | None]:
+    """Tables et index présents, et version de schéma inscrite (None : aucune)."""
+    _prefetch(conn, _OBJECTS, _VERSION)
+    found = conn.execute(text(_OBJECTS)).all()
+    tables = {name for kind, name in found if kind == "table"}
+    indexes = {name for kind, name in found if kind == "index"}
+    # présence vérifiée plutôt qu'un except : le type d'erreur « table absente » varie selon le driver
+    row = conn.execute(text(_VERSION)).first() if AppState.__tablename__ in tables else None
+    return tables, indexes, json.loads(row[0])["v"] if row is not None else None
+
+
 def _check_schema_version(engine: Engine) -> None:
     """Refuse une base plus récente (avant toute migration) ; sinon inscrit SCHEMA_VERSION.
 
-    Fonctionne sur tout moteur (fichier local ou base distante).
+    Fonctionne sur tout moteur (fichier local ou base distante) ; une base à jour n'est que lue.
     """
-    # has_table plutôt qu'un except : le type d'erreur « table absente » varie selon le driver
-    if inspect(engine).has_table(AppState.__tablename__):
-        with DbSession(engine) as db:
-            row = db.get(AppState, "schema_version")
-        found = json.loads(row.value_json)["v"] if row is not None else None
-        if found is not None and found > SCHEMA_VERSION:
-            raise SchemaTooNew(f"schéma {found} > {SCHEMA_VERSION}")
-    SQLModel.metadata.create_all(engine)
+    with engine.connect() as conn:
+        tables, indexes, found = _read_schema(conn)
+    if found is not None and found > SCHEMA_VERSION:
+        raise SchemaTooNew(f"schéma {found} > {SCHEMA_VERSION}")
+    incomplete = [
+        t
+        for t in SQLModel.metadata.sorted_tables
+        if t.name not in tables or not {i.name for i in t.indexes} <= indexes
+    ]
+    if incomplete:
+        SQLModel.metadata.create_all(engine, tables=incomplete)
     _migrate(engine)
-    with DbSession(engine) as db:
-        db.merge(AppState(key="schema_version", value_json=json.dumps({"v": SCHEMA_VERSION})))
-        db.commit()
+    if found != SCHEMA_VERSION:
+        with DbSession(engine) as db:
+            db.merge(AppState(key="schema_version", value_json=json.dumps({"v": SCHEMA_VERSION})))
+            db.commit()
 
 
 def prepare_engine(engine: Engine) -> Engine:
@@ -74,21 +101,30 @@ def make_engine(path: Path) -> Engine:
     return prepare_engine(create_engine(f"sqlite:///{path}"))
 
 
-def _add_columns(conn, table: str, columns: dict[str, str]) -> None:
-    """Ajoute à `table` chaque colonne absente (DDL donné en valeur)."""
-    existing = {row[1] for row in conn.execute(text(f"PRAGMA table_info({table})"))}
-    for name, ddl in columns.items():
-        if name not in existing:
-            conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {ddl}"))
+_MIGRATED = ("goal", "session", "proposal", "cycle", "event", "athletesnapshot")
+
+
+def _read_columns(conn: Connection) -> dict[str, set[str]]:
+    """Colonnes des tables que `_migrate` peut modifier."""
+    sqls = {table: f"PRAGMA table_info({table})" for table in _MIGRATED}
+    _prefetch(conn, *sqls.values())
+    return {table: {row[1] for row in conn.execute(text(sql))} for table, sql in sqls.items()}
 
 
 def _migrate(engine: Engine) -> None:
     """Met à niveau une base existante, étape par étape (chacune idempotente)."""
     with engine.begin() as conn:
-        columns = {row[1] for row in conn.execute(text("PRAGMA table_info(goal)"))}
-        if "target_time_s" not in columns:
+        existing = _read_columns(conn)
+
+        def add_columns(table: str, columns: dict[str, str]) -> None:
+            """Ajoute à `table` chaque colonne absente (DDL donné en valeur)."""
+            for name, ddl in columns.items():
+                if name not in existing[table]:
+                    conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {ddl}"))
+
+        if "target_time_s" not in existing["goal"]:
             # temps visé de `goal`, repris de la stratégie de course
-            _add_columns(conn, "goal", {"target_time_s": "INTEGER", "target_source": "VARCHAR"})
+            add_columns("goal", {"target_time_s": "INTEGER", "target_source": "VARCHAR"})
             rows = conn.execute(text("SELECT goal_id, settings_json FROM racestrategy")).all()
             for goal_id, settings_json in rows:
                 try:
@@ -101,8 +137,7 @@ def _migrate(engine: Engine) -> None:
                         {"t": target, "id": goal_id},
                     )
         # jours possibles et jour de sortie longue
-        _add_columns(
-            conn,
+        add_columns(
             "goal",
             {
                 "available_days_json": f"VARCHAR NOT NULL DEFAULT '{ALL_DAYS_JSON}'",
@@ -110,24 +145,23 @@ def _migrate(engine: Engine) -> None:
             },
         )
         # sport des séances et option vélo de l'objectif
-        _add_columns(conn, "session", {"sport": "VARCHAR NOT NULL DEFAULT 'run'"})
-        _add_columns(conn, "goal", {"include_bike": "BOOLEAN NOT NULL DEFAULT 0"})
+        add_columns("session", {"sport": "VARCHAR NOT NULL DEFAULT 'run'"})
+        add_columns("goal", {"include_bike": "BOOLEAN NOT NULL DEFAULT 0"})
         # priorité des objectifs
-        _add_columns(conn, "goal", {"priority": "VARCHAR NOT NULL DEFAULT 'principal'"})
+        add_columns("goal", {"priority": "VARCHAR NOT NULL DEFAULT 'principal'"})
         # précisions de l'objectif
-        _add_columns(conn, "goal", {"notes": "VARCHAR"})
+        add_columns("goal", {"notes": "VARCHAR"})
         # temps estimés portés par une proposition d'ajustement
-        _add_columns(conn, "proposal", {"estimates_json": "VARCHAR NOT NULL DEFAULT '[]'"})
+        add_columns("proposal", {"estimates_json": "VARCHAR NOT NULL DEFAULT '[]'"})
         # changements d'objectif en attente de mise à jour de l'entraînement
-        _add_columns(
-            conn,
+        add_columns(
             "cycle",
             {"adjust_due": "BOOLEAN NOT NULL DEFAULT 0", "adjust_notes_json": "VARCHAR NOT NULL DEFAULT '[]'"},
         )
         # séances et imprévus rattachés à un cycle (l'id du cycle reprend celui de l'objectif)
         legacy = False
         for table in ("session", "event"):
-            cols = {row[1] for row in conn.execute(text(f"PRAGMA table_info({table})"))}
+            cols = existing[table]
             if "goal_id" in cols and "cycle_id" not in cols:
                 conn.execute(text(f"ALTER TABLE {table} RENAME COLUMN goal_id TO cycle_id"))
                 legacy = True
@@ -151,9 +185,9 @@ def _migrate(engine: Engine) -> None:
                 """)
             )
         # provenance de la FC repos de l'instantané
-        _add_columns(conn, "athletesnapshot", {"hr_rest_source": "VARCHAR", "hr_rest_nights": "INTEGER"})
+        add_columns("athletesnapshot", {"hr_rest_source": "VARCHAR", "hr_rest_nights": "INTEGER"})
         # zones FC utilisées à l'envoi d'une séance à la montre
-        _add_columns(conn, "session", {"export_hr_zones_json": "VARCHAR"})
+        add_columns("session", {"export_hr_zones_json": "VARCHAR"})
 
 
 def active_cycle_stmt() -> Select:
@@ -439,10 +473,18 @@ class Repo:
         with self._open() as db:
             return db.exec(stmt).first()
 
-    def all_activities(self) -> list[Activity]:
+    def all_activities(self, *, raw: bool = True) -> list[Activity]:
+        """Toutes les activités, par date ; `raw=False` : sans le JSON brut (lourd)."""
         stmt = select(Activity).order_by(Activity.date, Activity.id)
+        if not raw:
+            stmt = stmt.options(defer(Activity.raw_json))
         with self._open() as db:
-            return list(db.exec(stmt))
+            if not (raw and is_remote(self.engine)):
+                return list(db.exec(stmt))
+            found: list[Activity] = []
+            for page in pages(db.connection(), Activity.__table__):
+                found += db.exec(select(Activity).where(page.where()))
+            return sorted(found, key=lambda a: (a.date, a.id))
 
     def count_activities(self) -> int:
         with self._open() as db:

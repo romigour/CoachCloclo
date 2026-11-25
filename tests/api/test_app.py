@@ -32,10 +32,10 @@ from coach.services.sync import load_sync_state
 from tests.llm.factories import valid_plan_json
 from coach.plan.repo import Repo, SchemaTooNew, make_engine, prepare_engine
 from coach.storage import switch as switch_mod
-from coach.storage.cloud_errors import CloudUnreachable
+from coach.storage.cloud_errors import INVALID_ADDRESS_MSG, CloudUnreachable
 from coach.storage.hrana import CloudNetworkError
 from coach.storage.libsql_dialect import remote_engine
-from coach.storage.source import LocalSource
+from coach.storage.source import LocalSource, source_from_settings
 from tests.plan.factories import make_activity, make_cycle, make_db_session, zones_rest
 from tests.services.test_sync import adjustment_json
 from tests.sql_writes import recorded_writes
@@ -2060,6 +2060,33 @@ def test_startup_with_unreachable_cloud_then_recovers(storage_client, cloud):
     client.now[0] += 60  # nouvel essai après le délai
     assert client.get("/api/plan").status_code == 200
     assert client.get("/api/status").json()["storage"] is None
+
+
+@pytest.fixture
+def real_source(cloud, monkeypatch):
+    """Vraie source Turso ; rend les clients HTTP créés (aucun : l'adresse est refusée avant)."""
+    made = []
+    monkeypatch.setattr("coach.storage.hrana.make_client", lambda *a: made.append(a))
+    cloud.source_for = source_from_settings
+    return made
+
+
+@pytest.mark.parametrize("url", ["https://", "x.turso.io:abc", "[::1]"])
+def test_enable_with_invalid_address_changes_nothing(storage_client, real_source, url):
+    client = storage_client()
+    r = client.post("/api/storage/cloud", json={"url": url, "token": STORAGE_TOKEN})
+    assert r.status_code == 422
+    assert r.json() == {"code": "cloud_unreachable", "detail": INVALID_ADDRESS_MSG}
+    assert client.get("/api/storage").json()["mode"] == "local"
+    assert real_source == []
+
+
+def test_startup_with_invalid_address(storage_client, real_source):
+    save_settings(load_settings().model_copy(update=TURSO_SETTINGS | {"turso_url": "x.turso.io:abc"}))
+    client = storage_client()  # ne plante pas
+    assert client.get("/api/status").json()["storage"]["code"] == "cloud_unreachable"
+    assert client.get("/api/plan").status_code == 503
+    assert real_source == []
 
 
 def test_startup_retry_is_throttled(storage_client, cloud):

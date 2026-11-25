@@ -12,6 +12,7 @@ from coach.storage.hrana_errors import CloudAuthError, CloudNetworkError
 UNREACHABLE_MSG = "Base cloud injoignable : vérifie ta connexion"
 PROBE_UNREACHABLE_MSG = "Base cloud injoignable : vérifie l'adresse de la base et ta connexion"
 BAD_TOKEN_MSG = "Jeton Turso refusé : vérifie-le, ou crée un nouveau jeton pour cette base"
+INVALID_ADDRESS_MSG = "Adresse de la base cloud invalide : vérifie-la"
 
 
 class CloudUnreachable(Exception):

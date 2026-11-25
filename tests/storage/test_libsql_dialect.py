@@ -16,7 +16,7 @@ from coach.plan.models import Goal
 from coach.plan.repo import Repo, prepare_engine
 from coach.services.activities import store_summaries
 from coach.storage import hrana
-from coach.storage.cloud_errors import is_auth_failure, is_cloud_failure
+from coach.storage.cloud_errors import INVALID_ADDRESS_MSG, CloudUnreachable, is_auth_failure, is_cloud_failure
 from coach.storage.libsql_dialect import remote_engine
 from tests.plan.factories import make_activity, make_goal
 from tests.storage.fake_hrana import FakeHrana
@@ -258,3 +258,32 @@ def test_token_in_url_not_shown():
     engine = remote_engine(f"{URL}?authToken={TOKEN}", TOKEN)
     assert TOKEN not in repr(engine)
     engine.dispose()
+
+
+# --- adresse -----------------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "url", [f"libsql://{TOKEN}@x.turso.io", f"https://u:{TOKEN}@x.turso.io:443/", f"a@{TOKEN}@x.turso.io"]
+)
+def test_userinfo_dropped(server, url):
+    engine = remote_engine(url, "tok", transport=server.transport)
+    with engine.connect() as c:
+        c.execute(text("select 1"))
+    assert {u.removeprefix("https://").split("/")[0].split(":")[0] for u in server.urls} == {"x.turso.io"}
+    assert TOKEN not in repr(engine) + "".join(server.urls)
+    engine.dispose()
+
+
+@pytest.mark.parametrize(
+    "url",
+    ["libsql://", "https:///x", "user@", "x.turso.io:abc", "x.turso.io:", "x.turso.io:0", "x.turso.io:70000",
+     ":443", "x.turso.io:²", "[::1]", "[::1]:443", "x turso.io", f"libsql://u:{TOKEN}/x@y"],
+)
+def test_invalid_address_refused_before_client(clients, url):
+    with pytest.raises(CloudUnreachable) as e:
+        remote_engine(url, TOKEN)
+    assert clients == []
+    assert str(e.value) == INVALID_ADDRESS_MSG
+    assert TOKEN not in str(e.value) + repr(e.value)
+    assert e.value.__context__ is None

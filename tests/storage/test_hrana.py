@@ -1,5 +1,7 @@
 import logging
 import sqlite3
+import subprocess
+import sys
 import threading
 import time
 from contextlib import closing
@@ -802,3 +804,52 @@ def test_concurrent_reads_do_not_block(client, fake):
         t.join()
     assert time.monotonic() - start < 0.9
     assert results == [(1,)] * 5
+
+
+def test_httpx_request_lines_not_logged():
+    """httpx écrit une ligne INFO par requête : le journal de l'appli en serait rempli."""
+    code = (
+        "import logging, sys; logging.basicConfig(level=logging.INFO, stream=sys.stdout)\n"
+        "import httpx; from coach.storage import hrana\n"
+        "client = hrana.make_client(httpx.MockTransport(lambda r: httpx.Response(200, json={})))\n"
+        "client.get('https://base.turso.io')\n"
+        "logging.getLogger('httpx').warning('ok')"
+    )
+    out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True).stdout
+    assert "HTTP Request" not in out
+    assert "httpx:ok" in out
+
+
+@pytest.mark.parametrize("error", [httpx.ReadTimeout, httpx.WriteTimeout, httpx.ConnectTimeout, httpx.PoolTimeout])
+@pytest.mark.parametrize("sql", ["SELECT 1", "DELETE FROM t"])
+def test_timeout_renews_pool_without_replay(error, sql):
+    sends = []
+
+    def handler(request):
+        sends.append(request)
+        raise error("x")
+
+    with hrana.make_client() as client:
+        old = client.pool
+        old.client.close()
+        old.client = httpx.Client(transport=httpx.MockTransport(handler))
+        with pytest.raises(hrana.CloudNetworkError):
+            hrana.connect(BASE, auth_token=TOKEN, client=client).cursor().execute(sql)
+        assert len(sends) == 1
+        assert client.pool is not old
+
+
+def test_rollback_has_short_timeout(conn, fake):
+    conn.cursor().execute("INSERT INTO t (name) VALUES ('a')")
+    conn.rollback()
+    conn.cursor().execute("SELECT 1")
+    assert [t["read"] for t in fake.timeouts] == [30, 5, 30]
+
+
+@pytest.mark.parametrize("status", [401, 403, 404, 429, 500])
+def test_http_status_logged_without_secret(status, caplog):
+    conn = _served(lambda request: httpx.Response(status, text=f"refus {TOKEN}"))
+    with caplog.at_level(logging.WARNING), pytest.raises(hrana.OperationalError):
+        conn.cursor().execute("SELECT 'donnée privée'")
+    assert [r.levelname for r in caplog.records if str(status) in r.getMessage()] == ["WARNING"]
+    assert TOKEN not in caplog.text and "privée" not in caplog.text

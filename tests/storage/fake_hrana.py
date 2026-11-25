@@ -25,6 +25,8 @@ class FakeHrana:
         self.requests: list[dict] = []
         self.urls: list[str] = []
         self.headers: list[httpx.Headers] = []
+        self.timeouts: list[dict] = []
+        self.response_sizes: list[tuple[int, int]] = []  # (lignes, octets) de chaque réponse
         self.delay_s = 0.0
         # Adresse collante renvoyée aux clients, comme le fait Turso (None : aucune).
         self.base_url: str | None = None
@@ -65,6 +67,7 @@ class FakeHrana:
             self.requests.append(body)
             self.urls.append(str(request.url))
             self.headers.append(request.headers)
+            self.timeouts.append(request.extensions["timeout"])
             failure = self._failures.popleft() if self._failures else None
         if self.delay_s:
             time.sleep(self.delay_s)
@@ -77,6 +80,7 @@ class FakeHrana:
         if failure == "expire_baton":
             self.expire_streams()
         response = self._pipeline(body)
+        self.response_sizes.append((_row_count(response), len(response.content)))
         if failure == "drop_after":
             raise httpx.ReadError("connection reset")
         return response
@@ -111,6 +115,14 @@ class FakeHrana:
                 next_baton = f"baton-{self._next_baton}"
                 self._streams[next_baton] = db
         return httpx.Response(200, json={"baton": next_baton, "base_url": self.base_url, "results": results})
+
+
+def _row_count(response: httpx.Response) -> int:
+    count = 0
+    for entry in response.json().get("results", []):
+        result = entry.get("response", {}).get("result", {})
+        count += len(result.get("rows", [])) + sum(len(s["rows"]) for s in result.get("step_results", []) if s)
+    return count
 
 
 def _error(e: sqlite3.Error) -> dict:

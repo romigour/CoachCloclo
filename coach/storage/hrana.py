@@ -7,6 +7,7 @@ Le jeton ne figure jamais dans un message, une représentation ou un journal.
 """
 
 import base64
+import logging
 import math
 import re
 import threading
@@ -30,6 +31,9 @@ from coach.storage.hrana_errors import (  # exposées ici aussi : la PEP 249 les
     Warning,  # noqa: A004, F401
 )
 
+log = logging.getLogger(__name__)
+logging.getLogger("httpx").setLevel(logging.WARNING)  # sinon une ligne par requête à la base dans le journal
+
 apilevel = "2.0"
 threadsafety = 1
 paramstyle = "qmark"
@@ -52,6 +56,7 @@ _EXPIRED = ("STREAM_EXPIRED", "TRANSACTION_TIMEOUT", "BATON")
 _STATEMENT_ONLY = ("SQLITE_CONSTRAINT", "SQL_", "ARGS_")
 _SLICE_BYTES = 1_000_000
 _TIMEOUT = 30
+_ROLLBACK_TIMEOUT = 5  # sans réponse, le serveur annule de lui-même
 _LIMITS = httpx.Limits(max_connections=20, max_keepalive_connections=20, keepalive_expiry=300)
 
 
@@ -180,7 +185,7 @@ class Connection:
         if baton is None:
             return
         try:
-            self._send([_execute("ROLLBACK"), {"type": "close"}], baton, url=url)
+            self._send([_execute("ROLLBACK"), {"type": "close"}], baton, url=url, timeout=_ROLLBACK_TIMEOUT)
         except OperationalError:
             pass  # sans COMMIT, le serveur annule la transaction en fermant le flux
 
@@ -300,16 +305,24 @@ class Connection:
             raise
 
     def _send(
-        self, requests: list[dict], baton: str | None = None, *, url: str | None = None, replay: bool = False
+        self,
+        requests: list[dict],
+        baton: str | None = None,
+        *,
+        url: str | None = None,
+        replay: bool = False,
+        timeout: float = _TIMEOUT,
     ) -> dict:
         request = {"baton": baton, "requests": requests}
         target = f"{url or self._stream_url}/v2/pipeline"
-        response, failure = self._post(target, request)
+        response, failure = self._post(target, request, timeout)
         if replay and isinstance(failure, _REPLAYABLE):
-            response, failure = self._post(target, request)
+            response, failure = self._post(target, request, timeout)
         # Levé hors de tout `except` : l'erreur httpx ne doit pas suivre par __context__.
         if response is None:
             raise CloudNetworkError(f"Base distante injoignable ({type(failure).__name__})")
+        if response.status_code != 200:
+            log.warning("Base distante : réponse HTTP %s", response.status_code)
         if response.status_code in (401, 403):
             raise CloudAuthError(f"Jeton refusé par la base distante (HTTP {response.status_code})")
         if response.status_code != 200:
@@ -322,14 +335,14 @@ class Connection:
             raise _unreadable()
         return body
 
-    def _post(self, url: str, request: dict) -> tuple[httpx.Response | None, Exception | None]:
+    def _post(self, url: str, request: dict, timeout: float) -> tuple[httpx.Response | None, Exception | None]:
         client = self._client
         pool = client.pool if isinstance(client, RenewableClient) else None
         try:
-            return client.post(url, json=request, headers=self._headers), None
+            return client.post(url, json=request, headers=self._headers, timeout=timeout), None
         except (httpx.HTTPError, httpx.InvalidURL) as e:
-            if pool is not None and isinstance(e, _REPLAYABLE):
-                client.renew(pool)  # le rejeu, et tout envoi suivant, part sur une connexion neuve
+            if pool is not None and isinstance(e, (*_REPLAYABLE, httpx.TimeoutException)):
+                client.renew(pool)  # le rejeu éventuel, et tout envoi suivant, part sur une connexion neuve
             return None, e
         except RuntimeError as e:
             if client.is_closed:  # moteur fermé pendant une bascule de base

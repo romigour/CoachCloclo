@@ -152,16 +152,16 @@ NO_D_PLUS_RULE = "Dénivelé : laisse d_plus_m à null pour toutes les séances.
 - Test: `web/src/routes/Week.test.ts`
 
 **Interfaces:**
-- Consumes: les quatre fonctions de la tâche 2 ; `api.zones()`, `api.statsActivities()`, `cached`.
+- Consumes: les quatre fonctions de la tâche 2 ; `currentZones()` de `zones.svelte.ts` (déjà chargées par App), `api.statsActivities()`, `cached`.
 
-- [ ] **Step 1: Écrire les tests qui échouent** — `mock` répond aussi à `/api/zones` (`null` par défaut) et `/api/stats/activities` (`{ activities: [] }`). Dans la région « Bilan de la semaine » :
+- [ ] **Step 1: Écrire les tests qui échouent** — `mock` répond aussi à `/api/zones` (`null` par défaut) et `/api/stats/activities` (`{ activities: [] }`) ; zones chargées par `await loadZones()` avant `render`, `resetZones()` dans `afterEach`. Dans la région « Bilan de la semaine » :
   - zones de la tâche 2, une séance EF de 3600 s, D+ 450, `pace` : contient `≈ 10 km · ≈ 450 m D+` ;
   - même séance sans D+ : contient `≈ 10 km`, pas `D+`, et `/api/stats/activities` n'est jamais appelée ;
   - zones `null`, D+ 450 : contient `≈ 450 m D+`, pas `km` ;
   - séance `hr`, D+ 450, Z2 3600 s, sortie trail récente à 450 s/km : contient `≈ 8 km` ;
-  - `/api/zones` en 500 : `1/2 séances faites` reste affiché, aucun bandeau d'erreur ;
+  - `/api/stats/activities` en 500, séance `hr` avec D+ : `1/2 séances faites` reste affiché, aucun bandeau d'erreur ;
   - séance de vélo seule : ne contient pas `≈`.
 - [ ] **Step 2: Vérifier l'échec** — `npx vitest run src/routes/Week.test.ts`.
-- [ ] **Step 3: Implémenter** — zones lues au chargement et à chaque `version` ; activités lues seulement si une séance `hr` du plan a du D+ ; mêmes clés de cache que les autres lecteurs de ces deux routes s'il y en a ; échecs ignorés (`.catch(() => {})`). Après la ligne de durée : `{#if line}<p class="meta">{line}</p>{/if}`.
+- [ ] **Step 3: Implémenter** — zones prises de `currentZones()` ; activités lues seulement si une séance `hr` du plan a du D+ ; clé de cache `"stats"`, comme `Stats.svelte`, relues à chaque `version` ; échecs ignorés (`.catch(() => {})`). Après la ligne de durée : `{#if line}<p class="meta">{line}</p>{/if}`.
 - [ ] **Step 4: Vérifier** — dans `web` : `npm test` et `npm run build` ; à la racine : `python -m pytest -q` ; tout passe. Contrôler le bloc dans le navigateur, en largeur bureau et mobile.
 - [ ] **Step 5: Commit** — `git add -A && git commit -m "feat(web): km et D+ prévus dans le bilan de la semaine"`

@@ -17,6 +17,8 @@
   import { bucketFor, sportShare, volumeSeries } from "../lib/stats/volume";
   import { raceProgression, raceRows } from "../lib/stats/races";
   import { fmtDay } from "../lib/stats/format";
+  import type { StatsTab } from "../lib/stats/tabs";
+  import StatsTabs from "../components/stats/StatsTabs.svelte";
   import Filters from "../components/stats/Filters.svelte";
   import KpiRow from "../components/stats/KpiRow.svelte";
   import ConsistencyCalendar from "../components/stats/ConsistencyCalendar.svelte";
@@ -28,8 +30,12 @@
   import { READONLY } from "../lib/mode";
   import { importBanner } from "../lib/history";
 
-  let { history, onimport, version = 0 }: { history: HistoryState | null; onimport: () => void; version?: number } =
-    $props();
+  let {
+    history,
+    onimport,
+    version = 0,
+    tab = "overview",
+  }: { history: HistoryState | null; onimport: () => void; version?: number; tab?: StatsTab } = $props();
 
   type Metric = "hours" | "km";
   type Saved = { choice: PeriodChoice; sport: SportFilter; metric: Metric };
@@ -169,6 +175,8 @@
       <h1>Statistiques</h1>
     </div>
   </header>
+
+  <StatsTabs {tab} />
 
   {#if history?.status === "running"}
     <p class="banner info busy" role="status">{importBanner(history.imported)}</p>

@@ -281,3 +281,10 @@ test("lecture seule : connexion effacée, une lecture d'état en vol ne restaure
   vi.useRealTimers();
   status.mockRestore();
 });
+
+test("App : lien direct vers une sous-page de statistiques", async () => {
+  location.hash = "#/stats/load";
+  render(App);
+  expect(await screen.findByRole("link", { name: "Charge" })).toHaveAttribute("aria-current", "page");
+  expect(location.hash).toBe("#/stats/load");
+});

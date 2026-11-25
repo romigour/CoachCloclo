@@ -4,6 +4,7 @@
   import { clearCache, noteWrite, pendingLoads } from "./lib/cache";
   import { loadZones, resetZones } from "./lib/zones.svelte";
   import { READONLY } from "./lib/mode";
+  import { parseTab } from "./lib/stats/tabs";
   import ErrorBanner from "./components/ErrorBanner.svelte";
   import UpdateBanner from "./components/UpdateBanner.svelte";
   import Sidebar from "./components/Sidebar.svelte";
@@ -26,6 +27,7 @@
 
   let route = $state<Route | null>(parse());
   let raceGoalId = $state<number | null>(parseGoalId()); // #/race/{id} : objectif choisi depuis la page Objectifs
+  let statsTab = $state(parseTab(location.hash)); // #/stats/{sous-page}
   let status = $state<Status | null>(null);
   let garmin = $state<GarminState>("checking");
   let garminReads = 0; // numéro de la dernière lecture de l'état Garmin : une réponse plus ancienne est ignorée
@@ -44,7 +46,7 @@
   let autoSyncStarted = false; // une seule synchro automatique par chargement de l'app
 
   function parse(): Route | null {
-    const raw = location.hash.replace(/^#\//, "").replace(/^race\/\d+$/, "race");
+    const raw = location.hash.replace(/^#\//, "").replace(/^race\/\d+$/, "race").replace(/^stats\/.*$/, "stats");
     const name = ALIASES[raw] ?? raw;
     return (ROUTES as readonly string[]).includes(name) ? (name as Route) : null;
   }
@@ -166,6 +168,7 @@
     if (location.hash !== hash) ownHash = hash;
     location.hash = hash;
     route = parse();
+    statsTab = parseTab(location.hash);
   }
 
   async function start() {
@@ -306,6 +309,7 @@
       // Réglages ouverts : l'état Garmin a pu changer depuis le lancement (connexion revenue, session expirée).
       if (!READONLY && route === "setup" && garmin !== "checking") readGarmin();
       raceGoalId = parseGoalId();
+      statsTab = parseTab(location.hash);
       error = null;
       if (READONLY && route !== "connection") guard();
     };
@@ -443,7 +447,7 @@
             <p class="card">Aucun objectif actif : le jour J se prépare à partir d'un objectif. <a href="#/goal">Créer un objectif</a></p>
           {/if}
         {:else if route === "stats"}
-          <Stats {version} history={status?.history ?? null} onimport={importHistory} />
+          <Stats {version} tab={statsTab} history={status?.history ?? null} onimport={importHistory} />
         {:else if route === "proposal"}
           <Proposal onchanged={refresh} />
         {/if}

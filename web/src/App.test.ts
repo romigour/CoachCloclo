@@ -1024,3 +1024,27 @@ test("bascule de stockage pendant le premier lancement : pas de renvoi sans éta
   expect(location.hash).toBe("#/setup");
   syncDone?.();
 });
+
+test("sous-page de statistiques : lien direct gardé, changement d'onglet sans relecture", async () => {
+  syncInstant = true;
+  statusBody = { ...statusBody, has_activities: true };
+  location.hash = "#/stats/load";
+  render(App);
+  const tab = await screen.findByRole("link", { name: "Charge" });
+  expect(tab).toHaveAttribute("aria-current", "page");
+  expect(location.hash).toBe("#/stats/load");
+  expect(document.querySelector('.sidebar a[href="#/stats"]')).toHaveClass("active");
+  await waitFor(() => expect(syncs()).toBe(1));
+  await screen.findByText(/Dernière synchro/);
+
+  const before = statsCalls;
+  location.hash = "#/stats/progress";
+  window.dispatchEvent(new HashChangeEvent("hashchange"));
+  await waitFor(() => expect(screen.getByRole("link", { name: "Progression" })).toHaveAttribute("aria-current", "page"));
+  expect(screen.getByRole("link", { name: "Charge" })).not.toHaveAttribute("aria-current");
+  expect(statsCalls).toBe(before);
+
+  location.hash = "#/stats/inconnu";
+  window.dispatchEvent(new HashChangeEvent("hashchange"));
+  await waitFor(() => expect(screen.getByRole("link", { name: "Aperçu" })).toHaveAttribute("aria-current", "page"));
+});

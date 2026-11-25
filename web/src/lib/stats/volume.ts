@@ -11,7 +11,7 @@ export function bucketFor(p: Period): Bucket {
   return daysBetween(p.from, p.to) + 1 <= 183 ? "week" : "month";
 }
 
-function nextMonth(ym: string): string {
+export function nextMonth(ym: string): string {
   const [y, m] = ym.split("-").map(Number);
   return m === 12 ? `${y + 1}-01` : `${y}-${String(m + 1).padStart(2, "0")}`;
 }

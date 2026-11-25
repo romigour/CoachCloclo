@@ -4,7 +4,7 @@ import { addDays, daysBetween, mondayOf, type Period } from "./filter";
 
 export const RAMP_ALERT = 0.15;
 export const MISSING_HR_ALERT = 0.3;
-const CTL_DAYS = 42;
+export const CTL_DAYS = 42;
 const ATL_DAYS = 7;
 const CHRONIC_DAYS = 28;
 

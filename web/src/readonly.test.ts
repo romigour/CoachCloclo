@@ -71,7 +71,7 @@ test("Ma semaine : imprévus visibles, aucune action, proposition renvoyée vers
 });
 
 test("Stats : aucune action d'import ni de compétition", async () => {
-  render(Stats, { history: { status: "error", imported: 3, error: "x", total: 0, finished_at: null }, onimport: () => {} });
+  render(Stats, { tab: "races", history: { status: "error", imported: 3, error: "x", total: 0, finished_at: null }, onimport: () => {} });
   expect(await screen.findByText("Semi de test")).toBeInTheDocument();
   expect(actions()).toEqual([]);
 });

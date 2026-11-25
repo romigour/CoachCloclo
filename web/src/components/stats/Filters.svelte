@@ -8,6 +8,7 @@
     options,
     years,
     period,
+    showSport = true,
     onchange,
     onreset,
   }: {
@@ -17,6 +18,8 @@
     years: number[];
     /** Période résolue : sert à pré-remplir les dates personnalisées. */
     period: Period;
+    /** Faux sur les sous-pages où le sport n'agit pas. */
+    showSport?: boolean;
     onchange: (choice: PeriodChoice, sport: SportFilter) => void;
     onreset: () => void;
   } = $props();
@@ -31,7 +34,7 @@
   // Le sport mémorisé reste sélectionnable même s'il n'apparaît plus dans les données.
   const sports = $derived(options.includes(sport) ? options : [...options, sport]);
   const yearList = $derived(choice.kind === "year" && !years.includes(choice.year) ? [choice.year, ...years] : years);
-  const isDefault = $derived(choice.kind === "12m" && sport === "all");
+  const isDefault = $derived(choice.kind === "12m" && (!showSport || sport === "all"));
 
   function pick(kind: PeriodChoice["kind"]) {
     if (kind === choice.kind) return;
@@ -75,12 +78,12 @@
       </label>
     {/if}
 
-    <label class="field">
+    {#if showSport}<label class="field">
       <span>Sport</span>
       <select value={sport} onchange={(e) => onchange(choice, e.currentTarget.value as SportFilter)}>
         {#each sports as s (s)}<option value={s}>{SPORT_LABEL[s]}</option>{/each}
       </select>
-    </label>
+    </label>{/if}
 
     <button type="button" class="reset" disabled={isDefault} onclick={onreset}>Réinitialiser</button>
   </div>

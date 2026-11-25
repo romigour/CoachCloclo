@@ -124,13 +124,13 @@ const chartClick = (label: RegExp, detail: { dataIndex: number; data?: unknown }
   screen.getByRole("img", { name: label }).dispatchEvent(new CustomEvent("echartclick", { detail: { name: "", ...detail } }));
 
 test("clicking a month bar, then a week bar, narrows the period", async () => {
-  render(Stats, { history: null, onimport: () => {} });
-  await kpi("Séances");
+  render(Stats, { tab: "load", history: null, onimport: () => {} });
+  await screen.findByRole("img", { name: /^Volume par mois/ });
   // 12 derniers mois → barres mensuelles depuis 2025-10 ; index 8 = juin 2026
   chartClick(/^Volume par mois/, { dataIndex: 8 });
   expect(await screen.findByText(/Du 1 juin 2026 au 30 juin 2026/)).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Personnalisée" })).toHaveAttribute("aria-pressed", "true");
-  expect((await kpi("Séances")).getByText("1")).toBeInTheDocument();
+  expect(screen.getByText(/· 1 séance$/)).toBeInTheDocument();
   // 30 jours → barres hebdomadaires depuis le lundi 1er juin ; index 2 = semaine du 15 juin
   chartClick(/^Volume par semaine/, { dataIndex: 2 });
   expect(await screen.findByText(/Du 15 juin 2026 au 21 juin 2026/)).toBeInTheDocument();
@@ -146,9 +146,8 @@ test("clicking a calendar day narrows the period to that day", async () => {
 
 test("volume shows the empty state when the metric has no data", async () => {
   activities = [{ ...ACTS[2], family: "strength", distance_m: null }];
-  render(Stats, { history: null, onimport: () => {} });
-  await kpi("Séances");
-  expect(screen.getByRole("img", { name: /^Volume par/ })).toBeInTheDocument();
+  render(Stats, { tab: "load", history: null, onimport: () => {} });
+  expect(await screen.findByRole("img", { name: /^Volume par/ })).toBeInTheDocument();
   await fireEvent.click(screen.getByRole("button", { name: "Km" }));
   expect(screen.queryByRole("img", { name: /^Volume par/ })).toBeNull();
   expect(screen.getAllByText("Pas assez de données sur cette période")).toHaveLength(1);
@@ -167,23 +166,29 @@ const section = async (title: RegExp) =>
 
 async function openRaceEditor() {
   activities = [...ACTS, RACE];
-  render(Stats, { history: null, onimport: () => {} });
+  render(Stats, { tab: "races", history: null, onimport: () => {} });
   const races = await section(/^Compétitions/);
   expect(races.getByText("42:00")).toBeInTheDocument(); // temps montre avant saisie
   await fireEvent.click(races.getByRole("button", { name: /Modifier/ }));
   return within(screen.getByRole("dialog"));
 }
 
-test("running block hidden when sport is bike", async () => {
-  render(Stats, { history: null, onimport: () => {} });
-  expect(await screen.findByRole("heading", { name: /^Course à pied/ })).toBeInTheDocument();
-  await fireEvent.change(screen.getByLabelText("Sport"), { target: { value: "bike" } });
-  expect(screen.queryByRole("heading", { name: /^Course à pied/ })).toBeNull();
+test("sport vélo mémorisé : la Progression montre la course, sans choix du sport ni perte du filtre", async () => {
+  localStorage.setItem("coach.stats.filters", JSON.stringify({ choice: { kind: "12m" }, sport: "bike", metric: "hours" }));
+  const view = render(Stats, { tab: "progress", history: null, onimport: () => {} });
+  expect(await screen.findByRole("img", { name: /^Efficacité aérobie/ })).toBeInTheDocument();
+  expect(screen.queryByLabelText("Sport")).toBeNull();
+  await fireEvent.click(screen.getByRole("button", { name: "Tout" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Réinitialiser" }));
+  expect(JSON.parse(localStorage.getItem("coach.stats.filters")!).sport).toBe("bike");
+  await view.rerender({ tab: "overview" });
+  expect(screen.getByLabelText("Sport")).toHaveValue("bike");
+  expect((await kpi("Séances")).getByText("1")).toBeInTheDocument();
 });
 
 test("records table formats times and links to Garmin", async () => {
   records = [{ kind: "5k", value: 1234, garmin_activity_id: 987654, date: "2025-04-12" }];
-  render(Stats, { history: null, onimport: () => {} });
+  render(Stats, { tab: "races", history: null, onimport: () => {} });
   const rec = await section(/^Records/);
   expect(await rec.findByText("20:34")).toBeInTheDocument();
   expect(rec.getByText("4:07 /km")).toBeInTheDocument();
@@ -194,7 +199,7 @@ test("records table formats times and links to Garmin", async () => {
 });
 
 test("records unavailable when the list is empty", async () => {
-  render(Stats, { history: null, onimport: () => {} });
+  render(Stats, { tab: "races", history: null, onimport: () => {} });
   expect(await (await section(/^Records/)).findByText("Records indisponibles")).toBeInTheDocument();
 });
 
@@ -204,7 +209,7 @@ test("records unavailable when the request fails, not while loading", async () =
   vi.mocked(fetch).mockImplementation(async (url, init) =>
     url === "/api/stats/records" ? new Promise<Response>((res) => (fail = res)) : base(url, init),
   );
-  render(Stats, { history: null, onimport: () => {} });
+  render(Stats, { tab: "races", history: null, onimport: () => {} });
   const rec = await section(/^Records/);
   expect(rec.queryByText("Records indisponibles")).toBeNull();
   expect(rec.getByText("Chargement des records…")).toBeInTheDocument();
@@ -212,19 +217,15 @@ test("records unavailable when the request fails, not while loading", async () =
   expect(await rec.findByText("Records indisponibles")).toBeInTheDocument();
 });
 
-test("races block hidden when sport is bike, shown regardless of run/trail sub-filter", async () => {
-  activities = [...ACTS, RACE, act(5, "2026-08-01", "trail", 7200, 15000)]; // un trail pour proposer le filtre « Trail »
-  render(Stats, { history: null, onimport: () => {} });
+test("compétitions affichées quel que soit le sport mémorisé", async () => {
+  activities = [...ACTS, RACE];
+  localStorage.setItem("coach.stats.filters", JSON.stringify({ choice: { kind: "12m" }, sport: "bike", metric: "hours" }));
+  render(Stats, { tab: "races", history: null, onimport: () => {} });
   expect((await section(/^Compétitions/)).getByText("10 km de Rennes")).toBeInTheDocument();
-  // la course est sur route : le filtre « Trail » la garde quand même (filtre par période seulement)
-  await fireEvent.change(screen.getByLabelText("Sport"), { target: { value: "trail" } });
-  expect((await section(/^Compétitions/)).getByText("10 km de Rennes")).toBeInTheDocument();
-  await fireEvent.change(screen.getByLabelText("Sport"), { target: { value: "bike" } });
-  expect(screen.queryByRole("heading", { name: /^Compétitions/ })).toBeNull();
 });
 
 test("a new race cannot be unmarked", async () => {
-  render(Stats, { history: null, onimport: () => {} });
+  render(Stats, { tab: "races", history: null, onimport: () => {} });
   const races = await section(/^Compétitions/);
   await fireEvent.click(races.getByRole("button", { name: "Ajouter une compétition" }));
   await fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: /Séance 3/ }));
@@ -285,7 +286,7 @@ test("rank above total shows the API error", async () => {
 });
 
 test("adding a race lists run and trail activities, searchable", async () => {
-  render(Stats, { history: null, onimport: () => {} });
+  render(Stats, { tab: "races", history: null, onimport: () => {} });
   const races = await section(/^Compétitions/);
   await fireEvent.click(races.getByRole("button", { name: "Ajouter une compétition" }));
   const picker = within(screen.getByRole("dialog", { name: "Ajouter une compétition" }));
@@ -301,22 +302,22 @@ test("adding a race lists run and trail activities, searchable", async () => {
 
 test("retour sur les statistiques : affichées sans attendre, gardées si la relecture échoue", async () => {
   records = [{ kind: "5k", value: 1234, garmin_activity_id: 987654, date: "2025-04-12" }];
-  const first = render(Stats, { history: null, onimport: () => {} });
+  const first = render(Stats, { tab: "races", history: null, onimport: () => {} });
   expect(await (await section(/^Records/)).findByText("20:34")).toBeInTheDocument();
   first.unmount();
   vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ detail: "Base coupée" }), { status: 503 })));
-  render(Stats, { history: null, onimport: () => {} });
+  render(Stats, { tab: "races", history: null, onimport: () => {} });
   await Promise.resolve();
-  expect(screen.getByRole("group", { name: "Séances" })).toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: /^Compétitions/ })).toBeInTheDocument();
   expect(await screen.findByText("Base coupée")).toBeInTheDocument();
-  expect(screen.getByRole("group", { name: "Séances" })).toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: /^Compétitions/ })).toBeInTheDocument();
   expect((await section(/^Records/)).getByText("20:34")).toBeInTheDocument();
 });
 
 test("compétition modifiée puis relecture : la valeur en cache ne la remplace pas", async () => {
   activities = [...ACTS, RACE];
   write = (_m, _u, body) => new Response(JSON.stringify({ ...RACE, race: { ...NO_RACE, ...(body as object) } }), { status: 200 });
-  const view = render(Stats, { history: null, onimport: () => {}, version: 0 });
+  const view = render(Stats, { tab: "races", history: null, onimport: () => {}, version: 0 });
   const races = await section(/^Compétitions/);
   await fireEvent.click(races.getByRole("button", { name: /Modifier/ }));
   const dialog = within(screen.getByRole("dialog"));
@@ -326,4 +327,80 @@ test("compétition modifiée puis relecture : la valeur en cache ne la remplace 
   vi.stubGlobal("fetch", vi.fn(() => new Promise(() => {})));
   await view.rerender({ version: 1 });
   expect((await section(/^Compétitions/)).getByText("41:30")).toBeInTheDocument();
+});
+
+// ---- Sous-pages ----
+
+const runs = (n: number, over: Partial<StatActivity> = {}) =>
+  Array.from({ length: n }, (_, i) => ({
+    ...act(100 + i, `2026-10-${String(i + 1).padStart(2, "0")}`, "run" as const, 3300, 10000),
+    hr_zones_s: [2000, 800, 300, 100, 100], ...over,
+  }));
+
+test("Aperçu : ni volume, ni records, ni VO2max ; constats liés à leur sous-page", async () => {
+  activities = [...runs(9), RACE];
+  render(Stats, { history: null, onimport: () => {} });
+  await kpi("Séances");
+  for (const t of [/^Volume/, /^Records$/, /^VO2max/]) expect(screen.queryByRole("heading", { name: t })).toBeNull();
+  const notes = within(screen.getByRole("list", { name: "Constats" }));
+  const links = notes.getAllByRole("link");
+  expect(links.length).toBeLessThanOrEqual(4);
+  expect(notes.getByText(/Ton efficacité/).closest("a")).toHaveAttribute("href", "#/stats/progress");
+  expect(notes.getByText(/Proche du 80\/20/).closest("a")).toHaveAttribute("href", "#/stats/intensity");
+  expect(notes.getByText(/Dernière course : 10 km de Rennes/).closest("a")).toHaveAttribute("href", "#/stats/races");
+});
+
+test("Aperçu : aucun constat sans données", async () => {
+  activities = [act(1, "2026-10-01", "bike", 3600, 20000)];
+  render(Stats, { history: null, onimport: () => {} });
+  await kpi("Séances");
+  expect(screen.queryByRole("list", { name: "Constats" })).toBeNull();
+});
+
+test("Progression : FC à allure donnée, messages sans données", async () => {
+  activities = runs(8);
+  const view = render(Stats, { tab: "progress", history: null, onimport: () => {} });
+  expect(await screen.findByText("Pas assez de sorties à cette allure")).toBeInTheDocument();
+  expect(screen.getByText("Aucune course ou record de moins d'un an")).toBeInTheDocument();
+  view.unmount();
+  activities = runs(9);
+  render(Stats, { tab: "progress", history: null, onimport: () => {}, version: 1 });
+  expect(await screen.findByText("Autour de 5:30 /km, ta FC moyenne est stable (140 bpm).")).toBeInTheDocument();
+});
+
+test("Progression : le prédicteur ignore la période et cite sa référence", async () => {
+  activities = [...ACTS, RACE];
+  localStorage.setItem("coach.stats.filters", JSON.stringify({ choice: { kind: "custom", from: "2026-01-01", to: "2026-01-31" }, sport: "all", metric: "hours" }));
+  render(Stats, { tab: "progress", history: null, onimport: () => {} });
+  const p = within(await screen.findByRole("group", { name: "Prédicteur de temps" }));
+  expect(p.getByText("42:00")).toBeInTheDocument();
+  expect(p.getAllByText(/10 km en 42:00, 20 sept\. 2026/).length).toBe(3); // 5 km, 10 km, semi
+  expect(p.queryByText("Marathon")).toBeNull();
+});
+
+test("Intensité : facile, moyen, dur et source des zones", async () => {
+  activities = runs(4);
+  render(Stats, { tab: "intensity", history: null, onimport: () => {} });
+  const g = within(await screen.findByRole("group", { name: "Facile, moyen, dur" }));
+  expect(g.getByText(/Facile/)).toHaveTextContent("85 %");
+  expect(g.getByText(/Moyen/)).toHaveTextContent("9 %");
+  expect(g.getByText(/Dur/)).toHaveTextContent("6 %");
+  expect(screen.getByText(/zones de la montre/)).toBeInTheDocument();
+});
+
+test("Intensité sans zones : message explicite", async () => {
+  render(Stats, { tab: "intensity", history: null, onimport: () => {} });
+  expect((await screen.findAllByText("Pas assez de données sur cette période")).length).toBeGreaterThan(0);
+  expect(screen.queryByRole("img")).toBeNull();
+});
+
+test("bannières et premier import visibles sur une sous-page", async () => {
+  const onimport = vi.fn();
+  const view = render(Stats, { tab: "progress", onimport, history: { status: "error", imported: 3, error: "Import interrompu", total: 0, finished_at: null } });
+  expect(await screen.findByText(/Import interrompu/)).toBeInTheDocument();
+  await screen.findByRole("heading", { name: "VO2max" }); // lecture finie avant la suivante
+  view.unmount();
+  activities = [];
+  render(Stats, { tab: "progress", version: 1, onimport, history: { status: "idle", imported: 0, error: null, total: 0, finished_at: null } });
+  expect(await screen.findByRole("button", { name: "Importer mon historique Garmin" })).toBeInTheDocument();
 });

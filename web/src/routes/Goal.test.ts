@@ -602,6 +602,33 @@ test.each([
   all.forEach((n) => expect(screen.getByRole("button", { name: n })).toBeDisabled());
 });
 
+test("relecture en échec : « Réessayer » relit et débloque les actions", async () => {
+  planAndStatus(mkCycle());
+  const first = render(Goal);
+  await screen.findByRole("list", { name: "Objectifs à venir" });
+  await waitFor(() => expect(screen.getByRole("button", { name: "Retirer" })).toBeEnabled());
+  expect(screen.queryByRole("button", { name: "Réessayer" })).toBeNull();
+  first.unmount();
+  vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ detail: "Base coupée" }), { status: 503 })));
+  render(Goal);
+  await fireEvent.click(await screen.findByRole("button", { name: "Réessayer" }));
+  expect(await screen.findByRole("button", { name: "Réessayer" })).toBeVisible(); // toujours en échec
+  expect(screen.getByRole("button", { name: "Retirer" })).toBeDisabled();
+  planAndStatus(mkCycle());
+  await fireEvent.click(screen.getByRole("button", { name: "Réessayer" }));
+  await waitFor(() => expect(screen.getByRole("button", { name: "Retirer" })).toBeEnabled());
+  expect(screen.queryByText("Base coupée")).toBeNull();
+  expect(screen.queryByRole("button", { name: "Réessayer" })).toBeNull();
+});
+
+test("PIN demandé : le formulaire, sans « Réessayer »", async () => {
+  vi.stubGlobal("fetch", vi.fn(async () =>
+    new Response(JSON.stringify({ code: "pin_required", detail: "PIN requis" }), { status: 401 })));
+  render(Goal);
+  await screen.findByLabelText("Code PIN");
+  expect(screen.queryByRole("button", { name: "Réessayer" })).toBeNull();
+});
+
 test("Objectifs depuis le cache : pas de bandeau d'ajustement avant la relecture", async () => {
   planAndStatus({ ...mkCycle({ plan_accepted: true, adjust_due: true }) });
   const first = render(Goal);

@@ -811,6 +811,34 @@ test("garmin auth_required après navigation : pas de renvoi", async () => {
   expect(location.hash).toBe("#/goal");
 });
 
+test("garmin auth_required après un aller-retour : pas de renvoi", async () => {
+  const g = gate();
+  garminGate = g.closed;
+  garminBody = "auth_required";
+  render(App);
+  await waitFor(() => expect(location.hash).toBe("#/week"));
+  await pause();
+  for (const hash of ["#/goal", "#/week"]) {
+    location.hash = hash; // l'événement vient du navigateur
+    await pause();
+  }
+  g.open();
+  expect(await screen.findByText("Connexion Garmin requise")).toBeVisible();
+  await pause();
+  expect(location.hash).toBe("#/week");
+});
+
+test("garmin auth_required bien après l'affichage, sans navigation : renvoi", async () => {
+  const g = gate();
+  garminGate = g.closed;
+  garminBody = "auth_required";
+  render(App);
+  await waitFor(() => expect(location.hash).toBe("#/week"));
+  await pause(); // l'événement du changement fait par l'appli est passé
+  g.open();
+  await waitFor(() => expect(location.hash).toBe("#/setup"));
+});
+
 test("route demandée au lancement : pas de renvoi", async () => {
   garminBody = "auth_required";
   setupBody = { ...setupOk, garmin: "auth_required" };

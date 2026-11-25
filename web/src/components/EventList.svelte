@@ -1,23 +1,24 @@
 <script lang="ts">
-  import { untrack } from "svelte";
   import { api, type CoachEvent, type EventKind } from "../lib/api";
-  import { load as cached } from "../lib/cache";
   import { todayIso } from "../lib/dates";
   import ErrorBanner from "./ErrorBanner.svelte";
   import { READONLY } from "../lib/mode";
 
   let {
+    list,
+    readError = null,
     today = todayIso(),
     onproposal,
     onchanged,
-    reload = 0,
   }: {
+    /** Imprévus lus par la page, en même temps que son plan. */
+    list: CoachEvent[];
+    /** Échec de cette lecture. */
+    readError?: unknown;
     today?: string;
     onproposal?: (proposalId: number) => void;
-    /** Un imprévu a été supprimé : la page recharge son plan (un arrêt ouvert peut disparaître). */
-    onchanged?: () => void;
-    /** Compteur incrémenté par la page quand son plan est rechargé : la liste se rafraîchit aussi. */
-    reload?: number;
+    /** Un imprévu a été supprimé : la page relit son plan et ses imprévus (un arrêt ouvert peut disparaître). */
+    onchanged?: () => void | Promise<void>;
   } = $props();
 
   const LABEL: Record<EventKind, string> = {
@@ -31,26 +32,12 @@
   const range = (e: CoachEvent) =>
     e.end_date == null ? `depuis le ${dm(e.start_date)}` : `du ${dm(e.start_date)} au ${dm(e.end_date)}`;
 
-  let events = $state<CoachEvent[]>([]);
   let error = $state<unknown>(null);
   let busy = $state(false);
   let recompute = $state(false); // après une suppression : « Recalculer le plan ? »
 
   // en cours ou à venir : sans fin, ou finissant aujourd'hui ou plus tard
-  const current = $derived(events.filter((e) => e.end_date == null || e.end_date >= today));
-
-  async function load() {
-    try {
-      await cached("events", () => api.events(), (list) => (events = list));
-    } catch (e) {
-      error = e;
-    }
-  }
-
-  $effect(() => {
-    reload; // recharge quand la page a rechargé son plan (ex. reprise après un arrêt)
-    untrack(load);
-  });
+  const current = $derived(list.filter((e) => e.end_date == null || e.end_date >= today));
 
   async function remove(e: CoachEvent) {
     busy = true;
@@ -58,8 +45,7 @@
     try {
       await api.deleteEvent(e.id);
       recompute = true;
-      await load();
-      onchanged?.();
+      await onchanged?.();
     } catch (err) {
       error = err;
     } finally {
@@ -82,7 +68,7 @@
   }
 </script>
 
-{#if current.length || recompute || error}
+{#if current.length || recompute || error || readError}
   <section class="card stack" aria-label="Imprévus">
     <h3>Imprévus</h3>
     {#if current.length}
@@ -103,6 +89,6 @@
       </div>
       {#if busy}<p class="meta" role="status">Claude ajuste ton plan… (cela peut prendre une minute)</p>{/if}
     {/if}
-    <ErrorBanner {error} />
+    <ErrorBanner error={error ?? readError} />
   </section>
 {/if}

@@ -158,8 +158,12 @@
     return next;
   }
 
+  let moves = 0; // changements de page faits par l'utilisateur
+  let ownHash: string | null = null; // changement fait par `go`, dont l'événement n'est pas encore arrivé
+
   /** Change de page ; la route suit sans attendre l'événement `hashchange`. */
   function go(hash: string) {
+    if (location.hash !== hash) ownHash = hash;
     location.hash = hash;
     route = parse();
   }
@@ -219,14 +223,16 @@
       }
     }
     if (usable) autoSync(garminRead, mine);
-    if (chosen && usable && content) reorient(reads, mine, location.hash);
+    if (chosen && usable && content) reorient(reads, mine);
   }
 
   /** Accueil déjà affiché : renvoi vers l'installation ou Garmin s'il en manque, sauf si on a changé de page. */
-  async function reorient(reads: Promise<[SetupStatus | null, GarminState | null]>, mine: number, shown: string) {
+  async function reorient(reads: Promise<[SetupStatus | null, GarminState | null]>, mine: number) {
+    const shown = location.hash;
+    const moved = moves;
     const [setup, state] = await reads;
     // `state` nul : Garmin a été reconnecté entre-temps, ces réponses ne valent plus.
-    if (mine !== starts || state === null || location.hash !== shown) return;
+    if (mine !== starts || state === null || moves !== moved || location.hash !== shown) return;
     if (setup && !setupDone(setup, claudeSkipped())) go("#/welcome");
     else if (state === "auth_required") go("#/setup");
   }
@@ -292,7 +298,10 @@
   });
 
   onMount(() => {
-    const onhash = () => {
+    const onhash = (e: HashChangeEvent) => {
+      const target = e.newURL ? new URL(e.newURL).hash : location.hash; // l'adresse a pu changer depuis
+      if (target === ownHash) ownHash = null;
+      else if (target) moves++;
       route = parse();
       // Réglages ouverts : l'état Garmin a pu changer depuis le lancement (connexion revenue, session expirée).
       if (!READONLY && route === "setup" && garmin !== "checking") readGarmin();

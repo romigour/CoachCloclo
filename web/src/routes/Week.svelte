@@ -1,6 +1,6 @@
 <script lang="ts">
   import { untrack } from "svelte";
-  import { api, type Activity, type Plan, type Session, type Status, type Week } from "../lib/api";
+  import { api, type Activity, type CoachEvent, type Plan, type Session, type Status, type Week } from "../lib/api";
   import { load as cached } from "../lib/cache";
   import { formatActivity } from "../lib/activity";
   import { goalLabel, nextRace } from "../lib/goals";
@@ -26,9 +26,11 @@
   }: { version?: number; status?: Status | null; today?: string; onerror?: (e: unknown) => void } = $props();
 
   let plan = $state<Plan | null>(null);
+  let events = $state<CoachEvent[]>([]);
+  let eventsError = $state<unknown>(null);
   let weekActivities = $state<{ week: number; list: Activity[] } | null>(null);
   let error = $state<unknown>(null);
-  let reloads = $state(0); // incrémenté après chaque action : activités et imprévus sont relus avec le plan
+  let reloads = $state(0); // incrémenté après chaque action : les activités sont relues avec le plan
   let viewed = $state<number | null>(null); // semaine affichée (null : celle d'aujourd'hui)
   let picked = $state<number | null>(null); // séance choisie dans la semaine affichée
   let declaring = $state(false);
@@ -102,14 +104,24 @@
 
   const racesIn = (w: Week) => (plan?.goals ?? []).filter((g) => g.race_date >= w.week_monday && g.race_date <= addDays(w.week_monday, 6));
 
+  /** Imprévus : l'échec s'affiche dans leur liste, le plan reste lisible. */
+  async function loadEvents() {
+    try {
+      await cached("events", () => api.events(), (list) => (events = list));
+      eventsError = null;
+    } catch (e) {
+      eventsError = e;
+    }
+  }
+
   async function load() {
-    // les imprévus partent avec le plan ; la liste partage cette lecture et affiche son éventuelle erreur
-    cached("events", () => api.events(), () => {}).catch(() => {});
+    const eventsRead = loadEvents(); // part avec le plan, sans l'attendre
     try {
       await cached("plan", () => api.plan(), (p) => (plan = p));
     } catch (e) {
       fail(e);
     }
+    await eventsRead;
   }
 
   /** Après une action : relit le plan, les activités et les imprévus. */
@@ -372,7 +384,7 @@
       </div>
     </div>
 
-    <EventList {today} reload={version + reloads} onproposal={goProposal} onchanged={reload} />
+    <EventList list={events} readError={eventsError} {today} onproposal={goProposal} onchanged={reload} />
   {/if}
 {:else if !error}
   <p class="busy">Chargement…</p>

@@ -35,6 +35,11 @@ const plan: Plan = {
   ],
 };
 
+const event: CoachEvent = {
+  id: 3, kind: "unavailable", start_date: "2026-11-05", end_date: "2026-11-08", max_sessions: null, days: null,
+  session_id: null, note: null,
+};
+
 function mock(body: Plan = plan) {
   vi.stubGlobal("fetch", vi.fn(async (url: string) =>
     new Response(JSON.stringify(url.startsWith("/api/plan") ? body : []), { status: 200 })));
@@ -316,6 +321,57 @@ test("Week : /plan et /cycle/events partent ensemble", async () => {
   render(Week, { today: "2026-10-30" });
   await settle();
   expect(urls("/api").sort()).toEqual(["/api/cycle/events", "/api/plan"]);
+});
+
+test.each(["events", "plan"])("Week : une seule lecture /cycle/events par affichage (%s répond d'abord)", async (first) => {
+  let release = () => {};
+  const held = new Promise<void>((r) => (release = r));
+  vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+    if (url.startsWith("/api/plan") !== (first === "plan")) await held;
+    const body = url.startsWith("/api/plan") ? plan : url === "/api/cycle/events" ? [event] : [];
+    return new Response(JSON.stringify(body), { status: 200 });
+  }));
+  const view = render(Week, { today: "2026-10-30", version: 0 });
+  await settle();
+  release();
+  await screen.findByText(/Indisponible/);
+  await settle();
+  expect(urls("/api/cycle/events")).toHaveLength(1);
+  await view.rerender({ version: 1 });
+  await settle();
+  expect(urls("/api/cycle/events")).toHaveLength(2);
+  view.unmount();
+  render(Week, { today: "2026-10-30" }); // retour sur la page : liste affichée sans attendre
+  await Promise.resolve();
+  expect(screen.getByText(/Indisponible/)).toBeVisible();
+  await settle();
+  expect(urls("/api/cycle/events")).toHaveLength(3);
+});
+
+test("Week : imprévu supprimé, liste et plan relus une fois", async () => {
+  let list = [event];
+  vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+    if (init?.method === "DELETE") list = [];
+    const body = url.startsWith("/api/plan") ? plan : url === "/api/cycle/events" ? list : [];
+    return new Response(JSON.stringify(body), { status: 200 });
+  }));
+  render(Week, { today: "2026-10-30" });
+  await fireEvent.click(await screen.findByRole("button", { name: "Supprimer" }));
+  await screen.findByText("Recalculer le plan ?");
+  await waitFor(() => expect(screen.queryByText(/Indisponible/)).toBeNull());
+  await settle();
+  expect(urls("/api/cycle/events")).toHaveLength(2);
+  expect(urls("/api/plan")).toHaveLength(2);
+});
+
+test("Week : imprévus illisibles, l'erreur est affichée et le plan reste", async () => {
+  vi.stubGlobal("fetch", vi.fn(async (url: string) =>
+    url === "/api/cycle/events"
+      ? new Response(JSON.stringify({ detail: "Imprévus illisibles" }), { status: 500 })
+      : new Response(JSON.stringify(url.startsWith("/api/plan") ? plan : []), { status: 200 })));
+  render(Week, { today: "2026-10-30" });
+  expect(await screen.findByText("Imprévus illisibles")).toBeVisible();
+  expect(screen.getByRole("heading", { name: "Cette semaine" })).toBeVisible();
 });
 
 test("Week : une seule lecture /activities par affichage", async () => {

@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { api, type Cycle, type Goal, type GoalInput, type Plan, type PlanChange } from "../lib/api";
+  import { api, ApiError, type Cycle, type Goal, type GoalInput, type Plan, type PlanChange } from "../lib/api";
   import { load as cached } from "../lib/cache";
   import { WEEKDAYS, formatDate, todayIso } from "../lib/dates";
   import { goalLabel } from "../lib/goals";
@@ -273,6 +273,9 @@
 </header>
 
 <ErrorBanner {error} onpin={start} />
+{#if error && !loaded && !(error instanceof ApiError && error.code === "pin_required")}
+  <div class="row"><button type="button" class="primary" onclick={start}>Réessayer</button></div>
+{/if}
 
 {#if busy}
   <p class="card busy" role="status">{busy}</p>

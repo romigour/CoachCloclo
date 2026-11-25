@@ -581,7 +581,7 @@ def test_migration_adds_cycle_adjust_columns(tmp_path):
 
 
 def test_migration_adds_rest_hr_and_export_zones_columns(tmp_path):
-    """Une base d'avant la provenance de la FC repos reçoit les 3 colonnes et passe au schéma 3."""
+    """Une base d'avant la provenance de la FC repos reçoit les 3 colonnes et passe au schéma courant."""
     path = tmp_path / "old.db"
     repo = Repo(make_engine(path))
     repo.add(AthleteSnapshot(date=date(2026, 11, 1), hr_max=190, hr_rest=50))
@@ -599,7 +599,7 @@ def test_migration_adds_rest_hr_and_export_zones_columns(tmp_path):
     conn.close()
     assert {"hr_rest_source", "hr_rest_nights"} <= snap_cols
     assert "export_hr_zones_json" in session_cols
-    assert repo.get_state("schema_version") == {"v": 3}
+    assert repo.get_state("schema_version") == {"v": 4}
     snap = repo.latest_snapshot()
     assert (snap.hr_rest, snap.hr_rest_source, snap.hr_rest_nights) == (50, None, None)
 
@@ -808,7 +808,7 @@ def test_open_repairs_missing_table_column_and_version(opened):
     prepare_engine(make())
     assert _sql(path, _SCHEMA) == want
     assert "notes" in {r[1] for r in _sql(path, "PRAGMA table_info(goal)")[0]}
-    assert _sql(path, _VERSION) == [[('{"v": 3}',)]]
+    assert _sql(path, _VERSION) == [[('{"v": 4}',)]]
 
 
 def test_open_migrates_base_from_before_cycles(opened):
@@ -836,7 +836,7 @@ def test_open_migrates_base_from_before_cycles(opened):
     assert repo.active_cycle().id == goal.id
     assert len(repo.sessions(goal.id)) == 1
     assert repo.upcoming_goals()[0].target_time_s == 5400
-    assert repo.get_state("schema_version") == {"v": 3}
+    assert repo.get_state("schema_version") == {"v": 4}
 
 
 def test_missing_index_goes_through_create_all(remote_db, monkeypatch):
@@ -854,3 +854,19 @@ def test_missing_index_goes_through_create_all(remote_db, monkeypatch):
     _sql(path, "DROP INDEX ix_session_cycle_id")
     repo_mod.prepare_engine(make())
     assert len(called) == 1
+
+
+def test_migration_adds_session_d_plus(tmp_path):
+    """Une base au schéma 3 reçoit le D+ des séances (inconnu) et passe au schéma 4."""
+    path = tmp_path / "old.db"
+    repo = Repo(make_engine(path))
+    cycle = repo.add(make_cycle())
+    repo.add(make_db_session(cycle.id))
+    conn = sqlite3.connect(path)
+    conn.execute("ALTER TABLE session DROP COLUMN d_plus_m")
+    conn.execute("UPDATE appstate SET value_json = '{\"v\": 3}' WHERE key = 'schema_version'")
+    conn.commit()
+    conn.close()
+    repo = Repo(make_engine(path))
+    assert repo.sessions(cycle.id)[0].d_plus_m is None
+    assert repo.get_state("schema_version") == {"v": 4}

@@ -574,3 +574,27 @@ def test_export_and_move_warn_on_race_day(repo, fake_garmin, session_w3):
     assert move_session(repo, fake_garmin, session_w3.id, date(2026, 11, 12)) == [warning]
     assert repo.session(session_w3.id).scheduled_date == date(2026, 11, 12)
     assert check_export(repo, session_w3.id, date(2026, 11, 13)) == []
+
+
+def test_modify_replaces_d_plus(repo, fake_garmin, session_w3):
+    p = proposal_of(repo, modify(session_w3.id, d_plus_m=600))
+    apply_proposal(repo, fake_garmin, p.id)
+    assert repo.session(session_w3.id).d_plus_m == 600
+
+
+def test_modify_without_d_plus_clears_it(repo, fake_garmin, session_w3):
+    session_w3.d_plus_m = 600
+    repo.add(session_w3)
+    p = proposal_of(repo, modify(session_w3.id))
+    apply_proposal(repo, fake_garmin, p.id)
+    assert repo.session(session_w3.id).d_plus_m is None
+
+
+def test_old_proposal_without_d_plus_applies(repo, fake_garmin, session_w3):
+    """Proposition enregistrée avant l'arrivée du D+ par séance."""
+    change = modify(session_w3.id).model_dump(mode="json")
+    del change["session"]["d_plus_m"]
+    p = repo.add(Proposal(analysis="a", changes_json=json.dumps([change])))
+    apply_proposal(repo, fake_garmin, p.id)
+    assert repo.session(session_w3.id).title == "Nouvelle séance"
+    assert repo.pending_proposal() is None

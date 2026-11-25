@@ -7,7 +7,7 @@ export type Db = {
   execute(stmt: string | { sql: string; args: Arg[] }): Promise<{ rows: Record<string, unknown>[] }>;
 };
 
-const KNOWN_SCHEMA = 3; // 3 : provenance de la FC repos, zones FC à l'envoi (colonnes ignorées par la PWA)
+const KNOWN_SCHEMA = 4; // 4 : D+ prévu des séances
 
 const MESSAGES = {
   auth: "Jeton Turso refusé",
@@ -63,7 +63,7 @@ export const REQUIRED_COLUMNS: Record<string, string[]> = {
   ],
   session: [
     "id", "cycle_id", "week_index", "order", "type", "sport", "title", "description",
-    "target_kind", "status", "suggested_day", "scheduled_date", "chaining_note", "steps_json", "sync_error",
+    "target_kind", "status", "suggested_day", "scheduled_date", "chaining_note", "steps_json", "sync_error", "d_plus_m",
   ],
   event: ["id", "cycle_id", "kind", "start_date", "end_date", "max_sessions", "days_json", "session_id", "note"],
   activity: [

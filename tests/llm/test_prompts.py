@@ -4,7 +4,7 @@ from coach.analysis.laps import compare_session
 from coach.analysis.race_plan import RacePlan, Segment
 from coach.analysis.zones import compute_zones
 from coach.garmin.port import LapSummary
-from coach.llm.prompts import PRIORITY_RULES, RACE_DAY_RULE, SYSTEM_PROMPT, _session_line, build_adjustment_prompt, build_generation_prompt, race_text
+from coach.llm.prompts import D_PLUS_RULE, NO_D_PLUS_RULE, PRIORITY_RULES, RACE_DAY_RULE, SYSTEM_PROMPT, _session_line, build_adjustment_prompt, build_generation_prompt, race_text
 from coach.llm.schemas import RepeatSpec, StepSpec
 from coach.plan.constraints import PlanConstraints
 from coach.plan.models import Event
@@ -510,27 +510,27 @@ def _adj_prompt(goals, horizon=(), **kw):
 
 def test_single_principal_prompt_unchanged():
     """Un seul Principal sans horizon : texte d'avant les cycles, au nom du champ d'estimation et à la règle
-    du jour de course près."""
+    du jour de course et du dénivelé près."""
     today = " Aujourd'hui : mercredi 4 novembre 2026 (semaine 2)."
     _PAST_TEXT = ("En semaine 2, lundi et mardi sont déjà passés : aucune séance ce jour-là "
                   "(la première séance tombe au plus tôt aujourd'hui, mercredi).")
     user = make_goal(id=1, target_time_s=6600, target_source="user")
     assert _head(_gen([user])) == "\n\n".join([
-        _LINE + " Temps visé : 1 h 50." + today, RACE_DAY_RULE, _AVAIL_TEXT, _GEN_TEXT, _PAST_TEXT,
+        _LINE + " Temps visé : 1 h 50." + today, RACE_DAY_RULE, D_PLUS_RULE, _AVAIL_TEXT, _GEN_TEXT, _PAST_TEXT,
         "Construis le plan pour atteindre ce temps visé (allures cibles, volume).",
     ])
     assert _head(_adj_prompt([user])) == "\n\n".join(
-        [_LINE + " Temps visé : 1 h 50.", RACE_DAY_RULE, _AVAIL_TEXT, _ADJ_TEXT]
+        [_LINE + " Temps visé : 1 h 50.", RACE_DAY_RULE, D_PLUS_RULE, _AVAIL_TEXT, _ADJ_TEXT]
     )
     claude = make_goal(id=1, target_source="claude")
     assert _head(_gen([claude])) == "\n\n".join([
-        _LINE + today, RACE_DAY_RULE, _AVAIL_TEXT, _GEN_TEXT, _PAST_TEXT,
+        _LINE + today, RACE_DAY_RULE, D_PLUS_RULE, _AVAIL_TEXT, _GEN_TEXT, _PAST_TEXT,
         "Estime d'abord un temps réaliste pour cette course d'après l'historique et les zones, "
         "indique-le dans estimated_times (goal_id 1, en secondes), puis construis le plan pour ce temps.",
     ])
     estimated = make_goal(id=1, target_source="claude", target_time_s=6720)
     assert _head(_adj_prompt([estimated])) == "\n\n".join(
-        [_LINE + " Temps visé : 1 h 52.", RACE_DAY_RULE, _AVAIL_TEXT, _ADJ_TEXT]
+        [_LINE + " Temps visé : 1 h 52.", RACE_DAY_RULE, D_PLUS_RULE, _AVAIL_TEXT, _ADJ_TEXT]
     )
     for p in (_gen([user]), _adj_prompt([user])):
         assert PRIORITY_RULES not in p and "Objectifs suivants" not in p
@@ -802,3 +802,24 @@ def test_horizon_line_has_no_notes():
 def test_no_notes_prompt_unchanged():
     goal = make_goal()
     assert "Précisions" not in _gen([goal]) and "Précisions" not in _adj_prompt([goal])
+
+
+def test_generation_prompt_asks_d_plus_only_for_hilly_goals():
+    def gen(d):
+        return build_generation_prompt(make_cycle(), [make_goal(d_plus_m=d)], [], ZONES, [], n_weeks=8, gpx_texts=[])
+
+    assert D_PLUS_RULE in gen(2000) and NO_D_PLUS_RULE not in gen(2000)
+    assert NO_D_PLUS_RULE in gen(0) and D_PLUS_RULE not in gen(0)
+
+
+def test_adjustment_prompt_asks_d_plus():
+    adj = build_adjustment_prompt(make_cycle(), [make_goal(d_plus_m=2000)], [], ZONES, 1, [], [], [], [])
+    assert D_PLUS_RULE in adj
+
+
+def test_session_line_shows_d_plus():
+    s = _db(1)
+    s.d_plus_m = 600
+    assert _session_line(s).endswith(" | D+ 600 m")
+    s.d_plus_m = None
+    assert "D+" not in _session_line(s)

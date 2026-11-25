@@ -29,7 +29,7 @@ from coach.llm.provider import FakeLLMProvider, LLMError, LLMUsageLimit
 from coach.plan.models import Activity, AthleteSnapshot, LlmUsage, Race
 from coach.services.history import HistoryState, save_state
 from coach.services.sync import load_sync_state
-from tests.llm.factories import valid_plan_json
+from tests.llm.factories import make_plan, valid_plan_json
 from coach.plan.repo import Repo, SchemaTooNew, make_engine, prepare_engine
 from coach.storage import switch as switch_mod
 from coach.storage.cloud_errors import INVALID_ADDRESS_MSG, CloudUnreachable
@@ -2610,3 +2610,13 @@ def test_activities_do_not_load_raw_json(cloud_pair):
     client.get("/api/activities?week=1")
     assert not any("raw_json" in sql for sql in server.statements()[-4:])
     assert client.get("/api/activities?week=1").json()
+
+
+def test_plan_exposes_session_d_plus(make_client):
+    plan = make_plan(14, [3] * 13 + [2], estimated_time_s=19800)
+    plan.weeks[0].sessions[0].d_plus_m = 600
+    client = make_client(llm=FakeLLMProvider([plan.model_dump_json()]))
+    _create_goal(client)
+    assert client.post("/api/cycle/generate").status_code == 200
+    sessions = client.get("/api/plan").json()["weeks"][0]["sessions"]
+    assert [s["d_plus_m"] for s in sessions] == [600, None, None]

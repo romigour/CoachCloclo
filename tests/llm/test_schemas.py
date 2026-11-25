@@ -8,10 +8,12 @@ from coach.llm.schemas import (
     GoalEstimate,
     PlanResponse,
     RepeatSpec,
+    SessionSpec,
     StepSpec,
     validate_adjustment,
     validate_plan,
 )
+from coach.plan.models import Session
 from tests.llm.factories import make_plan, make_session
 
 
@@ -318,3 +320,14 @@ def test_validate_plan_first_week_and_fixed_counts():
     assert errs == ["semaine 4 : 3 séances pour 2 demandées (1 fixée)"]
     errs = validate_plan(make_plan(4, [1, 1, 1, 1]), **kwargs)
     assert any("numérotées de 3 à 4" in e for e in errs)
+
+
+def test_session_d_plus_optional_and_positive():
+    assert make_session().d_plus_m is None
+    with pytest.raises(ValidationError):
+        SessionSpec(**{**make_session(d_plus_m=10).model_dump(), "d_plus_m": -1})
+
+
+def test_session_d_plus_round_trip():
+    spec = make_session(d_plus_m=600)
+    assert Session.from_spec(spec, cycle_id=1).to_spec().d_plus_m == 600

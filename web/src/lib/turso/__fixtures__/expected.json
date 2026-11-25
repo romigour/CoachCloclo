@@ -261,6 +261,7 @@
           "sessions": [
             {
               "chaining_note": null,
+              "d_plus_m": null,
               "description": "Description de la séance 1.",
               "id": 1,
               "order": 1,
@@ -282,6 +283,7 @@
             },
             {
               "chaining_note": "Après le vélo",
+              "d_plus_m": null,
               "description": "Description de la séance 2.",
               "id": 2,
               "order": 2,
@@ -323,6 +325,7 @@
             },
             {
               "chaining_note": null,
+              "d_plus_m": 600,
               "description": "Description de la séance 3.",
               "id": 3,
               "order": 3,
@@ -350,6 +353,7 @@
           "sessions": [
             {
               "chaining_note": null,
+              "d_plus_m": null,
               "description": "Description de la séance 4.",
               "id": 4,
               "order": 1,
@@ -371,6 +375,7 @@
             },
             {
               "chaining_note": null,
+              "d_plus_m": null,
               "description": "Description de la séance 5.",
               "id": 5,
               "order": 2,
@@ -392,6 +397,7 @@
             },
             {
               "chaining_note": null,
+              "d_plus_m": null,
               "description": "Description de la séance 6.",
               "id": 6,
               "order": 3,
@@ -419,6 +425,7 @@
           "sessions": [
             {
               "chaining_note": null,
+              "d_plus_m": null,
               "description": "Description de la séance 7.",
               "id": 7,
               "order": 1,
@@ -440,6 +447,7 @@
             },
             {
               "chaining_note": null,
+              "d_plus_m": null,
               "description": "Description de la séance 8.",
               "id": 8,
               "order": 2,

@@ -304,6 +304,7 @@ def _session_dict(s: Session) -> dict:
         "order": s.order,
         "type": s.type,
         "sport": s.sport,
+        "d_plus_m": s.d_plus_m,
         "title": s.title,
         "description": s.description,
         "target_kind": s.target_kind,

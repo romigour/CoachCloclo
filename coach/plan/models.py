@@ -122,6 +122,7 @@ class Session(SQLModel, table=True):
     chaining_note: str | None = None
     type: str
     sport: str = "run"  # "run" | "bike"
+    d_plus_m: int | None = None  # D+ prévu par Claude
     target_kind: str  # "pace" | "hr"
     title: str
     description: str
@@ -150,6 +151,7 @@ class Session(SQLModel, table=True):
             description=self.description,
             chaining_note=self.chaining_note,
             sport=self.sport,
+            d_plus_m=self.d_plus_m,
             steps=_STEPS.validate_json(self.steps_json),
         )
 
@@ -163,6 +165,7 @@ class Session(SQLModel, table=True):
             chaining_note=spec.chaining_note,
             type=spec.type,
             sport=spec.sport,
+            d_plus_m=spec.d_plus_m,
             target_kind=spec.target_kind,
             title=spec.title,
             description=spec.description,

@@ -18,9 +18,9 @@ describe("checkSchema", () => {
     await expect(checkSchema(await loadFixtureDb("between"))).resolves.toBeUndefined();
   });
 
-  it("schema_too_new si v > 3", async () => {
+  it("schema_too_new si v > 4", async () => {
     const db = await loadFixtureDb("active");
-    await db.execute(`UPDATE appstate SET value_json='{"v":4}' WHERE key='schema_version'`);
+    await db.execute(`UPDATE appstate SET value_json='{"v":5}' WHERE key='schema_version'`);
     expect(await code(checkSchema(db))).toBe("schema_too_new");
   });
 

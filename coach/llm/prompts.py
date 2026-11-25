@@ -259,6 +259,17 @@ récupération légère après si elle est longue."""
 # rappelé dans tout prompt, un ou plusieurs objectifs : c'est contrôlé (constraint_errors)
 RACE_DAY_RULE = "Aucune séance le jour d'une course ; la course compte comme une séance de sa semaine."
 
+D_PLUS_RULE = (
+    "Dénivelé : pour chaque séance de course qui travaille le dénivelé (surtout les sorties longues et les côtes), "
+    "indique le D+ total prévu dans d_plus_m (en mètres) et mentionne-le dans la description, avec une progression "
+    "adaptée à la course ; laisse d_plus_m à null pour les autres séances et le vélo."
+)
+NO_D_PLUS_RULE = "Dénivelé : laisse d_plus_m à null pour toutes les séances."
+
+
+def _d_plus_rule(goals: list[Goal]) -> str:
+    return D_PLUS_RULE if any(g.d_plus_m > 0 for g in goals) else NO_D_PLUS_RULE
+
 
 def _goal_id(goal: Goal) -> int:
     return goal.id if goal.id is not None else NEW_GOAL_ID
@@ -594,6 +605,7 @@ def build_generation_prompt(
         + (" " + _today_text(cycle, today) if today is not None else ""),
         *([recovery_note] if recovery_note else []),
         *_cycle_rules(goals, horizon, recent),
+        _d_plus_rule(goals),
         *([_availability_text(constraints)] if constraints is not None else []),
         *([t] if constraints is not None and (t := _events_text(constraints)) else []),
         f"Construis un plan de {n_weeks} semaines, avec au plus {cycle.sessions_per_week} séances "
@@ -626,6 +638,7 @@ def _session_line(s: Session) -> str:
     return (
         f"id={s.id} | semaine {s.week_index} | {s.suggested_day} | {s.type} | {s.title} | "
         f"statut {s.status} | date {s.scheduled_date or '-'}" + (" | vélo" if s.sport == "bike" else "")
+        + (f" | D+ {s.d_plus_m} m" if s.d_plus_m else "")
     )
 
 
@@ -674,6 +687,7 @@ def build_adjustment_prompt(
         _goals_text(goals, horizon, plan_start=cycle.plan_start, recent=recent),
         *([change_note] if change_note else []),
         *_cycle_rules(goals, horizon, recent),
+        _d_plus_rule(goals),
         *([_estimate_text(to_estimate)] if to_estimate else []),
         *([_availability_text(constraints)] if constraints is not None else []),
         *([t] if constraints is not None and (t := _events_text(constraints)) else []),

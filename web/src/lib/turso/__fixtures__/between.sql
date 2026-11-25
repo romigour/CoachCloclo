@@ -26,7 +26,7 @@ CREATE TABLE appstate (
 	value_json VARCHAR NOT NULL, 
 	PRIMARY KEY ("key")
 );
-INSERT INTO "appstate" VALUES('schema_version','{"v": 3}');
+INSERT INTO "appstate" VALUES('schema_version','{"v": 4}');
 CREATE TABLE athletesnapshot (
 	id INTEGER NOT NULL, 
 	date DATE NOT NULL, 
@@ -171,6 +171,7 @@ CREATE TABLE session (
 	chaining_note VARCHAR, 
 	type VARCHAR NOT NULL, 
 	sport VARCHAR NOT NULL, 
+	d_plus_m INTEGER, 
 	target_kind VARCHAR NOT NULL, 
 	title VARCHAR NOT NULL, 
 	description VARCHAR NOT NULL, 

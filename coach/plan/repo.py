@@ -38,7 +38,7 @@ from coach.storage.pages import is_remote, pages
 _LAPS = TypeAdapter(list[LapSummary])
 
 # Chaque changement de schéma futur doit incrémenter SCHEMA_VERSION.
-SCHEMA_VERSION = 3  # 3 : provenance de la FC repos, zones FC à l'envoi
+SCHEMA_VERSION = 4  # 4 : D+ prévu des séances
 
 
 class SchemaTooNew(Exception):
@@ -188,6 +188,8 @@ def _migrate(engine: Engine) -> None:
         add_columns("athletesnapshot", {"hr_rest_source": "VARCHAR", "hr_rest_nights": "INTEGER"})
         # zones FC utilisées à l'envoi d'une séance à la montre
         add_columns("session", {"export_hr_zones_json": "VARCHAR"})
+        # D+ prévu de la séance
+        add_columns("session", {"d_plus_m": "INTEGER"})
 
 
 def active_cycle_stmt() -> Select:

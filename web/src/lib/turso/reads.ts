@@ -11,7 +11,7 @@ const CYCLE_COLS =
   "id, status, plan_start, end_date, sessions_per_week, available_days_json, long_run_day, include_bike, plan_accepted, needs_generation";
 const EVENT_COLS = "id, kind, start_date, end_date, max_sessions, days_json, session_id, note";
 const SESSION_COLS =
-  'id, "order", type, sport, title, description, target_kind, status, suggested_day, scheduled_date, chaining_note, steps_json, sync_error';
+  'id, "order", type, sport, title, description, target_kind, status, suggested_day, scheduled_date, chaining_note, steps_json, sync_error, d_plus_m';
 const ACTIVITY_COLS = "id, date, type_key, duration_s, distance_m, d_plus_m, avg_hr, session_id, match_source";
 
 const all = async (db: Db, sql: string, args: Arg[] = []): Promise<Row[]> => (await db.execute({ sql, args })).rows;

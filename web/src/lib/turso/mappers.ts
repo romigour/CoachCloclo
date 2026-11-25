@@ -58,6 +58,7 @@ export function sessionDict(r: Row): Session {
     order: Number(r.order),
     type: String(r.type),
     sport: r.sport as Session["sport"],
+    d_plus_m: num(r.d_plus_m),
     title: String(r.title),
     description: String(r.description),
     target_kind: r.target_kind as Session["target_kind"],

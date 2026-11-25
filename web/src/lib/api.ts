@@ -56,6 +56,8 @@ export type Session = {
   status: SessionStatus;
   suggested_day: Weekday;
   sport: "run" | "bike";
+  /** D+ prévu par Claude (m). */
+  d_plus_m?: number | null;
   scheduled_date: string | null;
   chaining_note: string | null;
   steps: (Step | StepGroup)[];

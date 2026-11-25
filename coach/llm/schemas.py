@@ -48,6 +48,7 @@ class SessionSpec(_Strict):
     description: str
     chaining_note: str | None = None
     sport: Literal["run", "bike"] = "run"
+    d_plus_m: int | None = Field(default=None, ge=0)  # D+ total prévu, None sans dénivelé
     steps: list[StepSpec | RepeatSpec] = Field(min_length=1)
 
     def iter_steps(self):

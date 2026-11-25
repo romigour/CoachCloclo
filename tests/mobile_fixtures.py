@@ -134,7 +134,7 @@ def _build_active(repo: Repo) -> None:
                  title="Seuil jeudi", chaining_note="Après le vélo",
                  steps_json=json.dumps(repeat, ensure_ascii=False)),
         _session(3, 1, 3, status="exported", suggested_day="dimanche", type="sortie longue",
-                 title="Sortie longue", scheduled_date=date(2026, 3, 8), garmin_workout_id=111,
+                 title="Sortie longue", d_plus_m=600, scheduled_date=date(2026, 3, 8), garmin_workout_id=111,
                  garmin_schedule_id=222),
         _session(4, 2, 1, status="sync_error", title="Séance en erreur", sync_error="Garmin indisponible"),
         _session(5, 2, 2, sport="bike", suggested_day="mercredi", title="Vélo récup",

@@ -9,20 +9,24 @@ export const MIN_ZONE_COVERAGE = 0.5;
 
 const isRunOrTrail = (a: StatActivity) => a.family === "run" || a.family === "trail";
 
+/** Sorties route « plates » d'au moins 20 min avec FC et distance. */
+export function flatRuns(acts: StatActivity[]): StatActivity[] {
+  return acts.filter(
+    (a) =>
+      a.family === "run" &&
+      (a.duration_s ?? 0) >= MIN_DURATION_S &&
+      a.avg_hr != null && a.avg_hr > 0 &&
+      a.distance_m != null && a.distance_m > 0 &&
+      (a.d_plus_m ?? 0) / (a.distance_m / 1000) <= MAX_DPLUS_PER_KM,
+  );
+}
+
 /** Efficacité aérobie : (m/min) / FC moyenne, sur les sorties « plates » d'au moins 20 min. */
 export function aerobicEfficiency(acts: StatActivity[]): {
   points: { date: string; value: number }[];
   trend: { slope: number; intercept: number } | null;
 } {
-  const points = acts
-    .filter(
-      (a) =>
-        a.family === "run" &&
-        (a.duration_s ?? 0) >= MIN_DURATION_S &&
-        a.avg_hr != null && a.avg_hr > 0 &&
-        a.distance_m != null && a.distance_m > 0 &&
-        (a.d_plus_m ?? 0) / (a.distance_m / 1000) <= MAX_DPLUS_PER_KM,
-    )
+  const points = flatRuns(acts)
     .map((a) => ({
       date: a.date,
       value: a.distance_m! / (a.duration_s! / 60) / a.avg_hr!,
@@ -111,4 +115,30 @@ export function trendLine(
 export function zoneShares(zones: number[]): number[] {
   const total = zones.reduce((s, x) => s + x, 0);
   return zones.map((s) => (total > 0 ? s / total : 0));
+}
+
+const MIN_PACE_RUNS = 9;
+const PACE_TOLERANCE_S = 10;
+
+/** FC moyenne à allure de référence (médiane, à 5 s près) : premier et dernier tiers des sorties ; null sous 9 sorties. */
+export function hrAtPace(acts: StatActivity[]): { paceSKm: number; from: number; to: number; count: number } | null {
+  const runs = flatRuns(acts).map((a) => ({ date: a.date, hr: a.avg_hr!, pace: a.duration_s! / (a.distance_m! / 1000) }));
+  if (runs.length < MIN_PACE_RUNS) return null;
+  const paces = runs.map((r) => r.pace).sort((x, y) => x - y);
+  const mid = Math.floor(paces.length / 2);
+  const median = paces.length % 2 ? paces[mid] : (paces[mid - 1] + paces[mid]) / 2;
+  const paceSKm = Math.round(median / 5) * 5;
+  const kept = runs.filter((r) => Math.abs(r.pace - paceSKm) <= PACE_TOLERANCE_S).sort((x, y) => x.date.localeCompare(y.date));
+  if (kept.length < MIN_PACE_RUNS) return null;
+  const third = Math.floor(kept.length / 3);
+  const mean = (l: typeof kept) => Math.round(l.reduce((s, r) => s + r.hr, 0) / l.length);
+  return { paceSKm, from: mean(kept.slice(0, third)), to: mean(kept.slice(-third)), count: kept.length };
+}
+
+/** Moyenne mobile sur `n` valeurs, datée de la dernière ; vide s'il y en a moins de `n`. */
+export function rollingMean(points: { date: string; value: number }[], n = 5): { date: string; value: number }[] {
+  return points.slice(n - 1).map((p, i) => ({
+    date: p.date,
+    value: points.slice(i, i + n).reduce((s, x) => s + x.value, 0) / n,
+  }));
 }

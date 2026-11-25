@@ -1,6 +1,6 @@
 <script lang="ts">
   import { untrack } from "svelte";
-  import { api, type Activity, type CoachEvent, type Plan, type Session, type StatActivity, type Status, type Week } from "../lib/api";
+  import { api, type Activity, type CoachEvent, type Plan, type Session, type Status, type Week } from "../lib/api";
   import { load as cached } from "../lib/cache";
   import { formatActivity } from "../lib/activity";
   import { goalLabel, nextRace } from "../lib/goals";
@@ -8,7 +8,7 @@
   import { STATUS_LABEL, TYPE_SHORT, typeFamily } from "../lib/labels";
   import { formatDuration, totalSeconds } from "../lib/profile";
   import { currentWeek, days, daysUntil, focusSession, openSessions, sessionDate } from "../lib/week";
-  import { trailPace, usesTrailPace, volumeLine, weekDPlus, weekKm } from "../lib/weekVolume";
+  import { trailPace, trailSince, usesTrailPace, volumeLine, weekDPlus, weekKm } from "../lib/weekVolume";
   import { currentZones } from "../lib/zones.svelte";
   import ErrorBanner from "../components/ErrorBanner.svelte";
   import SessionCard from "../components/SessionCard.svelte";
@@ -31,7 +31,7 @@
   let events = $state<CoachEvent[]>([]);
   let eventsError = $state<unknown>(null);
   let weekActivities = $state<{ week: number; list: Activity[] } | null>(null);
-  let outings = $state.raw<StatActivity[]>([]); // pour l'allure trail (liste longue, jamais modifiée)
+  let outings = $state.raw<Activity[]>([]); // sorties trail récentes
   let error = $state<unknown>(null);
   let reloads = $state(0); // incrémenté après chaque action : les activités sont relues avec le plan
   let viewed = $state<number | null>(null); // semaine affichée (null : celle d'aujourd'hui)
@@ -82,7 +82,7 @@
     return secs.length && secs.every((s) => s != null) ? formatDuration(secs.reduce<number>((a, b) => a + (b ?? 0), 0)) : null;
   });
   // km et D+ : toutes les séances de la semaine, faites ou non, comme la durée
-  const needsTrail = $derived(allSessions.some(usesTrailPace));
+  const needsTrail = $derived(!!week?.sessions.some(usesTrailPace));
   const estimate = $derived(
     week
       ? volumeLine(weekKm(week.sessions, currentZones(), trailPace(outings, today)), weekDPlus(week.sessions))
@@ -166,11 +166,11 @@
     };
   });
 
-  // sorties récentes, seulement si une séance du plan dépend de l'allure trail
+  // sorties récentes, seulement si une séance de la semaine dépend de l'allure trail
   $effect(() => {
     version;
     if (!needsTrail) return;
-    untrack(() => cached("stats", () => api.statsActivities(), (r) => (outings = r.activities)))
+    untrack(() => cached("trail", () => api.trailActivities(trailSince(today)), (list) => (outings = list)))
       .catch(() => {}); // sans elles, l'allure des zones sert d'estimation
   });
 

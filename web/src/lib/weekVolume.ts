@@ -1,19 +1,20 @@
 /** Kilomètres et D+ prévus d'une semaine (ordres de grandeur). */
 
-import type { Session, StatActivity, Step, Zones } from "./api";
+import type { Activity, Session, Step, Zones } from "./api";
 import { addDays } from "./dates";
 
 // zones de FC assimilées à l'allure correspondante
 const HR_TO_PACE: Record<string, string> = { Z1: "récup", Z2: "EF", Z3: "marathon", Z4: "seuil", Z5: "VMA" };
-const TRAIL_DAYS = 56; // 8 semaines
+/** Début des 8 semaines de sorties prises en compte. */
+export const trailSince = (today: string) => addDays(today, -56);
 
-/** Allure moyenne (s/km) des sorties trail des 8 dernières semaines. */
-export function trailPace(activities: StatActivity[], today: string): number | null {
-  const from = addDays(today, -TRAIL_DAYS);
+/** Allure moyenne (s/km) des sorties trail (`activities`) des 8 dernières semaines. */
+export function trailPace(activities: Activity[], today: string): number | null {
+  const from = trailSince(today);
   let seconds = 0;
   let meters = 0;
   for (const a of activities) {
-    if (a.family !== "trail" || a.date < from || a.date > today || !a.duration_s || !a.distance_m) continue;
+    if (a.date < from || a.date > today || !a.duration_s || !a.distance_m) continue;
     seconds += a.duration_s;
     meters += a.distance_m;
   }

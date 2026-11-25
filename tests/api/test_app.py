@@ -2612,6 +2612,19 @@ def test_activities_do_not_load_raw_json(cloud_pair):
     assert client.get("/api/activities?week=1").json()
 
 
+def test_trail_activities_since_without_raw_json(cloud_pair):
+    """Sorties trail récentes seulement, sans le JSON brut."""
+    client, server, _ = cloud_pair
+    repo = client.app.state.repo
+    today = date.today()
+    for gid, type_key, days in [(71, "trail_running", 3), (72, "running", 3), (73, "trail_running", 60)]:
+        repo.add(make_activity(garmin_activity_id=gid, type_key=type_key, date=today - timedelta(days=days)))
+    before = len(server.statements())
+    rows = client.get(f"/api/activities/trail?since={today - timedelta(days=56)}").json()
+    assert [(r["type_key"], r["date"]) for r in rows] == [("trail_running", (today - timedelta(days=3)).isoformat())]
+    assert not any("raw_json" in sql for sql in server.statements()[before:])
+
+
 def test_plan_exposes_session_d_plus(make_client):
     plan = make_plan(14, [3] * 13 + [2], estimated_time_s=19800)
     plan.weeks[0].sessions[0].d_plus_m = 600

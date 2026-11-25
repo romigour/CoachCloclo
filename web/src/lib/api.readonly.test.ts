@@ -6,6 +6,7 @@ vi.mock("./turso", () => ({
   status: vi.fn(async () => "status"),
   events: vi.fn(async () => []),
   activities: vi.fn(async () => []),
+  trailActivities: vi.fn(async () => []),
   zones: vi.fn(async () => null),
   statsActivities: vi.fn(async () => ({ activities: [] })),
   statsRecords: vi.fn(async () => ({ records: [] })),
@@ -34,6 +35,8 @@ test("les lectures passent par Turso", async () => {
   expect(turso.activities).toHaveBeenCalledWith(3);
   expect(await api.status()).toBe("status");
   await api.events();
+  await api.trailActivities("2026-01-01");
+  expect(turso.trailActivities).toHaveBeenCalledWith("2026-01-01");
   await api.zones();
   await api.statsActivities();
   await api.statsRecords();

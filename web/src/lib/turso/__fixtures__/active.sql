@@ -21,7 +21,7 @@ INSERT INTO "activity" VALUES(4,9004,'2026-03-10','running',2700.0,9000.0,NULL,N
 INSERT INTO "activity" VALUES(5,9005,'2026-03-12','running',2700.0,9000.0,NULL,NULL,NULL,'{"eventType": {"typeKey": "race"}}',NULL,NULL);
 INSERT INTO "activity" VALUES(6,9006,'2026-03-15','running',6500.0,21100.0,300.0,170.0,NULL,'{"activityName": "Semi", "eventType": {"typeKey": "race"}}',NULL,NULL);
 INSERT INTO "activity" VALUES(7,9007,'2026-03-16','running',2700.0,9000.0,NULL,NULL,NULL,'{"eventType": {"typeKey": "race"}}',NULL,NULL);
-INSERT INTO "activity" VALUES(8,9008,'2026-03-17','running',0.0,0.0,NULL,NULL,NULL,'{}',NULL,NULL);
+INSERT INTO "activity" VALUES(8,9008,'2026-03-17','trail_running',0.0,0.0,NULL,NULL,NULL,'{}',NULL,NULL);
 INSERT INTO "activity" VALUES(9,9009,'2026-03-18','running',2700.0,9000.0,NULL,NULL,NULL,'{"hrTimeInZone_1": 100.0, "hrTimeInZone_2": 200.0, "hrTimeInZone_3": 300.0, "hrTimeInZone_4": 400.0, "hrTimeInZone_5": 500.0}',NULL,NULL);
 INSERT INTO "activity" VALUES(10,9010,'2026-03-19','running',2700.0,9000.0,NULL,NULL,NULL,'{"hrTimeInZone_1": 100.0, "hrTimeInZone_2": 200.0, "hrTimeInZone_3": 300.0, "hrTimeInZone_4": 400.0}',NULL,NULL);
 INSERT INTO "activity" VALUES(11,9011,'2026-03-08','running',2700.0,9000.0,NULL,NULL,NULL,'{}',6,'manual');

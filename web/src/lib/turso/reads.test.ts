@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { loadFixtureDb } from "./testing";
-import { activities, events, plan, status, zones } from "./reads";
+import { activities, events, plan, status, trailActivities, zones } from "./reads";
 
 // `proximity_label` (blocs et courses rapprochées) n'est calculé que par le serveur : la lecture seule ne l'a pas.
 const expected = JSON.parse(
@@ -23,6 +23,9 @@ describe.each(["active", "between"] as const)("lectures (%s)", (s) => {
       expect(await activities(db, Number(week))).toEqual(expected[s].activities[week]);
     }
   });
+  it("sorties trail", async () => {
+    expect(await trailActivities(await loadFixtureDb(s), "2026-03-01")).toEqual(expected[s].trail);
+  });
   it("zones", async () => {
     expect(await zones(await loadFixtureDb(s))).toEqual(expected[s].zones);
   });
@@ -32,6 +35,10 @@ describe.each(["active", "between"] as const)("lectures (%s)", (s) => {
     expect(storage).toBeNull();
     expect(rest).toEqual(expected[s].status);
   });
+});
+
+it("sorties trail : les plus anciennes sont écartées", async () => {
+  expect(await trailActivities(await loadFixtureDb("active"), "2026-03-18")).toEqual([]);
 });
 
 it("status : finished_at non chaîne → null sans invalider le reste", async () => {

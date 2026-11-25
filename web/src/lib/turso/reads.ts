@@ -1,6 +1,8 @@
 // Lectures seules, portées des routes FastAPI et des requêtes de `Repo` (coach/plan/repo.py).
 import type { Activity, CoachEvent, Cycle, HistoryState, Plan, Session, Status, Zones } from "../api";
 import type { Arg, Db } from "./db";
+import { todayIso } from "../dates";
+import { FAMILIES } from "./stats";
 import { activityRow, cycleDict, eventDict, goalDict, sessionDict } from "./mappers";
 
 type Row = Record<string, unknown>;
@@ -93,6 +95,14 @@ export async function activities(db: Db, week: number): Promise<Activity[]> {
     [monday, sunday, cycle.id, week],
   );
   return rows.map(activityRow);
+}
+
+/** Sorties trail depuis `since`. */
+export async function trailActivities(db: Db, since: string): Promise<Activity[]> {
+  const rows = await all(db, `SELECT ${ACTIVITY_COLS} FROM activity WHERE date >= ? AND date <= ? ORDER BY date, id`, [
+    since, todayIso(),
+  ]);
+  return rows.map(activityRow).filter((a) => FAMILIES.get(a.type_key) === "trail");
 }
 
 export async function zones(db: Db): Promise<Zones | null> {

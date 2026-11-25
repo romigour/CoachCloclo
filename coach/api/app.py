@@ -105,7 +105,7 @@ from coach.services.history import HistoryRunner, STATE_KEY, load_state, parse_s
 from coach.services.laps import fetch_laps, latest_zones, session_comparison
 from coach.services.rest_hr import apply_manual, rest_hr_view
 from coach.services.sync import add_pending_done, remove_pending_done, sync
-from coach.stats.normalize import stat_row
+from coach.stats.normalize import sport_family, stat_row
 from coach.version import app_version
 
 MFA_TTL_S = 600
@@ -949,6 +949,12 @@ def create_app(
         )
         rows = {a.id: a for a in [*in_week, *attached]}
         return [_activity_row(a) for a in sorted(rows.values(), key=lambda a: (a.date, a.id))]
+
+    @api.get("/activities/trail")
+    def get_trail_activities(since: date, repo: RepoDep):
+        """Sorties trail depuis `since`, sans leur JSON brut (allure estimée des séances à dénivelé)."""
+        (recent,) = repo.read_batch(activities_between_stmt(since, date.today()))
+        return [_activity_row(a) for a in recent if sport_family(a.type_key) == "trail"]
 
     @api.get("/activities/free")
     def get_free_activities(

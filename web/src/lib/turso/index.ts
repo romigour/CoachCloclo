@@ -71,6 +71,7 @@ export async function status(): Promise<Status> {
 export const plan = () => run(r.plan);
 export const events = () => run(r.events);
 export const activities = (week: number) => run((db) => r.activities(db, week));
+export const trailActivities = (since: string) => run((db) => r.trailActivities(db, since));
 export const zones = () => run(r.zones);
 export const statsActivities = () => run(s.statsActivities);
 export const statsRecords = () => run(s.statsRecords);

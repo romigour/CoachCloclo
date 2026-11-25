@@ -264,11 +264,16 @@ D_PLUS_RULE = (
     "indique le D+ total prévu dans d_plus_m (en mètres) et mentionne-le dans la description, avec une progression "
     "adaptée à la course ; laisse d_plus_m à null pour les autres séances et le vélo."
 )
+D_PLUS_MODIFY_RULE = (
+    " En op modify, reprends le D+ actuel de la séance s'il reste valable : sans d_plus_m, il est effacé."
+)
 NO_D_PLUS_RULE = "Dénivelé : laisse d_plus_m à null pour toutes les séances."
 
 
-def _d_plus_rule(goals: list[Goal]) -> str:
-    return D_PLUS_RULE if any(g.d_plus_m > 0 for g in goals) else NO_D_PLUS_RULE
+def _d_plus_rule(goals: list[Goal], *, adjusting: bool = False) -> str:
+    if not any(g.d_plus_m > 0 for g in goals):
+        return NO_D_PLUS_RULE
+    return D_PLUS_RULE + D_PLUS_MODIFY_RULE if adjusting else D_PLUS_RULE
 
 
 def _goal_id(goal: Goal) -> int:
@@ -687,7 +692,7 @@ def build_adjustment_prompt(
         _goals_text(goals, horizon, plan_start=cycle.plan_start, recent=recent),
         *([change_note] if change_note else []),
         *_cycle_rules(goals, horizon, recent),
-        _d_plus_rule(goals),
+        _d_plus_rule(goals, adjusting=True),
         *([_estimate_text(to_estimate)] if to_estimate else []),
         *([_availability_text(constraints)] if constraints is not None else []),
         *([t] if constraints is not None and (t := _events_text(constraints)) else []),

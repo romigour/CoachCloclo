@@ -4,7 +4,7 @@ from coach.analysis.laps import compare_session
 from coach.analysis.race_plan import RacePlan, Segment
 from coach.analysis.zones import compute_zones
 from coach.garmin.port import LapSummary
-from coach.llm.prompts import D_PLUS_RULE, NO_D_PLUS_RULE, PRIORITY_RULES, RACE_DAY_RULE, SYSTEM_PROMPT, _session_line, build_adjustment_prompt, build_generation_prompt, race_text
+from coach.llm.prompts import D_PLUS_MODIFY_RULE, D_PLUS_RULE, NO_D_PLUS_RULE, PRIORITY_RULES, RACE_DAY_RULE, SYSTEM_PROMPT, _session_line, build_adjustment_prompt, build_generation_prompt, race_text
 from coach.llm.schemas import RepeatSpec, StepSpec
 from coach.plan.constraints import PlanConstraints
 from coach.plan.models import Event
@@ -520,7 +520,7 @@ def test_single_principal_prompt_unchanged():
         "Construis le plan pour atteindre ce temps visé (allures cibles, volume).",
     ])
     assert _head(_adj_prompt([user])) == "\n\n".join(
-        [_LINE + " Temps visé : 1 h 50.", RACE_DAY_RULE, D_PLUS_RULE, _AVAIL_TEXT, _ADJ_TEXT]
+        [_LINE + " Temps visé : 1 h 50.", RACE_DAY_RULE, D_PLUS_RULE + D_PLUS_MODIFY_RULE, _AVAIL_TEXT, _ADJ_TEXT]
     )
     claude = make_goal(id=1, target_source="claude")
     assert _head(_gen([claude])) == "\n\n".join([
@@ -530,7 +530,7 @@ def test_single_principal_prompt_unchanged():
     ])
     estimated = make_goal(id=1, target_source="claude", target_time_s=6720)
     assert _head(_adj_prompt([estimated])) == "\n\n".join(
-        [_LINE + " Temps visé : 1 h 52.", RACE_DAY_RULE, D_PLUS_RULE, _AVAIL_TEXT, _ADJ_TEXT]
+        [_LINE + " Temps visé : 1 h 52.", RACE_DAY_RULE, D_PLUS_RULE + D_PLUS_MODIFY_RULE, _AVAIL_TEXT, _ADJ_TEXT]
     )
     for p in (_gen([user]), _adj_prompt([user])):
         assert PRIORITY_RULES not in p and "Objectifs suivants" not in p
@@ -815,6 +815,9 @@ def test_generation_prompt_asks_d_plus_only_for_hilly_goals():
 def test_adjustment_prompt_asks_d_plus():
     adj = build_adjustment_prompt(make_cycle(), [make_goal(d_plus_m=2000)], [], ZONES, 1, [], [], [], [])
     assert D_PLUS_RULE in adj
+    assert D_PLUS_MODIFY_RULE in adj
+    flat = build_adjustment_prompt(make_cycle(), [make_goal(d_plus_m=0)], [], ZONES, 1, [], [], [], [])
+    assert NO_D_PLUS_RULE in flat and D_PLUS_MODIFY_RULE not in flat
 
 
 def test_session_line_shows_d_plus():

@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import type { Session, StatActivity, Step, StepGroup, Zones } from "./api";
+import type { Activity, Session, Step, StepGroup, Zones } from "./api";
 import { trailPace, volumeLine, weekDPlus, weekKm } from "./weekVolume";
 
 const zones: Zones = {
@@ -70,10 +70,9 @@ test("D+ de la semaine", () => {
 });
 
 const TODAY = "2026-11-25";
-const run = (over: Partial<StatActivity> = {}): StatActivity => ({
-  id: 1, garmin_id: 1, date: "2026-11-20", start: null, name: null, family: "trail", type_key: "trail_running",
-  duration_s: 3600, distance_m: 8000, d_plus_m: 300, avg_hr: null, max_hr: null, vo2max: null, hr_zones_s: null,
-  race: null, ...over,
+const run = (over: Partial<Activity> = {}): Activity => ({
+  id: 1, date: "2026-11-20", type_key: "trail_running", duration_s: 3600, distance_m: 8000, d_plus_m: 300,
+  avg_hr: null, session_id: null, match_source: null, ...over,
 });
 
 test("allure trail : temps total sur distance totale", () => {
@@ -83,7 +82,7 @@ test("allure trail : temps total sur distance totale", () => {
 test("allure trail : sorties inutilisables ou anciennes ignorées", () => {
   expect(trailPace([], TODAY)).toBeNull();
   const unusable = [
-    run({ family: "run" }), run({ distance_m: null }), run({ distance_m: 0 }), run({ duration_s: null }),
+    run({ distance_m: null }), run({ distance_m: 0 }), run({ duration_s: null }),
     run({ duration_s: 0 }), run({ date: "2026-09-29" }), run({ date: "2026-11-26" }),
   ];
   expect(trailPace(unusable, TODAY)).toBeNull();

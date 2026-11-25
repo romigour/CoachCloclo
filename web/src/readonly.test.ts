@@ -17,6 +17,7 @@ vi.mock("./lib/turso", () => {
     plan: async () => over.plan ?? f.plan,
     events: async () => f.events,
     activities: async (w: number) => f.activities[String(w)] ?? [],
+    trailActivities: async () => f.trail,
     zones: async () => f.zones,
     checkConnection: async () => {},
     saveCredentials: (c: { url: string; token: string }) => {
@@ -233,15 +234,15 @@ test("lecture seule : même comportement (plan affiché au retour, oublié avec 
 
 test("lecture seule : nouvelle connexion, les données de l'ancienne base ne réapparaissent pas", async () => {
   creds.value = null;
-  await load("records", async () => ({ records: [] }), () => {});
+  await load("stats", async () => ({ activities: [] }), () => {});
   render(App);
   await fireEvent.input(await screen.findByLabelText("URL de la base"), { target: { value: "libsql://y.turso.io" } });
   await fireEvent.input(screen.getByLabelText("Jeton d'accès"), { target: { value: "tok" } });
   await fireEvent.click(screen.getByRole("button", { name: "Valider" }));
-  // seule Ma semaine s'ouvre et relit : « records » (lu par Stats seulement) doit avoir été oublié
+  // seule Ma semaine s'ouvre et relit : « stats » doit avoir été oublié
   await waitFor(() => expect(location.hash).toBe("#/week"));
   const apply = vi.fn();
-  await load("records", async () => "nouvelle base", apply);
+  await load("stats", async () => "nouvelle base", apply);
   expect(apply.mock.calls).toEqual([["nouvelle base"]]);
 });
 

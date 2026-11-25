@@ -123,14 +123,14 @@ test("the week summary counts the sessions done", async () => {
 
 const zones: Zones = { pace: { EF: [340, 380] }, hr: {}, source: [] };
 
-/** Bilan d'une semaine à une seule séance ; `trail` : sorties de /api/stats/activities (null : erreur 500). */
+/** Bilan d'une semaine à une seule séance ; `trail` : sorties de /api/activities/trail (null : erreur 500). */
 async function summaryOf(over: Partial<Session>, z: Zones | null = zones, trail: object[] | null = []) {
   const session: Session = { ...s(1, "Séance", "vendredi", "todo"), steps: [{ kind: "active", duration_s: 3600, zone: "EF" }], ...over };
   const body: Plan = { ...plan, weeks: [{ ...plan.weeks[0], sessions: [session] }] };
   const fetched = vi.fn(async (url: string) => {
-    if (url.startsWith("/api/stats/activities") && !trail) return new Response("{}", { status: 500 });
+    if (url.startsWith("/api/activities/trail") && !trail) return new Response("{}", { status: 500 });
     const data = url.startsWith("/api/plan") ? body : url.startsWith("/api/zones") ? z
-      : url.startsWith("/api/stats/activities") ? { activities: trail } : [];
+      : url.startsWith("/api/activities/trail") ? trail : [];
     return new Response(JSON.stringify(data), { status: 200 });
   });
   vi.stubGlobal("fetch", fetched);
@@ -148,7 +148,7 @@ test("sans D+ au programme, seuls les km s'affichent et les sorties ne sont pas 
   const { summary, fetched } = await summaryOf({ target_kind: "hr" });
   expect(summary).toHaveTextContent("≈ 10 km");
   expect(summary).not.toHaveTextContent("D+");
-  expect(fetched.mock.calls.some(([url]) => url.startsWith("/api/stats/activities"))).toBe(false);
+  expect(fetched.mock.calls.some(([url]) => url.startsWith("/api/activities/trail"))).toBe(false);
 });
 
 test("sans zones, le D+ reste affiché sans km", async () => {
@@ -158,14 +158,14 @@ test("sans zones, le D+ reste affiché sans km", async () => {
 });
 
 test("une séance en FC avec D+ suit l'allure des sorties trail", async () => {
-  const outing = { family: "trail", date: addDays("2026-10-30", -5), duration_s: 3600, distance_m: 8000 };
+  const outing = { date: addDays("2026-10-30", -5), duration_s: 3600, distance_m: 8000 };
   const { summary } = await summaryOf({ target_kind: "hr", d_plus_m: 450 }, zones, [outing]);
   await waitFor(() => expect(summary).toHaveTextContent("≈ 8 km · ≈ 450 m D+"));
 });
 
 test("sorties illisibles : le bilan reste affiché, sans erreur", async () => {
   const { summary, fetched } = await summaryOf({ target_kind: "hr", d_plus_m: 450 }, zones, null);
-  await waitFor(() => expect(fetched.mock.calls.some(([url]) => url.startsWith("/api/stats/activities"))).toBe(true));
+  await waitFor(() => expect(fetched.mock.calls.some(([url]) => url.startsWith("/api/activities/trail"))).toBe(true));
   await new Promise((r) => setTimeout(r));
   expect(summary).toHaveTextContent("≈ 10 km · ≈ 450 m D+");
   expect(summary).toHaveTextContent("0/1 séances faites");

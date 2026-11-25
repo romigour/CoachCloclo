@@ -668,6 +668,10 @@ const rawApi = {
     if (READONLY) return (await import("./turso")).activities(week);
     return get<Activity[]>(`/activities?week=${week}`);
   },
+  trailActivities: async (since: string): Promise<Activity[]> => {
+    if (READONLY) return (await import("./turso")).trailActivities(since);
+    return get<Activity[]>(`/activities/trail?since=${since}`);
+  },
   zones: async (): Promise<Zones | null> => {
     if (READONLY) return (await import("./turso")).zones();
     return get<Zones | null>("/zones");
@@ -709,7 +713,7 @@ const rawApi = {
 
 /** Lectures servies par Turso et lectures sans objet (null) : tout le reste est refusé en lecture seule. */
 const READONLY_OK = new Set<string>([
-  "status", "plan", "events", "activities", "zones", "statsActivities", "statsRecords",
+  "status", "plan", "events", "activities", "trailActivities", "zones", "statsActivities", "statsRecords",
   "setupStatus", "update", "lan",
 ]);
 

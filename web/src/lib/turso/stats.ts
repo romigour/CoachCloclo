@@ -12,7 +12,7 @@ const FAMILY_KEYS: Record<Exclude<Family, "other">, string[]> = {
   strength: ["strength_training", "indoor_cardio", "hiit", "yoga", "pilates"],
   walk: ["walking", "hiking", "casual_walking"],
 };
-const FAMILIES = new Map<string, Family>(
+export const FAMILIES = new Map<string, Family>(
   Object.entries(FAMILY_KEYS).flatMap(([f, keys]) => keys.map((k) => [k, f as Family] as const)),
 );
 

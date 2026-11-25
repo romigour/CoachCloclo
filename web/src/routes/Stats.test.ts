@@ -1,8 +1,11 @@
 import { fireEvent, render, screen, within } from "@testing-library/svelte";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
-import type { PersonalRecord, RaceInfo, StatActivity } from "../lib/api";
+import type { PersonalRecord, RaceInfo, StatActivity, Zones } from "../lib/api";
 
 vi.mock("../components/stats/EChart.svelte", () => import("../test/EChartStub.svelte"));
+
+const zones = vi.hoisted(() => ({ value: null as Zones | null }));
+vi.mock("../lib/zones.svelte", () => ({ currentZones: () => zones.value }));
 
 import Stats from "./Stats.svelte";
 
@@ -29,6 +32,7 @@ beforeEach(() => {
   vi.setSystemTime(new Date(2026, 9, 30));
   activities = ACTS;
   records = [];
+  zones.value = null;
   write = () => new Response("{}", { status: 200 });
   localStorage.clear();
   vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
@@ -403,4 +407,82 @@ test("bannières et premier import visibles sur une sous-page", async () => {
   activities = [];
   render(Stats, { tab: "progress", version: 1, onimport, history: { status: "idle", imported: 0, error: null, total: 0, finished_at: null } });
   expect(await screen.findByRole("button", { name: "Importer mon historique Garmin" })).toBeInTheDocument();
+});
+
+// ---- Charge ----
+
+const ZONES: Zones = { pace: null, hr: { Z1: [120, 134], Z5: [176, 190] }, source: ["karvonen"] };
+
+/** Une séance d'1 h par jour jusqu'au 30 octobre 2026, vélo un jour sur deux. */
+const daily = (n: number, over: Partial<StatActivity> = {}) =>
+  Array.from({ length: n }, (_, i) => {
+    const d = new Date(Date.UTC(2026, 9, 30 - i)).toISOString().slice(0, 10);
+    return { ...act(500 + i, d, i % 2 ? ("bike" as const) : ("run" as const), 3600, 10000), ...over };
+  });
+
+const figures = () =>
+  ["Forme", "Fatigue", "Fraîcheur", "ACWR"].map((n) => screen.getByRole("group", { name: n }).textContent);
+
+test("Charge sans zones : message, volume toujours affiché", async () => {
+  activities = daily(100);
+  render(Stats, { tab: "load", history: null, onimport: () => {} });
+  expect(await screen.findByText("Synchronise Garmin pour calculer ta charge")).toBeInTheDocument();
+  expect(screen.getByRole("img", { name: /^Volume par/ })).toBeInTheDocument();
+  expect(screen.queryByRole("group", { name: "Forme" })).toBeNull();
+});
+
+test("Charge : forme et ACWR ne dépendent ni du sport ni de la période", async () => {
+  zones.value = ZONES;
+  activities = daily(100);
+  render(Stats, { tab: "load", history: null, onimport: () => {} });
+  await screen.findByRole("group", { name: "Forme" });
+  const before = figures();
+  expect(before[3]).toContain("1");
+  expect(screen.getByRole("img", { name: /^Forme, fatigue et fraîcheur/ })).toBeInTheDocument();
+  expect(screen.getByText(/Le sport filtre le volume, pas la forme/)).toBeInTheDocument();
+  expect(screen.getByText(/FC repos et max actuelles/)).toBeInTheDocument();
+  await fireEvent.change(screen.getByLabelText("Sport"), { target: { value: "bike" } });
+  expect(figures()).toEqual(before);
+  await fireEvent.click(screen.getByRole("button", { name: "Tout" }));
+  expect(figures()).toEqual(before);
+});
+
+test("Charge : séances sans FC comptées, avertissement au-delà de 30 % de la durée", async () => {
+  zones.value = ZONES;
+  const acts = daily(100);
+  activities = acts.map((a, i) => (i < 3 ? { ...a, avg_hr: null } : a));
+  const view = render(Stats, { tab: "load", history: null, onimport: () => {} });
+  expect(await screen.findByText(/3 séances sans FC/)).toBeInTheDocument();
+  expect(screen.queryByText(/ta charge est sous-estimée/)).toBeNull();
+  view.unmount();
+  activities = acts.map((a, i) => (i < 20 ? { ...a, avg_hr: null } : a));
+  render(Stats, { tab: "load", history: null, onimport: () => {}, version: 1 });
+  expect(await screen.findByText(/20 séances sans FC/)).toHaveTextContent(/ta charge est sous-estimée/);
+});
+
+test("Charge : moins de 42 jours d'historique, pas de courbe ni de chiffre de forme", async () => {
+  zones.value = ZONES;
+  activities = daily(20);
+  render(Stats, { tab: "load", history: null, onimport: () => {} });
+  expect((await screen.findAllByText(/Pas assez d'historique/)).length).toBeGreaterThan(0);
+  expect(screen.queryByRole("img", { name: /^Forme, fatigue/ })).toBeNull();
+  expect(screen.queryByRole("group", { name: "Forme" })).toBeNull();
+});
+
+test("Charge : la variation hebdo suit le sport, pas la période", async () => {
+  activities = daily(100);
+  render(Stats, { tab: "load", history: null, onimport: () => {} });
+  const all = (await screen.findByText(/Ta dernière semaine complète/)).textContent;
+  await fireEvent.click(screen.getByRole("button", { name: "Tout" }));
+  expect(screen.getByText(/Ta dernière semaine complète/).textContent).toBe(all);
+  await fireEvent.change(screen.getByLabelText("Sport"), { target: { value: "bike" } });
+  expect(screen.getByText(/Ta dernière semaine complète/).textContent).not.toBe(all);
+});
+
+test("Aperçu : constat de charge avec zones", async () => {
+  zones.value = ZONES;
+  activities = daily(100);
+  render(Stats, { history: null, onimport: () => {} });
+  const link = (await screen.findByText(/Ta charge est équilibrée/)).closest("a");
+  expect(link).toHaveAttribute("href", "#/stats/load");
 });

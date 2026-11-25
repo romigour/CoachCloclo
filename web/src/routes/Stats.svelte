@@ -13,7 +13,6 @@
   } from "../lib/stats/filter";
   import { computeKpis } from "../lib/stats/kpis";
   import { dailyMinutes, weekStats } from "../lib/stats/consistency";
-  import { bucketFor, sportShare, volumeSeries } from "../lib/stats/volume";
   import { efficiencyText, fitnessText, lastResultText, splitText } from "../lib/stats/insights";
   import { split } from "../lib/stats/intensity";
   import { CTL_DAYS as FITNESS_WARMUP, fitnessSeries, hrRange } from "../lib/stats/load";
@@ -23,9 +22,8 @@
   import type { StatsTab } from "../lib/stats/tabs";
   import StatsTabs from "../components/stats/StatsTabs.svelte";
   import Filters from "../components/stats/Filters.svelte";
-  import VolumeChart from "../components/stats/VolumeChart.svelte";
-  import SportDonut from "../components/stats/SportDonut.svelte";
   import Intensity from "../components/stats/views/Intensity.svelte";
+  import LoadView from "../components/stats/views/LoadView.svelte";
   import Overview from "../components/stats/views/Overview.svelte";
   import Progress from "../components/stats/views/Progress.svelte";
   import RacesView from "../components/stats/views/RacesView.svelte";
@@ -134,9 +132,6 @@
   const kpis = $derived(computeKpis(current, previous));
   const days = $derived(dailyMinutes(current));
   const weeks = $derived(weekStats(current, period, today));
-  const bucket = $derived(bucketFor(period));
-  const volume = $derived(volumeSeries(current, period, metric));
-  const share = $derived(sportShare(current));
   const options = $derived(sportOptions(all));
   // Sous-pages de course : route et trail, quel que soit le sport mémorisé.
   const runs = $derived(filterActivities(all, period, "running"));
@@ -229,17 +224,12 @@
     {:else if tab === "races"}
       <RacesView {all} acts={runs} {period} {records} onchanged={replaceActivity} />
     {:else if tab === "load"}
-      <div class="grid">
-        <section class="card stack" aria-labelledby="vol-title">
-          <div><h2 id="vol-title">Volume</h2><p class="meta">Comment évolue ma charge ?</p></div>
-          <VolumeChart data={volume} {metric} {bucket} onmetric={(m) => (metric = m)} onpick={pick} />
-        </section>
-
-        <section class="card stack" aria-labelledby="share-title">
-          <div><h2 id="share-title">Répartition</h2><p class="meta">En heures, par sport</p></div>
-          <SportDonut {share} />
-        </section>
-      </div>
+      <LoadView
+        {all} {sport} {current} {previous} {period} {today} {metric}
+        zones={currentZones()}
+        onmetric={(m) => (metric = m)}
+        onpick={pick}
+      />
     {:else}
       <Overview {kpis} {days} {period} {weeks} {notes} onpick={pick} />
     {/if}
@@ -261,13 +251,4 @@
     gap: 8px;
   }
   .first-import { align-items: flex-start; }
-  .grid {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr);
-    gap: 16px;
-  }
-  .grid > section { min-width: 0; }
-  @media (min-width: 900px) {
-    .grid { grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 20px; }
-  }
 </style>

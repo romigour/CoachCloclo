@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { StatActivity } from "../api";
+import type { StatActivity, Zones } from "../api";
 import { addDays } from "./filter";
 import { acwr, fitnessSeries, hrCoverage, hrRange, trimp, visibleFitness, weeklyRamp } from "./load";
 
@@ -25,6 +25,7 @@ describe("hrRange", () => {
     expect(hrRange({ pace: null, hr: { Z1: [120, 134], Z5: [176, 190] }, source: [] })).toBeNull();
     expect(hrRange({ pace: null, hr: { Z1: [190, 190], Z5: [190, 190] }, source: ["karvonen"] })).toBeNull();
     expect(hrRange({ pace: null, hr: {}, source: ["karvonen"] })).toBeNull();
+    expect(hrRange({} as Zones)).toBeNull(); // réponse incomplète : pas de plantage
   });
 });
 

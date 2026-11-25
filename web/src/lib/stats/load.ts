@@ -13,9 +13,9 @@ export type FitnessPoint = { date: string; ctl: number; atl: number; tsb: number
 
 /** FC repos et max retrouvées dans les zones Karvonen (Z1 bas = 50 % de la réserve) ; null sinon. */
 export function hrRange(zones: Zones | null): HrRange | null {
-  const z1 = zones?.hr.Z1;
-  const z5 = zones?.hr.Z5;
-  if (!zones?.source.includes("karvonen") || !z1 || !z5) return null;
+  const z1 = zones?.hr?.Z1;
+  const z5 = zones?.hr?.Z5;
+  if (!zones?.source?.includes("karvonen") || !z1 || !z5) return null;
   const max = z5[1];
   const rest = 2 * z1[0] - max;
   return rest > 0 && rest < max ? { rest, max } : null;

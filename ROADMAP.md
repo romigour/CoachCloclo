@@ -18,5 +18,6 @@ Idées d'amélioration, dans l'ordre où elles ont été notées.
 - [x] Disponibilités (jours possibles, sortie longue), imprévus (indisponibilité, blessure ou maladie, semaine allégée, fatigue) avec proposition d'ajustement, et séances vélo d'endurance douce
 - [x] Nouveau logo (« C » en virage de piste) décliné en favicon, PWA et icône Windows
 - [x] Allure min/km (ou plage de FC en bpm) à côté des zones dans le détail des séances
+- [x] Statistiques en sous-pages (Aperçu, Progression, Charge, Intensité, Records & courses), avec charge d'entraînement, prédicteur de temps et phrases d'interprétation
 
 ## À faire

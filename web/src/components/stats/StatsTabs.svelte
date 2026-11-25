@@ -24,7 +24,7 @@
     gap: 4px;
     overflow-x: auto;
     border-bottom: 1px solid var(--border);
-    scrollbar-width: thin;
+    scrollbar-width: none;
   }
   a {
     flex: none;

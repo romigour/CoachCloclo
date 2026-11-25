@@ -194,7 +194,7 @@
   <section class="card stack" aria-labelledby="pred-title">
     <div><h2 id="pred-title">Prédicteur de temps</h2><p class="meta">Formule de Riegel, courses et records de moins d'un an, quelle que soit la période</p></div>
     {#if predicted.length > 0}
-      <ul class="predictions" role="group" aria-label="Prédicteur de temps">
+      <div role="group" aria-label="Prédicteur de temps"><ul class="predictions">
         {#each predicted as p (p.category)}
           <li>
             <span>{CATEGORY_LABEL[p.category]}</span>
@@ -202,7 +202,7 @@
             <span class="meta">d'après {CATEGORY_LABEL[p.from.category]} en {fmtClock(p.from.timeS)}, {fmtDay(p.from.date)}</span>
           </li>
         {/each}
-      </ul>
+      </ul></div>
       <Insight text={predictionText(predicted)} />
     {:else}
       <p class="empty">Aucune course ou record de moins d'un an</p>

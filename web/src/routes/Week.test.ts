@@ -1,11 +1,14 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
 import { afterEach, expect, test, vi } from "vitest";
 import Week from "./Week.svelte";
-import { api, type CoachEvent, type Cycle, type Goal, type Plan, type Session, type Status } from "../lib/api";
+import { api, type CoachEvent, type Cycle, type Goal, type Plan, type Session, type Status, type Zones } from "../lib/api";
+import { addDays } from "../lib/dates";
+import { loadZones, resetZones } from "../lib/zones.svelte";
 
 afterEach(() => {
   vi.unstubAllGlobals();
   location.hash = "";
+  resetZones();
 });
 
 const s = (id: number, title: string, suggested_day: Session["suggested_day"], status: Session["status"], type = "seuil"): Session => ({
@@ -116,6 +119,62 @@ test("the week summary counts the sessions done", async () => {
   const summary = await screen.findByRole("region", { name: "Bilan de la semaine" });
   expect(summary).toHaveTextContent("Semaine 1 sur 2");
   expect(summary).toHaveTextContent("1/2 séances faites");
+});
+
+const zones: Zones = { pace: { EF: [340, 380] }, hr: {}, source: [] };
+
+/** Bilan d'une semaine à une seule séance ; `trail` : sorties de /api/stats/activities (null : erreur 500). */
+async function summaryOf(over: Partial<Session>, z: Zones | null = zones, trail: object[] | null = []) {
+  const session: Session = { ...s(1, "Séance", "vendredi", "todo"), steps: [{ kind: "active", duration_s: 3600, zone: "EF" }], ...over };
+  const body: Plan = { ...plan, weeks: [{ ...plan.weeks[0], sessions: [session] }] };
+  const fetched = vi.fn(async (url: string) => {
+    if (url.startsWith("/api/stats/activities") && !trail) return new Response("{}", { status: 500 });
+    const data = url.startsWith("/api/plan") ? body : url.startsWith("/api/zones") ? z
+      : url.startsWith("/api/stats/activities") ? { activities: trail } : [];
+    return new Response(JSON.stringify(data), { status: 200 });
+  });
+  vi.stubGlobal("fetch", fetched);
+  await loadZones();
+  render(Week, { today: "2026-10-30" });
+  return { summary: await screen.findByRole("region", { name: "Bilan de la semaine" }), fetched };
+}
+
+test("le bilan estime les km et le D+ de la semaine", async () => {
+  const { summary } = await summaryOf({ d_plus_m: 450 });
+  expect(summary).toHaveTextContent("≈ 10 km · ≈ 450 m D+");
+});
+
+test("sans D+ au programme, seuls les km s'affichent et les sorties ne sont pas lues", async () => {
+  const { summary, fetched } = await summaryOf({ target_kind: "hr" });
+  expect(summary).toHaveTextContent("≈ 10 km");
+  expect(summary).not.toHaveTextContent("D+");
+  expect(fetched.mock.calls.some(([url]) => url.startsWith("/api/stats/activities"))).toBe(false);
+});
+
+test("sans zones, le D+ reste affiché sans km", async () => {
+  const { summary } = await summaryOf({ d_plus_m: 450 }, null);
+  expect(summary).toHaveTextContent("≈ 450 m D+");
+  expect(summary).not.toHaveTextContent("km");
+});
+
+test("une séance en FC avec D+ suit l'allure des sorties trail", async () => {
+  const outing = { family: "trail", date: addDays("2026-10-30", -5), duration_s: 3600, distance_m: 8000 };
+  const { summary } = await summaryOf({ target_kind: "hr", d_plus_m: 450 }, zones, [outing]);
+  await waitFor(() => expect(summary).toHaveTextContent("≈ 8 km · ≈ 450 m D+"));
+});
+
+test("sorties illisibles : le bilan reste affiché, sans erreur", async () => {
+  const { summary, fetched } = await summaryOf({ target_kind: "hr", d_plus_m: 450 }, zones, null);
+  await waitFor(() => expect(fetched.mock.calls.some(([url]) => url.startsWith("/api/stats/activities"))).toBe(true));
+  await new Promise((r) => setTimeout(r));
+  expect(summary).toHaveTextContent("≈ 10 km · ≈ 450 m D+");
+  expect(summary).toHaveTextContent("0/1 séances faites");
+  expect(screen.queryByRole("alert")).toBeNull();
+});
+
+test("une semaine de vélo n'affiche ni km ni D+", async () => {
+  const { summary } = await summaryOf({ sport: "bike", d_plus_m: 450 });
+  expect(summary).not.toHaveTextContent("≈");
 });
 
 test("la dernière activité ignore une sortie d'une autre semaine rattachée à une séance", async () => {

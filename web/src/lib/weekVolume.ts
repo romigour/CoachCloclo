@@ -5,7 +5,7 @@ import { addDays } from "./dates";
 
 // zones de FC assimilées à l'allure correspondante
 const HR_TO_PACE: Record<string, string> = { Z1: "récup", Z2: "EF", Z3: "marathon", Z4: "seuil", Z5: "VMA" };
-const TRAIL_DAYS = 56;
+const TRAIL_DAYS = 56; // 8 semaines
 
 /** Allure moyenne (s/km) des sorties trail des 8 dernières semaines. */
 export function trailPace(activities: StatActivity[], today: string): number | null {

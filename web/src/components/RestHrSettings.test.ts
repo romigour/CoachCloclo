@@ -1,5 +1,6 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/svelte";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
+import { currentZones, resetZones } from "../lib/zones.svelte";
 import RestHrSettings from "./RestHrSettings.svelte";
 
 type View = {
@@ -11,6 +12,8 @@ type View = {
   auto_nights: number | null;
 };
 
+const ZONES = { pace: null, hr: { Z2: [134, 148] }, source: ["karvonen"] };
+
 let view: View;
 let puts: unknown[];
 let putExtra: Record<string, unknown>;
@@ -18,6 +21,7 @@ let putExtra: Record<string, unknown>;
 beforeEach(() => {
   view = { value: 47, source: "nights", nights: 12, manual: null, auto_value: 47, auto_nights: 12 };
   puts = [];
+  resetZones();
   putExtra = { resent: 0, failed: [], applied: true };
   vi.stubGlobal(
     "fetch",
@@ -29,6 +33,7 @@ beforeEach(() => {
         return new Response(JSON.stringify({ ...view, ...putExtra }), { status: 200 });
       }
       if (url === "/api/rest-hr") return new Response(JSON.stringify(view), { status: 200 });
+      if (url === "/api/zones") return new Response(JSON.stringify(ZONES), { status: 200 });
       return new Response("{}", { status: 404 });
     }),
   );
@@ -121,4 +126,40 @@ test("affiche le refus quand une synchro est en cours", async () => {
   await fireEvent.input(await screen.findByLabelText("FC repos"), { target: { value: "44" } });
   await fireEvent.click(screen.getByRole("button", { name: "Enregistrer" }));
   expect(await screen.findByRole("alert")).toHaveTextContent("Synchronisation en cours, réessaie dans un instant");
+});
+
+async function saveValue(value: string) {
+  await fireEvent.input(await screen.findByLabelText("FC repos"), { target: { value } });
+  await fireEvent.click(screen.getByRole("button", { name: "Enregistrer" }));
+}
+
+test("relit les zones affichées après l'enregistrement", async () => {
+  render(RestHrSettings);
+  await screen.findByLabelText("FC repos");
+  expect(currentZones()).toBeNull();
+  await saveValue("44");
+  await waitFor(() => expect(currentZones()).toEqual(ZONES));
+});
+
+test("confirme la mise à jour même sans séance à renvoyer", async () => {
+  render(RestHrSettings);
+  await saveValue("44");
+  expect(await screen.findByText("Zones mises à jour, aucune séance à renvoyer")).toBeInTheDocument();
+});
+
+test("avertit des séances qui n'ont pas pu être renvoyées", async () => {
+  putExtra = { resent: 1, failed: [3, 4], applied: true };
+  render(RestHrSettings);
+  await saveValue("44");
+  expect(await screen.findByText("1 séance mise à jour sur ta montre")).toBeInTheDocument();
+  expect(screen.getByRole("alert")).toHaveTextContent("2 séances n'ont pas pu être renvoyées à ta montre");
+});
+
+test("échec seul : avertissement au singulier, sans annoncer qu'il n'y a rien à renvoyer", async () => {
+  putExtra = { resent: 0, failed: [3], applied: true };
+  render(RestHrSettings);
+  await saveValue("44");
+  expect(await screen.findByRole("alert")).toHaveTextContent("1 séance n'a pas pu être renvoyée à ta montre");
+  expect(screen.getByRole("status")).toHaveTextContent("Zones mises à jour");
+  expect(screen.queryByText(/aucune séance à renvoyer/)).toBeNull();
 });

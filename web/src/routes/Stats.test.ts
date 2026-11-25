@@ -433,8 +433,8 @@ test("Charge sans zones : message, volume toujours affiché", async () => {
 
 test("Charge : forme et ACWR ne dépendent ni du sport ni de la période", async () => {
   zones.value = ZONES;
-  activities = daily(100);
-  render(Stats, { tab: "load", history: null, onimport: () => {} });
+  activities = daily(500);
+  const view = render(Stats, { tab: "load", history: null, onimport: () => {} });
   await screen.findByRole("group", { name: "Forme" });
   const before = figures();
   expect(before[3]).toContain("1");
@@ -443,8 +443,13 @@ test("Charge : forme et ACWR ne dépendent ni du sport ni de la période", async
   expect(screen.getByText(/FC repos et max actuelles/)).toBeInTheDocument();
   await fireEvent.change(screen.getByLabelText("Sport"), { target: { value: "bike" } });
   expect(figures()).toEqual(before);
-  await fireEvent.click(screen.getByRole("button", { name: "Tout" }));
+  view.unmount();
+  // période passée : les chiffres restent ceux d'aujourd'hui, et le disent
+  localStorage.setItem("coach.stats.filters", JSON.stringify({ choice: { kind: "custom", from: "2026-01-01", to: "2026-01-31" }, sport: "all", metric: "hours" }));
+  render(Stats, { tab: "load", history: null, onimport: () => {} });
+  await screen.findByText(/Du 1 janv\. 2026/);
   expect(figures()).toEqual(before);
+  expect(screen.getByText("Forme d'aujourd'hui, quelle que soit la période")).toBeInTheDocument();
 });
 
 test("Charge : séances sans FC comptées, avertissement au-delà de 30 % de la durée", async () => {
@@ -473,7 +478,8 @@ test("Charge : la variation hebdo suit le sport, pas la période", async () => {
   activities = daily(100);
   render(Stats, { tab: "load", history: null, onimport: () => {} });
   const all = (await screen.findByText(/Ta dernière semaine complète/)).textContent;
-  await fireEvent.click(screen.getByRole("button", { name: "Tout" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Personnalisée" }));
+  await fireEvent.change(screen.getByLabelText("Au"), { target: { value: "2026-08-01" } });
   expect(screen.getByText(/Ta dernière semaine complète/).textContent).toBe(all);
   await fireEvent.change(screen.getByLabelText("Sport"), { target: { value: "bike" } });
   expect(screen.getByText(/Ta dernière semaine complète/).textContent).not.toBe(all);
@@ -483,6 +489,38 @@ test("Aperçu : constat de charge avec zones", async () => {
   zones.value = ZONES;
   activities = daily(100);
   render(Stats, { history: null, onimport: () => {} });
-  const link = (await screen.findByText(/Ta charge est équilibrée/)).closest("a");
+  const link = (await screen.findByText(/ta charge est équilibrée/)).closest("a");
   expect(link).toHaveAttribute("href", "#/stats/load");
+});
+
+test("trop de séances sans FC : aucun verdict de forme ni ACWR", async () => {
+  zones.value = ZONES;
+  activities = daily(200).map((a, i) => (i < 43 ? { ...a, avg_hr: null } : a));
+  const view = render(Stats, { tab: "load", history: null, onimport: () => {} });
+  expect(await screen.findByText(/ta charge est sous-estimée/)).toBeInTheDocument();
+  expect(screen.queryByText(/fraîcheur, ta fatigue/)).toBeNull();
+  expect(screen.queryByRole("group", { name: "ACWR" })).toBeNull();
+  expect(screen.getByText("Trop de séances sans FC pour ce repère")).toBeInTheDocument();
+  await view.rerender({ tab: "overview" });
+  await kpi("Séances");
+  expect(screen.queryByText(/fraîcheur, ta fatigue/)).toBeNull();
+});
+
+test("aucune séance avec FC : pas de chiffre de forme", async () => {
+  zones.value = ZONES;
+  activities = daily(100, { avg_hr: null });
+  render(Stats, { tab: "load", history: null, onimport: () => {} });
+  expect(await screen.findByText("Pas de FC dans tes séances : forme impossible à calculer")).toBeInTheDocument();
+  expect(screen.queryByRole("group", { name: "Forme" })).toBeNull();
+  expect(screen.queryByRole("img", { name: /^Forme, fatigue/ })).toBeNull();
+});
+
+test("Progression : records en cours de lecture, pas d'absence annoncée", async () => {
+  const base = vi.mocked(fetch).getMockImplementation()!;
+  vi.mocked(fetch).mockImplementation(async (url, init) =>
+    url === "/api/stats/records" ? new Promise<Response>(() => {}) : base(url, init),
+  );
+  render(Stats, { tab: "progress", history: null, onimport: () => {} });
+  expect(await screen.findByText("Chargement des records…")).toBeInTheDocument();
+  expect(screen.queryByText("Aucune course ou record de moins d'un an")).toBeNull();
 });

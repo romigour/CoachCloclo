@@ -84,6 +84,9 @@ describe("weeklyRamp", () => {
     expect(weeklyRamp([], "2026-11-25")).toBeNull();
     expect(weeklyRamp([act({ date: "2026-11-18" })], "2026-11-25")).toBeNull();
   });
+  it("null sans 4 semaines d'historique avant la dernière", () => {
+    expect(weeklyRamp([act({ date: "2026-11-11" }), act({ date: "2026-11-18" })], "2026-11-25")).toBeNull();
+  });
 });
 
 describe("hrCoverage", () => {

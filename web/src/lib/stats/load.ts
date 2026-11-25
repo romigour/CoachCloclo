@@ -73,9 +73,11 @@ export function acwr(all: StatActivity[], hr: HrRange, today: string): number | 
   return chronic > 0 ? mean(ATL_DAYS) / chronic : null;
 }
 
-/** Heures de la dernière semaine complète par rapport à la moyenne des 4 précédentes (0.15 = +15 %). */
+/** Heures de la dernière semaine complète par rapport à la moyenne des 4 précédentes (0.15 = +15 %) ; null sans ces 4 semaines d'historique. */
 export function weeklyRamp(acts: StatActivity[], today: string): number | null {
   const last = addDays(mondayOf(today), -7);
+  const first = firstDate(acts);
+  if (first === null || mondayOf(first) > addDays(last, -28)) return null;
   const seconds = new Map<string, number>();
   for (const a of acts) {
     const w = mondayOf(a.date);

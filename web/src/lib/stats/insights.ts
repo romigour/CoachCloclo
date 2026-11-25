@@ -53,8 +53,8 @@ export function trailText(t: ReturnType<typeof trailSummary>): string | null {
 export function fitnessText(p: FitnessPoint | undefined): string | null {
   if (!p || p.ctl <= 0) return null;
   const ratio = p.tsb / p.ctl;
-  if (ratio > 0.1) return "Bonne fraîcheur : ta fatigue est sous ta forme.";
-  return ratio < -0.3 ? "Ta fatigue est élevée." : "Ta charge est équilibrée.";
+  if (ratio > 0.1) return "Aujourd'hui : bonne fraîcheur, ta fatigue est sous ta forme.";
+  return ratio < -0.3 ? "Aujourd'hui, ta fatigue est élevée." : "Aujourd'hui, ta charge est équilibrée.";
 }
 
 export function acwrText(v: number | null): string | null {

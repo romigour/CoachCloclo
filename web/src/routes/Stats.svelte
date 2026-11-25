@@ -15,7 +15,7 @@
   import { dailyMinutes, weekStats } from "../lib/stats/consistency";
   import { efficiencyText, fitnessText, lastResultText, splitText } from "../lib/stats/insights";
   import { split } from "../lib/stats/intensity";
-  import { CTL_DAYS as FITNESS_WARMUP, fitnessSeries, hrRange } from "../lib/stats/load";
+  import { CTL_DAYS as FITNESS_WARMUP, fitnessSeries, hrCoverage, hrRange, MISSING_HR_ALERT } from "../lib/stats/load";
   import { aerobicEfficiency, trendLine, zoneDistribution } from "../lib/stats/running";
   import { currentZones } from "../lib/zones.svelte";
   import { fmtDay } from "../lib/stats/format";
@@ -142,7 +142,9 @@
   const notes = $derived.by(() => {
     if (tab !== "overview") return [];
     const efficiency = aerobicEfficiency(runs);
-    const hr = hrRange(currentZones());
+    // Trop de séances sans FC : la forme serait sous-estimée, pas de verdict.
+    const covered = hrCoverage(all, today).missingShare <= MISSING_HR_ALERT;
+    const hr = covered ? hrRange(currentZones()) : null;
     const zones = zoneDistribution(runs);
     const list: { tab: StatsTab; text: string | null }[] = [
       { tab: "progress", text: efficiencyText(trendLine(efficiency.points, efficiency.trend)?.changePct ?? null) },

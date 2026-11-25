@@ -63,11 +63,14 @@
   const shown = $derived(visibleFitness(series, period));
   const ratio = $derived(hr ? acwr(all, hr, today) : null);
   const coverage = $derived(hrCoverage(all, today));
+  // Trop de séances sans FC : une charge sous-estimée ne mérite ni verdict ni repère.
+  const undercounted = $derived(coverage.missingShare > MISSING_HR_ALERT);
+  const hasLoad = $derived(series.some((p) => p.ctl > 0));
 
   const coverageText = $derived.by(() => {
     if (coverage.missing === 0) return null;
     const s = coverage.missing > 1 ? "s" : "";
-    const under = coverage.missingShare > MISSING_HR_ALERT ? " : ta charge est sous-estimée" : "";
+    const under = undercounted ? " : ta charge est sous-estimée" : "";
     return `${coverage.missing} séance${s} sans FC sur les 42 derniers jours${under}.`;
   });
 
@@ -127,7 +130,10 @@
   {#if !hr}
     <p class="empty">Synchronise Garmin pour calculer ta charge</p>
   {:else}
-    {#if now}
+    {#if !hasLoad && series.length > 0}
+      <p class="empty">Pas de FC dans tes séances : forme impossible à calculer</p>
+    {:else if now}
+      <p class="meta">Forme d'aujourd'hui, quelle que soit la période</p>
       <div class="figures">
         <div role="group" aria-label="Forme"><span class="label">Forme (42 j)</span><strong>{fmtNumber(now.ctl)}</strong></div>
         <div role="group" aria-label="Fatigue"><span class="label">Fatigue (7 j)</span><strong>{fmtNumber(now.atl)}</strong></div>
@@ -138,18 +144,20 @@
       {:else}
         <p class="empty">Pas assez de données sur cette période</p>
       {/if}
-      <Insight text={fitnessText(now)} />
+      <Insight text={undercounted ? null : fitnessText(now)} />
     {:else}
       <p class="empty">Pas assez d'historique : il faut plus de {CTL_DAYS} jours</p>
     {/if}
-    {#if coverageText}<p class="meta" class:warn={coverage.missingShare > MISSING_HR_ALERT}>{coverageText}</p>{/if}
+    {#if coverageText}<p class="meta" class:warn={undercounted}>{coverageText}</p>{/if}
   {/if}
 </section>
 
 {#if hr}
   <section class="card stack" aria-labelledby="acwr-title">
     <div><h2 id="acwr-title">Charge récente / habituelle</h2><p class="meta">ACWR : charge des 7 derniers jours comparée aux 28 derniers, aujourd'hui</p></div>
-    {#if ratio !== null}
+    {#if undercounted}
+      <p class="empty">Trop de séances sans FC pour ce repère</p>
+    {:else if ratio !== null}
       <div class="figures">
         <div role="group" aria-label="ACWR"><span class="label">ACWR</span><strong>{fmtNumber(ratio, 2)}</strong></div>
       </div>

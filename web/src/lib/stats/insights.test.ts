@@ -35,10 +35,10 @@ test("sortie la plus longue, trail", () => {
 
 test("forme : bornes 0,1 et -0,3 incluses dans l'équilibre", () => {
   const f = (ctl: number, atl: number) => ({ date: "2026-11-25", ctl, atl, tsb: ctl - atl });
-  expect(fitnessText(f(100, 89))).toBe("Bonne fraîcheur : ta fatigue est sous ta forme.");
-  expect(fitnessText(f(100, 90))).toBe("Ta charge est équilibrée.");
-  expect(fitnessText(f(100, 130))).toBe("Ta charge est équilibrée.");
-  expect(fitnessText(f(100, 131))).toBe("Ta fatigue est élevée.");
+  expect(fitnessText(f(100, 89))).toBe("Aujourd'hui : bonne fraîcheur, ta fatigue est sous ta forme.");
+  expect(fitnessText(f(100, 90))).toBe("Aujourd'hui, ta charge est équilibrée.");
+  expect(fitnessText(f(100, 130))).toBe("Aujourd'hui, ta charge est équilibrée.");
+  expect(fitnessText(f(100, 131))).toBe("Aujourd'hui, ta fatigue est élevée.");
   expect(fitnessText(f(0, 0))).toBeNull();
   expect(fitnessText(undefined)).toBeNull();
 });

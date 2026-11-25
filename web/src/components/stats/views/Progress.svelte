@@ -204,6 +204,8 @@
         {/each}
       </ul></div>
       <Insight text={predictionText(predicted)} />
+    {:else if records === null}
+      <p class="empty">Chargement des records…</p>
     {:else}
       <p class="empty">Aucune course ou record de moins d'un an</p>
     {/if}

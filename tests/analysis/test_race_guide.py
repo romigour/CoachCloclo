@@ -56,7 +56,8 @@ def trail(stations=(), target_s=10800):
 
 
 @pytest.mark.parametrize(
-    "km,band", [(5, "court"), (12, "court"), (21.0975, "semi"), (42.195, "marathon"), (80, "ultra")]
+    "km,band", [(5, "court"), (12, "court"), (21.0975, "semi"), (42.195, "marathon"), (80, "ultra"),
+     (12.5, "semi"), (25, "semi"), (26, "marathon"), (45, "marathon"), (46, "ultra")]
 )
 def test_distance_band(km, band):
     assert distance_band(km) == band

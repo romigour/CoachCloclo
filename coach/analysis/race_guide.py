@@ -20,7 +20,7 @@ DistanceBand = Literal["court", "semi", "marathon", "ultra"]
 PhaseName = Literal["Départ", "Installation", "Cœur de course", "Final"]
 
 _HALF_KM = 21.0975
-_BAND_LIMITS_KM: tuple[tuple[float, DistanceBand], ...] = ((15.0, "court"), (35.0, "semi"), (50.0, "marathon"))
+_BAND_LIMITS_KM: tuple[tuple[float, DistanceBand], ...] = ((12.0, "court"), (25.0, "semi"), (45.0, "marathon"))
 _SHORT_PHASES: tuple[tuple[PhaseName, float], ...] = (("Départ", 0.15), ("Cœur de course", 0.85), ("Final", 1.0))
 _LONG_PHASES: tuple[tuple[PhaseName, float], ...] = (
     ("Départ", 0.10),
@@ -44,7 +44,7 @@ _MARATHON_MARKS: tuple[tuple[float, str], ...] = (
 
 def distance_band(distance_km: float) -> DistanceBand:
     for limit, band in _BAND_LIMITS_KM:
-        if distance_km < limit:
+        if distance_km <= limit:
             return band
     return "ultra"
 

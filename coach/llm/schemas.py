@@ -252,10 +252,13 @@ class CoachAdvice(_Strict):
 _B = r"(?<![\d:'’′])"  # pas collé à un autre chiffre
 _E = r"(?![\d:'’′])"
 _HMS = re.compile(_B + r"(\d{1,2}):(\d{2}):(\d{2})" + _E)
+_PER_KM = r"(?:/\s*km|par\s+km|au\s+km|au\s+kilo(?:mètre)?)"
 _PACE = re.compile(
-    _B + r"(\d{1,2})\s*[:'’′]\s*(\d{2})\s*(?:\"|”|″|'')?\s*(?:min\s*)?(?:/\s*km|par\s+km|au\s+km|au\s+kilo(?:mètre)?)",
+    _B + r"(\d{1,2})\s*[:'’′]\s*(\d{2})\s*(?:\"|”|″|'')?\s*(?:min\s*)?" + _PER_KM,
     re.IGNORECASE,
 )
+_DECIMAL_PACE = re.compile(_B + r"(\d{1,2})[.,](\d{1,2})(?!\d)\s*(?:min\s*)?" + _PER_KM, re.IGNORECASE)
+_MIN_PACE = re.compile(_B + r"(\d{1,2})\s*(?:min(?:utes?)?|mn)\s*" + _PER_KM, re.IGNORECASE)
 _APOSTROPHE = re.compile(_B + r"(\d{1,2})['’′](\d{2})(?:\"|”|″|'')?(?!\d)")
 _MIN_SEC = re.compile(_B + r"(\d{1,2})\s*min\s*(\d{2})(?!\d)(\s*/\s*km)?", re.IGNORECASE)
 _HOURS = re.compile(
@@ -279,6 +282,16 @@ def _hms_keys(m: re.Match) -> set[_Key]:
 
 def _pace_keys(m: re.Match) -> set[_Key]:
     return {("pace", int(m.group(1)) * 60 + int(m.group(2)))}
+
+
+def _decimal_pace_keys(m: re.Match) -> set[_Key]:
+    """« 4.50/km » ou « 4,50/km » : 4 min 50 ; « 4,5/km » : 4 min et demie."""
+    mi, frac = int(m.group(1)), m.group(2)
+    return {("pace", mi * 60 + (int(frac) if len(frac) == 2 else int(frac) * 6))}
+
+
+def _min_pace_keys(m: re.Match) -> set[_Key]:
+    return {("pace", int(m.group(1)) * 60)}
 
 
 def _min_sec_keys(m: re.Match) -> set[_Key]:
@@ -308,8 +321,10 @@ def _minutes_keys(m: re.Match) -> set[_Key]:
 _FORMS = (
     (_HMS, _hms_keys),
     (_PACE, _pace_keys),
+    (_DECIMAL_PACE, _decimal_pace_keys),
     (_APOSTROPHE, _pace_keys),
     (_MIN_SEC, _min_sec_keys),
+    (_MIN_PACE, _min_pace_keys),  # « 5 min/km » : une allure, lue avant les minutes
     (_HOURS, _hours_keys),
     (_COLON, _colon_keys),
     (_MINUTES, _minutes_keys),

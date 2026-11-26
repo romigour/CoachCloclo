@@ -432,3 +432,21 @@ def test_advice_hours_with_minutes_suffix(text):
 def test_advice_invented_hours_with_minutes_suffix_rejected(text):
     errors = validate_advice(_advice(text), "- 2026-11-10 | running | 50 min | 9.0 km. Temps visé 1 h 45.")
     assert len(errors) == 1 and errors[0].split("«")[2].strip().startswith("1")  # lu en heures, pas « 50 min »
+
+
+@pytest.mark.parametrize(
+    "text", ["Pars à 4.50/km.", "Pars à 4,50/km.", "Pars à 4,50 min/km.", "Cours à 5 min/km.", "Cours à 5 min par km."]
+)
+def test_advice_rejects_invented_decimal_and_minute_paces(text):
+    prompt = "Allure moyenne 4:55/km. Échauffement 5 min. Départ 08:30."
+    errors = validate_advice(_advice(text), prompt)
+    assert len(errors) == 1
+
+
+@pytest.mark.parametrize("text", ["Tiens 4.55/km.", "Tiens 4,55/km.", "Tiens 4,55 min/km."])
+def test_advice_decimal_pace_cited(text):
+    assert validate_advice(_advice(text), "Allure moyenne 4:55/km.") == []
+
+
+def test_advice_minute_pace_cited():
+    assert validate_advice(_advice("Cours à 5 min/km."), "Allure 5:00/km.") == []

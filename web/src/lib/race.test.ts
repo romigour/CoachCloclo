@@ -53,9 +53,12 @@ describe("settingsError", () => {
   };
   const st = ok.aid_stations[0];
   test("valid settings", () => expect(settingsError(ok)).toBeNull());
+  test("empty carbs and water mean recommended", () =>
+    expect(settingsError({ ...ok, carbs_g_h: null, water_ml_h: null })).toBeNull());
   test.each([
     [{ start_time: "" }, "Heure de départ"],
-    [{ carbs_g_h: null as unknown as number }, "Glucides"],
+    [{ carbs_g_h: NaN }, "Glucides"],
+    [{ carbs_g_h: 151 }, "Glucides"],
     [{ water_ml_h: NaN }, "Eau"],
     [{ carry_ml: 0 }, "Contenance"],
     [{ aid_stations: [{ ...st, km: NaN }] }, "Ravitaillement 1"],

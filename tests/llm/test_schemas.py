@@ -403,3 +403,32 @@ def test_advice_plain_counts_are_not_figures():
 def test_advice_checks_titles_too():
     advice = CoachAdvice(tips=[AdviceTip(title="Vise 4:30/km", text="ok"), *[AdviceTip(title="a", text="b")] * 2])
     assert len(validate_advice(advice, "Allure 4:55/km")) == 1
+
+
+_CLOCK_PROMPT = "Départ à 08:30. Allure moyenne 4:58/km. Matin : 05:30 Réveil ; 06:00 Petit-déjeuner. Passages : 5 km (08:55)"
+
+
+@pytest.mark.parametrize("text", ["Tiens 5:30/km au début.", "Pars à 6:00/km.", "Pars à 8:55/km.", "Pars en 5'30."])
+def test_advice_clock_is_not_a_pace(text):
+    assert len(validate_advice(_advice(text), _CLOCK_PROMPT)) == 1
+
+
+@pytest.mark.parametrize("text", ["Départ à 8h30.", "Lève-toi à 05:30.", "Passe le 5 km vers 8 h 55."])
+def test_advice_clock_still_cited_as_clock(text):
+    assert validate_advice(_advice(text), _CLOCK_PROMPT) == []
+
+
+@pytest.mark.parametrize("text", ["Ton semi en 1:48 te situe.", "Ton semi en 1 h 48 te situe.", "Ton semi en 1h48min."])
+def test_advice_cites_history_time(text):
+    assert validate_advice(_advice(text), "- 2026-03-15 : Semi de mars, 21.1 km, 1:48:00") == []
+
+
+@pytest.mark.parametrize("text", ["Vise 1h45min.", "Vise 1h45mn.", "Vise 1 h 45 min.", "Départ à 8h30min."])
+def test_advice_hours_with_minutes_suffix(text):
+    assert validate_advice(_advice(text), "Temps visé 1 h 45. Départ 08:30.") == []
+
+
+@pytest.mark.parametrize("text", ["Vise 1h50min.", "Vise 1h50mn.", "Vise 1 h 50 minutes."])
+def test_advice_invented_hours_with_minutes_suffix_rejected(text):
+    errors = validate_advice(_advice(text), "- 2026-11-10 | running | 50 min | 9.0 km. Temps visé 1 h 45.")
+    assert len(errors) == 1 and errors[0].split("«")[2].strip().startswith("1")  # lu en heures, pas « 50 min »

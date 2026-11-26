@@ -258,7 +258,9 @@ _PACE = re.compile(
 )
 _APOSTROPHE = re.compile(_B + r"(\d{1,2})['’′](\d{2})(?:\"|”|″|'')?(?!\d)")
 _MIN_SEC = re.compile(_B + r"(\d{1,2})\s*min\s*(\d{2})(?!\d)(\s*/\s*km)?", re.IGNORECASE)
-_HOURS = re.compile(_B + r"(\d{1,3})\s*h(?:eures?)?(?:\s*(\d{2}))?(?![\w])", re.IGNORECASE)
+_HOURS = re.compile(
+    _B + r"(\d{1,3})\s*h(?:eures?)?(?:\s*(\d{2})(?:\s*(?:min(?:utes?)?|mn))?)?(?![\w])", re.IGNORECASE
+)
 _COLON = re.compile(_B + r"(\d{1,2}):(\d{2})" + _E)
 _MINUTES = re.compile(_B + r"(\d{1,3})\s*(?:min(?:utes?)?|mn)(?![a-zà-ÿ])", re.IGNORECASE)
 
@@ -292,7 +294,9 @@ def _hours_keys(m: re.Match) -> set[_Key]:
 
 def _colon_keys(m: re.Match) -> set[_Key]:
     a, b = int(m.group(1)), int(m.group(2))
-    if a < 24:  # allure m:ss, heure ou durée h:mm
+    if a < 24 and len(m.group(1)) == 2:  # « 08:30 », forme des heures du guide : une heure, jamais une allure
+        return {("clock", a * 60 + b)}
+    if a < 24:  # « 1:48 » : allure m:ss, heure ou durée h:mm
         return {("pace", a * 60 + b), ("clock", a * 60 + b), ("dur", a * 60 + b)}
     return _minutes(a * 60 + b)  # « 42:15 » : durée m:ss
 

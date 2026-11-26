@@ -21,11 +21,11 @@ const PHONE = [390, 844];
 // Un sélecteur peut être 'text=…' : premier élément dont le texte commence par …
 export const SHOTS = [
   { name: 'week', hash: '#/week', waitFor: 'main h1' },
-  { name: 'week-plan', hash: '#/week', waitFor: 'main h1', scrollTo: 'text=Cette semaine' },
+  { name: 'week-plan', hash: '#/week', waitFor: 'main h1', scrollTo: 'section[aria-label="Séance sélectionnée"]' },
   { name: 'goals', hash: '#/goal', waitFor: 'ul.goals' },
   { name: 'goals-close', hash: '#/goal', waitFor: 'ul.goals', clip: 'ul.goals' },
   { name: 'event', hash: '#/week', waitFor: 'main h1', click: 'Signaler un imprévu' },
-  { name: 'race', hash: '#/race/3', waitFor: 'table[aria-label="Segments"]' },
+  { name: 'race', hash: '#/race/9', waitFor: 'table[aria-label="Segments"]' },
   { name: 'stats-top', hash: '#/stats', waitFor: 'main h1' },
   { name: 'stats-run', hash: '#/stats/progress', waitFor: 'main h1' },
   { name: 'stats-records', hash: '#/stats/races', waitFor: 'main h1', viewport: [1600, 900],

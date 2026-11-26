@@ -331,3 +331,75 @@ def test_session_d_plus_optional_and_positive():
 def test_session_d_plus_round_trip():
     spec = make_session(d_plus_m=600)
     assert Session.from_spec(spec, cycle_id=1).to_spec().d_plus_m == 600
+
+
+# --- conseils du coach (jour J) ---------------------------------------------------------------
+
+from coach.llm.schemas import AdviceTip, CoachAdvice, validate_advice  # noqa: E402
+
+
+def _advice(*texts: str) -> CoachAdvice:
+    tips = [AdviceTip(title=f"Conseil {i}", text=t) for i, t in enumerate(texts, start=1)]
+    while len(tips) < 3:
+        tips.append(AdviceTip(title="Calme", text="Reste calme au départ."))
+    return CoachAdvice(tips=tips)
+
+
+def test_advice_accepts_history_figures():
+    prompt = "Compétitions passées : - 2026-03-15 : Semi de Paris, 21.1 km, 1:48"
+    assert validate_advice(_advice("Ton semi de mars en 1:48 montre que tu tiens l'effort."), prompt) == []
+
+
+def test_advice_rejects_invented_pace():
+    prompt = "Allure moyenne 4:55/km. Départ à 08:00."
+    errors = validate_advice(_advice("Pars à 4:30/km pour gagner du temps."), prompt)
+    assert len(errors) == 1
+    assert "4:30/km" in errors[0]
+
+
+def test_advice_tip_count_bounded():
+    with pytest.raises(ValidationError):
+        CoachAdvice(tips=[AdviceTip(title="a", text="b")] * 2)
+    with pytest.raises(ValidationError):
+        CoachAdvice(tips=[AdviceTip(title="a", text="b")] * 7)
+    with pytest.raises(ValidationError):
+        AdviceTip(title="x" * 61, text="b")
+
+
+@pytest.mark.parametrize(
+    "prompt,text",
+    [
+        ("Allure 4:55/km", "Tiens 4'55 au kilo."),
+        ("Allure 4:55/km", "Tiens 4’55\" par km."),
+        ("Allure 4:55/km", "Tiens 4:55 min/km."),
+        ("Temps visé 1 h 45", "Vise 1h45."),
+        ("Temps visé 1 h 45", "Vise 1:45 au total."),
+        ("Temps visé 1 h 45", "Vise 1 h 45."),
+        ("Record : 1:45:20", "Ton record en 1 h 45 te situe."),
+        ("Départ 08:30", "Arrive avant le départ de 8h30."),
+        ("Départ 08:30", "Départ à 8 h 30."),
+        ("- 2026-11-10 | running | 45 min | 9.0 km", "Ta sortie de 45 min était bonne."),
+        ("Petit-déjeuner 05:00", "Mange à 5h."),
+    ],
+)
+def test_advice_french_forms_normalised(prompt, text):
+    assert validate_advice(_advice(text), prompt) == []
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["Pars en 4'30.", "Vise 1h40.", "Échauffe-toi 20 min.", "Départ à 9h15.", "Garde 5:10/km.", "Prévois 2 h."],
+)
+def test_advice_rejects_invented_french_forms(text):
+    prompt = "Allure 4:55/km. Temps visé 1 h 45. Départ 08:30. Petit-déjeuner 05:30."
+    assert len(validate_advice(_advice(text), prompt)) == 1
+
+
+def test_advice_plain_counts_are_not_figures():
+    text = "Prends 3 gels, 500 ml d'eau et dors bien 2 jours avant ; 25 g de glucides, km 12, Z2, D+ 300 m."
+    assert validate_advice(_advice(text), "Rien de chiffré.") == []
+
+
+def test_advice_checks_titles_too():
+    advice = CoachAdvice(tips=[AdviceTip(title="Vise 4:30/km", text="ok"), *[AdviceTip(title="a", text="b")] * 2])
+    assert len(validate_advice(advice, "Allure 4:55/km")) == 1

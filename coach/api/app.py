@@ -82,6 +82,7 @@ from coach.services.llm_usage import usage_summary
 from coach.services.plans import PlanSettingsUpdate, accept_plan, generate_plan, update_plan_settings
 from coach.analysis.race_plan import RaceSettings
 from coach.services import race_strategy
+from coach.services.race_advice import ask_race_advice
 from coach.services.adjust import request_adjustment
 from coach.services.events import EventInput, EventResult, create_event, delete_event, resume_injury
 from coach.storage.legacy import import_legacy_files
@@ -808,6 +809,10 @@ def create_app(
     @api.post("/goals/{goal_id}/race-plan/export")
     def post_race_plan_export(goal_id: int, repo: RepoDep, garmin: GarminDep):
         return race_strategy.export_race(repo, garmin, goal_id).model_dump(mode="json")
+
+    @api.post("/goals/{goal_id}/race-plan/advice")
+    def post_race_plan_advice(goal_id: int, repo: RepoDep, garmin: GarminDep, llm: LLMDep):
+        return ask_race_advice(repo, garmin, llm, goal_id).model_dump(mode="json")
 
     @api.get("/plan")
     def get_plan(repo: RepoDep):

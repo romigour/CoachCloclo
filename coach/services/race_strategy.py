@@ -13,6 +13,7 @@ from coach.analysis.race_plan import AidStation, RaceBasis, RacePlan, RaceSettin
 from coach.export.garmin_workout import race_phases_to_workout_json, race_to_workout_json
 from coach.garmin.port import GarminAuthRequired, GarminPort, GarminRateLimited, GarminUnavailable
 from coach.llm.prompts import race_text
+from coach.llm.schemas import CoachAdvice
 from coach.plan.models import Goal, RaceStrategy
 from coach.plan.repo import Repo
 from coach.services import CoachError
@@ -43,6 +44,9 @@ class RaceView(BaseModel):
     export_error: str | None
     export_stale: bool  # plan modifié (réglages ou base) depuis le dernier envoi à la montre
     guide: RaceGuide
+    advice: CoachAdvice | None = None  # conseils du coach (Claude), à la demande
+    advice_at: datetime | None = None
+    advice_stale: bool = False  # course modifiée depuis les conseils : à redemander
     updated_at: datetime | None = None  # date de la copie stockée pour le mobile
 
 
@@ -78,6 +82,15 @@ def _fmt_km(km: float) -> str:
 def _fingerprint(strategy: RaceStrategy, goal: Goal) -> str:
     """Empreinte des réglages, de la base, de la date et du temps visé : change dès que le plan envoyé est périmé."""
     raw = f"{strategy.settings_json}|{strategy.basis_json}|{goal.race_date}|{goal.target_time_s}"
+    return hashlib.sha256(raw.encode()).hexdigest()
+
+
+def advice_fingerprint(goal: Goal, plan: RacePlan) -> str:
+    """Empreinte de ce qui change la course pour les conseils : temps de référence, date, distance, GPX, précisions.
+
+    L'heure de départ et la nutrition n'y entrent pas : un détail ne rend pas les conseils périmés.
+    """
+    raw = f"{plan.reference_time_s}|{goal.race_date}|{goal.distance_km}|{goal.gpx_summary_json}|{goal.notes}"
     return hashlib.sha256(raw.encode()).hexdigest()
 
 
@@ -148,6 +161,7 @@ def _view(repo: Repo, strategy: RaceStrategy, goal: Goal, today: date) -> RaceVi
     plan, prof = _compute(repo, strategy, goal, today)
     settings = RaceSettings.model_validate_json(strategy.settings_json)
     basis = RaceBasis.model_validate_json(strategy.basis_json)
+    advice = CoachAdvice.model_validate_json(strategy.advice_json) if strategy.advice_json else None
     view = RaceView(
         goal_id=goal.id,
         goal_type=goal.type,
@@ -162,6 +176,9 @@ def _view(repo: Repo, strategy: RaceStrategy, goal: Goal, today: date) -> RaceVi
         export_error=strategy.export_error,
         export_stale=strategy.garmin_workout_id is not None and strategy.exported_hash != _fingerprint(strategy, goal),
         guide=build_race_guide(plan=plan, trail=goal.type == "trail", settings=settings, basis=basis),
+        advice=advice,
+        advice_at=strategy.advice_at if advice is not None else None,
+        advice_stale=advice is not None and strategy.advice_hash != advice_fingerprint(goal, plan),
     )
     return _store_snapshot(repo, strategy, view)
 

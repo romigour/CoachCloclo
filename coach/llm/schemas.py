@@ -1,5 +1,6 @@
 """Schémas JSON stricts des réponses de Claude et validation métier."""
 
+import re
 from collections import Counter
 from collections.abc import Mapping
 from typing import Literal, get_args
@@ -230,4 +231,113 @@ def validate_adjustment(
     for week in sorted(counts):
         if counts[week] > sessions_per_week:
             errors.append(f"semaine {week} : {counts[week]} séances pour {sessions_per_week} demandées")
+    return errors
+
+
+# --- conseils du coach (jour J) ---------------------------------------------------------------
+
+
+class AdviceTip(_Strict):
+    title: str = Field(max_length=60)
+    text: str = Field(max_length=400)
+
+
+class CoachAdvice(_Strict):
+    tips: list[AdviceTip] = Field(min_length=3, max_length=6)
+
+
+# Chiffres d'allure, de durée et d'heure, dans l'ordre de lecture : chaque forme lue est effacée avant
+# la suivante. Chaque chiffre donne des clés (genre, valeur) ; une forme ambiguë (« 1:48 ») en donne
+# plusieurs. Prompt et conseil sont lus de la même façon.
+_B = r"(?<![\d:'’′])"  # pas collé à un autre chiffre
+_E = r"(?![\d:'’′])"
+_HMS = re.compile(_B + r"(\d{1,2}):(\d{2}):(\d{2})" + _E)
+_PACE = re.compile(
+    _B + r"(\d{1,2})\s*[:'’′]\s*(\d{2})\s*(?:\"|”|″|'')?\s*(?:min\s*)?(?:/\s*km|par\s+km|au\s+km|au\s+kilo(?:mètre)?)",
+    re.IGNORECASE,
+)
+_APOSTROPHE = re.compile(_B + r"(\d{1,2})['’′](\d{2})(?:\"|”|″|'')?(?!\d)")
+_MIN_SEC = re.compile(_B + r"(\d{1,2})\s*min\s*(\d{2})(?!\d)(\s*/\s*km)?", re.IGNORECASE)
+_HOURS = re.compile(_B + r"(\d{1,3})\s*h(?:eures?)?(?:\s*(\d{2}))?(?![\w])", re.IGNORECASE)
+_COLON = re.compile(_B + r"(\d{1,2}):(\d{2})" + _E)
+_MINUTES = re.compile(_B + r"(\d{1,3})\s*(?:min(?:utes?)?|mn)(?![a-zà-ÿ])", re.IGNORECASE)
+
+_Key = tuple[str, int]
+
+
+def _minutes(seconds: int) -> set[_Key]:
+    """Durée à la minute : arrondie vers le bas et au plus proche (« 1:45:20 » se cite « 1 h 45 »)."""
+    return {("dur", seconds // 60), ("dur", round(seconds / 60))}
+
+
+def _hms_keys(m: re.Match) -> set[_Key]:
+    h, mi, s = map(int, m.groups())
+    return _minutes(h * 3600 + mi * 60 + s)
+
+
+def _pace_keys(m: re.Match) -> set[_Key]:
+    return {("pace", int(m.group(1)) * 60 + int(m.group(2)))}
+
+
+def _min_sec_keys(m: re.Match) -> set[_Key]:
+    mi, s = int(m.group(1)), int(m.group(2))
+    return {("pace", mi * 60 + s)} if m.group(3) else _minutes(mi * 60 + s)
+
+
+def _hours_keys(m: re.Match) -> set[_Key]:
+    h, mi = int(m.group(1)), int(m.group(2) or 0)
+    keys = {("dur", h * 60 + mi)}
+    return keys | {("clock", h * 60 + mi)} if h < 24 and mi < 60 else keys
+
+
+def _colon_keys(m: re.Match) -> set[_Key]:
+    a, b = int(m.group(1)), int(m.group(2))
+    if a < 24:  # allure m:ss, heure ou durée h:mm
+        return {("pace", a * 60 + b), ("clock", a * 60 + b), ("dur", a * 60 + b)}
+    return _minutes(a * 60 + b)  # « 42:15 » : durée m:ss
+
+
+def _minutes_keys(m: re.Match) -> set[_Key]:
+    return {("dur", int(m.group(1)))}
+
+
+_FORMS = (
+    (_HMS, _hms_keys),
+    (_PACE, _pace_keys),
+    (_APOSTROPHE, _pace_keys),
+    (_MIN_SEC, _min_sec_keys),
+    (_HOURS, _hours_keys),
+    (_COLON, _colon_keys),
+    (_MINUTES, _minutes_keys),
+)
+
+
+def figures(text: str) -> list[tuple[str, set[_Key]]]:
+    """Allures, durées et heures d'un texte : (texte lu, clés normalisées)."""
+    out: list[tuple[str, set[_Key]]] = []
+    for pattern, keys in _FORMS:
+        def _take(m: re.Match, keys=keys) -> str:
+            out.append((m.group(0).strip(), keys(m)))
+            return " " * len(m.group(0))
+
+        text = pattern.sub(_take, text)
+    return out
+
+
+def validate_advice(advice: CoachAdvice, prompt: str) -> list[str]:
+    """Refuse toute allure, durée ou heure du conseil absente du prompt (une erreur par chiffre)."""
+    known: set[_Key] = set()
+    for _, keys in figures(prompt):
+        known |= keys
+    errors: list[str] = []
+    seen: set[str] = set()
+    for tip in advice.tips:
+        for raw, keys in figures(f"{tip.title}\n{tip.text}"):
+            if keys & known or raw in seen:
+                continue
+            seen.add(raw)
+            errors.append(
+                f"conseil « {tip.title} » : « {raw} » ne figure pas dans les données fournies ; "
+                "ne cite que des allures, durées ou heures présentes dans la demande"
+            )
     return errors

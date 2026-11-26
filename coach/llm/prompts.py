@@ -9,7 +9,7 @@ from coach.analysis.laps import StepComparison, StepResult
 from coach.analysis.long_history import LongHistory, MonthVolume, PastRace
 from coach.analysis.race_plan import RacePlan
 from coach.analysis.zones import Zones
-from coach.llm.schemas import AdjustmentResponse, PlanResponse, Weekday
+from coach.llm.schemas import AdjustmentResponse, CoachAdvice, PlanResponse, Weekday
 from coach.plan.calendar import week_of
 from coach.plan.constraints import PlanConstraints
 from coach.plan.goals import MIN_GAP_DAYS, RaceBlock, block_label, goal_key, goal_label, one_line, proximity
@@ -717,4 +717,95 @@ def build_adjustment_prompt(
     ]
     parts += [t for t in race_texts if t]
     parts.append("Schéma JSON attendu :\n" + _schema_text(AdjustmentResponse))
+    return "\n\n".join(parts)
+
+
+# --- conseils du coach (jour J) ---------------------------------------------------------------
+
+ADVICE_SYSTEM_PROMPT = """Tu es un entraîneur expérimenté de course à pied sur route et de trail.
+Tu donnes à l'athlète des conseils personnels pour le jour de sa course.
+
+Règles impératives :
+- Réponds uniquement par un JSON conforme au schéma fourni, sans texte autour ni bloc de code.
+- Rédige en français, en tutoyant l'athlète, avec des phrases courtes.
+- N'écris jamais une allure, une durée ou une heure qui ne figure pas dans la demande."""
+
+ADVICE_FIGURES_RULE = (
+    "Chiffres : tu peux citer les allures, durées et heures présentes ci-dessus (guide, historique, courses "
+    "passées), telles qu'elles y figurent. N'en propose jamais de nouveaux : aucune allure, durée ou heure "
+    "absente de cette demande, même arrondie ou recalculée."
+)
+
+
+def _pace_range(low: int | None, high: int | None) -> str | None:
+    if low is None or high is None:
+        return None
+    return f"{_fmt_pace(low)}–{_fmt_pace(high)}/km"
+
+
+def _phase_line(p) -> str:
+    parts = [f"- {p.name}, km {p.start_km:g}–{p.end_km:g}"]
+    if (pace := _pace_range(p.pace_low_s_km, p.pace_high_s_km)) is not None:
+        parts.append(f"allure {pace}")
+    if p.hr_zone is not None:
+        hr = f" ({p.hr_low}–{p.hr_high} bpm)" if p.hr_low is not None and p.hr_high is not None else ""
+        parts.append(f"FC {p.hr_zone}{hr}")
+    if p.elapsed_end_s is not None:
+        parts.append(f"fin à {fmt_duration(p.elapsed_end_s)} de course ({p.clock_end})")
+    parts += p.terrain
+    text = ", ".join(parts)
+    return f"{text}. Consigne affichée : {p.advice}" if p.advice else text
+
+
+def _guide_text(view) -> str:
+    g = view.guide
+    lines = ["Guide calculé pour cette course (déjà affiché à l'athlète) :", f"Départ à {view.settings.start_time}."]
+    if g.reference_time_s is not None:
+        label = "Temps visé" if view.target_time_s is not None else "Temps estimé"
+        text = f"{label} : {fmt_duration(g.reference_time_s)}"
+        if g.avg_pace_s_km is not None:
+            text += f", allure moyenne {_fmt_pace(g.avg_pace_s_km)}/km"
+        lines.append(text + ".")
+    else:
+        lines.append("Aucun temps de référence : ni allure ni passage calculés.")
+    lines.append("Phases :")
+    lines += [_phase_line(p) for p in g.phases]
+    if g.splits:
+        lines.append("Passages : " + " ; ".join(f"{s.label} à {fmt_duration(s.elapsed_s)} ({s.clock})" for s in g.splits))
+    n = g.nutrition
+    origin = "recommandation selon la durée" if n.recommended else "réglage de l'athlète"
+    lines.append(f"Nutrition : {n.carbs_g_h} g de glucides et {n.water_ml_h} ml d'eau par heure ({origin}). {n.principle}")
+    if n.intakes:
+        lines.append(
+            "Prises prévues : " + " ; ".join(f"km {i.km:g}" + (f" ({i.clock})" if i.clock else "") + f" : {i.what}"
+                                             for i in n.intakes)
+        )
+    if g.morning:
+        lines.append("Matin : " + " ; ".join(f"{m.clock} {m.label}" for m in g.morning))
+    return "\n".join(lines)
+
+
+def build_race_advice_prompt(
+    goal: Goal,
+    view,  # coach.services.race_strategy.RaceView (import circulaire évité)
+    history: list[Activity],
+    long_history: LongHistory | None,
+    recent: Sequence[Goal],
+) -> str:
+    """Prompt des conseils personnels du jour J : objectif et précisions, guide chiffré, historiques."""
+    parts = [
+        "Donne à l'athlète des conseils personnels pour le jour de cette course. Ils complètent le guide "
+        "ci-dessous sans le répéter : appuie-toi sur ses précisions, son historique et ses courses passées.",
+        "Objectif :\n" + _goal_line(goal),
+        _guide_text(view),
+        *(
+            ["Courses courues ces derniers jours :\n" + "\n".join(_goal_line(r, with_notes=False) for r in recent)]
+            if recent else []
+        ),
+        _history_text(history),
+        *([t] if (t := _long_history_text(long_history)) else []),
+        "Consignes : 3 à 6 conseils, chacun un titre court (60 caractères au plus) et un texte de 400 "
+        "caractères au plus. " + ADVICE_FIGURES_RULE,
+        "Schéma JSON attendu :\n" + _schema_text(CoachAdvice),
+    ]
     return "\n\n".join(parts)

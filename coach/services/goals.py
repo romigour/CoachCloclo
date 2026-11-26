@@ -478,7 +478,7 @@ def update_goal(repo: Repo, garmin: GarminPort, goal_id: int, data: GoalUpdate) 
         note=f"L'athlète a modifié l'objectif {_describe(goal)} : {' ; '.join(notes)}. {_NOTE_END}",
         write=_write_goal(goal_id, update),
     )
-    if "target_time_s" in update or "race_date" in update:  # la copie du Jour J suit, hors transaction
+    if update.keys() & {"target_time_s", "race_date", "notes"}:  # la copie du Jour J suit, hors transaction
         from coach.services.race_strategy import refresh_snapshots  # import tardif : race_strategy importe ce module
 
         refresh_snapshots(repo, [saved], today)

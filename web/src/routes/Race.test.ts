@@ -164,6 +164,45 @@ test("advice error stays inside its section", async () => {
   expect(screen.getByRole("button", { name: "Enregistrer" })).toBeVisible();
 });
 
+test("a guide without reference time keeps advice and preparation, without pace, passage or phases", async () => {
+  mock(view({
+    plan: { ...view().plan, reference_time_s: null, warnings: ["Pas de temps de référence : fixe un temps visé sur l'objectif"] },
+    guide: guide({ reference_time_s: null, avg_pace_s_km: null, phases: [], splits: [] }),
+  }));
+  render(Race, { goals: [goal], goalId: goal.id, cycle });
+  const box = await screen.findByRole("region", { name: "À retenir le matin" });
+  expect(within(box).queryByText(/\/km/)).toBeNull();
+  expect(within(box).queryByText("Départ", { selector: "dt" })).toBeNull();
+  expect(within(box).queryByText("Passages")).toBeNull();
+  expect(within(box).getByText("Pas de temps de référence : fixe un temps visé sur l'objectif")).toBeVisible();
+  expect(screen.queryByRole("region", { name: "Pendant la course" })).toBeNull();
+  expect(screen.queryByRole("table", { name: "Passages" })).toBeNull();
+  expect(screen.getByRole("region", { name: "Préparation" })).toHaveTextContent("Prépare ton dossard.");
+  expect(screen.getByRole("region", { name: "Conseils du coach" })).toBeVisible();
+  const nutrition = screen.getByRole("region", { name: "Eau et nutrition" });
+  expect(nutrition).not.toHaveTextContent(/\b0 g/);
+  expect(nutrition).toHaveTextContent("pas besoin de glucides");
+});
+
+test("an advice error does not follow the runner to another goal", async () => {
+  const other: Goal = { ...goal, id: 8, race_date: "2027-01-17" };
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string, init?: RequestInit) =>
+      init?.method === "POST"
+        ? new Response(JSON.stringify({ code: "llm_timeout", detail: "Claude a mis trop de temps à répondre" }), { status: 502 })
+        : new Response(JSON.stringify(url.includes("/goals/8/") ? view({ goal_id: 8, race_date: "2027-01-17" }) : view()), { status: 200 }),
+    ),
+  );
+  render(Race, { goals: [goal, other], goalId: 7 });
+  const section = await screen.findByRole("region", { name: "Conseils du coach" });
+  await fireEvent.click(within(section).getByRole("button", { name: "Demander les conseils du coach" }));
+  expect(await within(section).findByText(/Claude a mis trop de temps à répondre/)).toBeVisible();
+  await fireEvent.change(screen.getByLabelText("Objectif"), { target: { value: "8" } });
+  expect(await screen.findByText("17 janv. 2027")).toBeVisible();
+  expect(screen.queryByText(/Conseils indisponibles/)).toBeNull();
+});
+
 test("a trail morning box gives the heart-rate cue, the aid passages with their margin and the water to carry", async () => {
   mock(trailView());
   render(Race, { goals: [trailGoal], goalId: trailGoal.id });

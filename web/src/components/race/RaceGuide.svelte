@@ -30,6 +30,15 @@
   // l'arrivée redit le temps visé : l'encadré ne garde que les bornes intermédiaires
   const boxSplits = $derived(guide.splits.filter((s) => s.km < plan.distance_km));
   const overCapacity = $derived(plan.nutrition.some((leg) => leg.over_capacity));
+  // un débit nul n'est pas affiché (« 0 g/h » se lirait comme une consigne) : le principe le dit déjà
+  const intakeRates = $derived(
+    [
+      guide.nutrition.carbs_g_h > 0 ? `${guide.nutrition.carbs_g_h} g de glucides par heure` : null,
+      guide.nutrition.water_ml_h > 0 ? `eau ${fmtNumber(guide.nutrition.water_ml_h)} ml/h` : null,
+    ]
+      .filter(Boolean)
+      .join(" · "),
+  );
   const intakeGroups = $derived.by(() => {
     const groups = new Map<string, string[]>();
     for (const it of guide.nutrition.intakes) {
@@ -118,7 +127,7 @@
       {/if}
       <dt>Nutrition</dt>
       <dd>
-        {guide.nutrition.carbs_g_h} g de glucides par heure · eau {fmtNumber(guide.nutrition.water_ml_h)} ml/h, emporte {fmtNumber(view.settings.carry_ml)} ml
+        {intakeRates ? `${intakeRates}, ` : ""}emporte {fmtNumber(view.settings.carry_ml)} ml
         {#if overCapacity}<span class="pill missed">Un tronçon dépasse la contenance</span>{/if}
       </dd>
     {:else}
@@ -130,8 +139,10 @@
         <dt>Passages</dt>
         <dd>{#each boxSplits as s, i (i)}{i ? " · " : ""}{s.label} {fmtClock(s.elapsed_s)}{/each}</dd>
       {/if}
-      <dt>Matin</dt>
-      <dd>{#each guide.morning as m, i (i)}{i ? " · " : ""}{m.clock} {shortStep(m.label)}{/each}</dd>
+      {#if guide.morning.length}
+        <dt>Matin</dt>
+        <dd>{#each guide.morning as m, i (i)}{i ? " · " : ""}{m.clock} {shortStep(m.label)}{/each}</dd>
+      {/if}
       {#each intakeGroups as [what, at] (what)}
         <dt>Prises</dt>
         <dd>{what} : {at.join(" · ")}</dd>
@@ -148,6 +159,7 @@
 
 {@render settings?.()}
 
+{#if guide.phases.length}
 <section class="card lg stack" aria-label="Pendant la course">
   <h2>Pendant la course</h2>
   <ol class="phases">
@@ -168,6 +180,7 @@
     {/each}
   </ol>
 </section>
+{/if}
 
 {#if guide.splits.length}
   <section class="card lg stack" aria-label="Passages">
@@ -186,9 +199,9 @@
 <section class="card lg stack" aria-label="Eau et nutrition">
   <h2>Eau et nutrition</h2>
   <p>{guide.nutrition.principle}</p>
-  <p class="meta">
-    Glucides {guide.nutrition.carbs_g_h} g/h · eau {fmtNumber(guide.nutrition.water_ml_h)} ml/h{guide.nutrition.recommended ? " (recommandé pour la durée prévue)" : ""}
-  </p>
+  {#if intakeRates}
+    <p class="meta">{intakeRates}{guide.nutrition.recommended ? " (recommandé pour la durée prévue)" : ""}</p>
+  {/if}
   {#if guide.nutrition.intakes.length}
     <ul class="intakes">
       {#each guide.nutrition.intakes as it, i (i)}

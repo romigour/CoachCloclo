@@ -167,7 +167,10 @@
     {/snippet}
   </RaceGuide>
 
-  <CoachAdvice {view} disabled={busy !== null} onask={askAdvice} />
+  <!-- recréé à chaque objectif : l'erreur ou l'attente d'un autre objectif ne le suit pas -->
+  {#key goal.id}
+    <CoachAdvice {view} disabled={busy !== null} onask={askAdvice} />
+  {/key}
 
   {#if view.profile || view.goal_type === "trail"}
     <details class="card lg course">

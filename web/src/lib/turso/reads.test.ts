@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { loadFixtureDb } from "./testing";
-import { activities, events, plan, status, trailActivities, zones } from "./reads";
+import { activities, events, plan, raceView, status, trailActivities, zones } from "./reads";
 
 // `proximity_label` (blocs et courses rapprochées) n'est calculé que par le serveur : la lecture seule ne l'a pas.
 const expected = JSON.parse(
@@ -51,4 +51,25 @@ it("status : finished_at non chaîne → null sans invalider le reste", async ()
   expect(history.finished_at).toBeNull();
   expect(history.imported).toBe(1);
   expect(history.status).toBe("done");
+});
+
+describe("raceView", () => {
+  it("matches the Python view", async () => {
+    const db = await loadFixtureDb("active");
+    for (const [goalId, view] of Object.entries(expected.active.race)) {
+      expect(await raceView(db, Number(goalId))).toEqual(view);
+    }
+  });
+
+  it("est null sans stratégie, sans copie ou avec une copie illisible", async () => {
+    const db = await loadFixtureDb("active");
+    expect(await raceView(db, 99)).toBeNull();
+    expect(await raceView(await loadFixtureDb("between"), 1)).toBeNull();
+    await db.execute("UPDATE racestrategy SET view_json = NULL WHERE goal_id = 1");
+    expect(await raceView(db, 1)).toBeNull();
+    for (const bad of ["pas du json", "null", "[]", '{"plan":{}}', '{"plan":{},"guide":{}}', '{"plan":1,"guide":{},"settings":{}}']) {
+      await db.execute({ sql: "UPDATE racestrategy SET view_json = ? WHERE goal_id = 1", args: [bad] });
+      expect(await raceView(db, 1)).toBeNull();
+    }
+  });
 });

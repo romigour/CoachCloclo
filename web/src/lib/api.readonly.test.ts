@@ -3,6 +3,7 @@ import { afterEach, expect, test, vi } from "vitest";
 vi.mock("./mode", () => ({ READONLY: true }));
 vi.mock("./turso", () => ({
   plan: vi.fn(async () => ({ cycle: null, goals: [], horizon: [], weeks: [] })),
+  raceView: vi.fn(async () => null),
   status: vi.fn(async () => "status"),
   events: vi.fn(async () => []),
   activities: vi.fn(async () => []),
@@ -25,12 +26,17 @@ test("les écritures sont refusées sans appel réseau", async () => {
   await expect(api.saveRace(1, {})).rejects.toMatchObject({ code: "readonly" });
   await expect(api.deleteEvent(1)).rejects.toMatchObject({ code: "readonly" });
   await expect(api.importHistory()).rejects.toMatchObject({ code: "readonly" });
+  await expect(api.saveRacePlan(1, {} as never)).rejects.toMatchObject({ code: "readonly" });
+  await expect(api.raceAdvice(1)).rejects.toMatchObject({ code: "readonly" });
+  await expect(api.exportRacePlan(1)).rejects.toMatchObject({ code: "readonly" });
   expect(fetchSpy).not.toHaveBeenCalled();
 });
 
 test("les lectures passent par Turso", async () => {
   const fetchSpy = vi.spyOn(globalThis, "fetch");
   expect(await api.plan()).toEqual({ cycle: null, goals: [], horizon: [], weeks: [] });
+  expect(await api.racePlan(7)).toBeNull();
+  expect(turso.raceView).toHaveBeenCalledWith(7);
   await api.activities(3);
   expect(turso.activities).toHaveBeenCalledWith(3);
   expect(await api.status()).toBe("status");

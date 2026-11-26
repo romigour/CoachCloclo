@@ -711,7 +711,11 @@ const rawApi = {
     if (READONLY) return (await import("./turso")).plan();
     return get<Plan>("/plan");
   },
-  racePlan: (goalId: number) => get<RaceView>(`/goals/${goalId}/race-plan`),
+  /** Lecture seule : copie enregistrée par le bureau, `null` s'il n'y en a pas. */
+  racePlan: async (goalId: number): Promise<RaceView | null> => {
+    if (READONLY) return (await import("./turso")).raceView(goalId);
+    return get<RaceView>(`/goals/${goalId}/race-plan`);
+  },
   saveRacePlan: (goalId: number, settings: RaceSettings) => put<RaceView>(`/goals/${goalId}/race-plan`, settings),
   refreshRacePlan: (goalId: number) => post<RaceView>(`/goals/${goalId}/race-plan/refresh`),
   reimportRacePlan: (goalId: number) => post<RaceView>(`/goals/${goalId}/race-plan/reimport`),
@@ -772,7 +776,7 @@ const rawApi = {
 
 /** Lectures servies par Turso et lectures sans objet (null) : tout le reste est refusé en lecture seule. */
 const READONLY_OK = new Set<string>([
-  "status", "plan", "events", "activities", "trailActivities", "zones", "statsActivities", "statsRecords",
+  "status", "plan", "racePlan", "events", "activities", "trailActivities", "zones", "statsActivities", "statsRecords",
   "setupStatus", "update", "lan",
 ]);
 

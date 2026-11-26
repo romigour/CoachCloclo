@@ -75,3 +75,4 @@ export const trailActivities = (since: string) => run((db) => r.trailActivities(
 export const zones = () => run(r.zones);
 export const statsActivities = () => run(s.statsActivities);
 export const statsRecords = () => run(s.statsRecords);
+export const raceView = (goalId: number) => run((db) => r.raceView(db, goalId));

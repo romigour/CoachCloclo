@@ -32,6 +32,7 @@ from coach.plan.models import (
     Session,
 )
 from coach.plan.repo import Repo, make_engine
+from coach.services import race_strategy
 
 FIXTURES_DIR = Path(__file__).parent.parent / "web" / "src" / "lib" / "turso" / "__fixtures__"
 SCENARIOS = ("active", "between")
@@ -196,6 +197,26 @@ def _build_active(repo: Repo) -> None:
     ])
     repo.set_state("history", {"status": "done", "imported": 42, "error": None,
                                "finished_at": "2026-11-10T08:00:00Z"})
+    _build_race_strategies(repo)
+
+
+def _build_race_strategies(repo: Repo) -> None:
+    """Deux stratégies Jour J avec leur copie réelle : route avec conseils périmés, trail sans conseils."""
+    garmin = FakeGarminClient(metrics=METRICS)
+    race_strategy.get_race_view(repo, garmin, 1)
+    strategy = repo.race_strategy(1)
+    strategy.advice_json = json.dumps(
+        {"tips": [{"title": f"Conseil {i}", "text": f"Texte du conseil {i}."} for i in (1, 2, 3)]}, ensure_ascii=False
+    )
+    strategy.advice_at = datetime(2026, 3, 10, 9, 0, 0, tzinfo=timezone.utc)
+    strategy.advice_hash = "ancien"  # != empreinte actuelle : conseils « à redemander »
+    repo.update(strategy)
+    race_strategy.get_race_view(repo, garmin, 1)  # recalcule la copie avec les conseils
+    race_strategy.get_race_view(repo, garmin, 2)
+    for goal_id in (1, 2):  # date de copie fixe (sinon l'heure de génération rend les fixtures instables)
+        strategy = repo.race_strategy(goal_id)
+        strategy.view_updated_at = datetime(2026, 3, 11, 12, 0, 0, tzinfo=timezone.utc)
+        repo.update(strategy)
 
 
 def _build_between(repo: Repo) -> None:
@@ -261,6 +282,7 @@ def _responses(path: Path) -> dict:
         "zones": get("/api/zones"),
         "stats_activities": get("/api/stats/activities"),
         "stats_records": get("/api/stats/records"),
+        "race": {str(g["id"]): get(f"/api/goals/{g['id']}/race-plan") for g in plan["goals"]},
     }
     repo.engine.dispose()
     return out

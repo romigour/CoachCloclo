@@ -1,5 +1,5 @@
 // Lectures seules, portées des routes FastAPI et des requêtes de `Repo` (coach/plan/repo.py).
-import type { Activity, CoachEvent, Cycle, HistoryState, Plan, Session, Status, Zones } from "../api";
+import type { Activity, CoachEvent, Cycle, HistoryState, Plan, RaceView, Session, Status, Zones } from "../api";
 import type { Arg, Db } from "./db";
 import { todayIso } from "../dates";
 import { FAMILIES } from "./stats";
@@ -168,4 +168,27 @@ export async function status(db: Db, today: string): Promise<Status> {
     },
     storage: null,
   };
+}
+
+const isObject = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
+
+/** « 2026-03-11 12:00:00.000000 » (colonne SQLite, UTC) -> « 2026-03-11T12:00:00Z », comme l'API. */
+function utcIso(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const m = /^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2}:\d{2})/.exec(value);
+  return m ? `${m[1]}T${m[2]}Z` : null;
+}
+
+/** Copie de la vue Jour J enregistrée par le bureau ; `null` si absente ou inutilisable (jamais d'exception). */
+export async function raceView(db: Db, goalId: number): Promise<RaceView | null> {
+  const r = await first(db, "SELECT view_json, view_updated_at FROM racestrategy WHERE goal_id = ?", [goalId]);
+  if (!r || typeof r.view_json !== "string") return null;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(r.view_json);
+  } catch {
+    return null;
+  }
+  if (!isObject(parsed) || !isObject(parsed.plan) || !isObject(parsed.guide) || !isObject(parsed.settings)) return null;
+  return { ...parsed, updated_at: utcIso(r.view_updated_at) } as unknown as RaceView;
 }

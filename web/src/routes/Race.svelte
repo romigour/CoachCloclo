@@ -1,6 +1,7 @@
 <script lang="ts">
   import { api, type Cycle, type Goal, type PlanChange, type RaceSettings, type RaceView } from "../lib/api";
   import { formatDate } from "../lib/dates";
+  import { READONLY } from "../lib/mode";
   import { goalLabel } from "../lib/goals";
   import { PRIORITY_LABELS } from "../lib/labels";
   import { isDirty, settingsError, targetLabel } from "../lib/race";
@@ -40,6 +41,8 @@
   let draft = $state<RaceSettings | null>(null);
   let error = $state<unknown>(null);
   let busy = $state<"load" | "save" | "refresh" | "export" | "reimport" | null>(null);
+  // lecture seule : la copie du bureau peut manquer (jamais ouvert depuis la mise à jour), la page l'explique
+  let missing = $state(false);
 
   const current = $derived<RaceSettings | null>(draft);
   const dirty = $derived(!!view && !!current && isDirty(view.settings, current));
@@ -52,12 +55,13 @@
   const sent = $derived(!!view && view.workout_id !== null && !view.export_error);
   const stale = $derived(sent && !!view?.export_stale);
 
-  function apply(v: RaceView) {
+  function apply(v: RaceView | null) {
     view = v;
-    draft = structuredClone(v.settings);
+    draft = v ? structuredClone(v.settings) : null;
+    missing = !v;
   }
 
-  async function run(kind: NonNullable<typeof busy>, call: () => Promise<RaceView>) {
+  async function run(kind: NonNullable<typeof busy>, call: () => Promise<RaceView | null>) {
     busy = kind;
     try {
       apply(await call());
@@ -127,9 +131,18 @@
 
 <ErrorBanner {error} onpin={load} />
 
+{#if READONLY && view?.updated_at}
+  <p class="meta" role="status">Mis à jour le {formatDate(view.updated_at.slice(0, 10))}</p>
+{/if}
+
+{#if READONLY && missing && !error}
+  <p class="card">Ouvre le Jour J sur l'ordinateur pour préparer ce guide.</p>
+{/if}
+
 {#if view && draft && plan}
   <RaceGuide {view} horizon={inHorizon}>
     {#snippet settings()}
+      {#if !READONLY}
       <section class="card lg stack" aria-label="Réglages">
         <h2>Réglages</h2>
         <div class="head-grid">
@@ -164,12 +177,13 @@
         </div>
         <p class="meta">Laisse glucides et eau vides pour suivre la recommandation selon la durée prévue.</p>
       </section>
+      {/if}
     {/snippet}
   </RaceGuide>
 
   <!-- recréé à chaque objectif : l'erreur ou l'attente d'un autre objectif ne le suit pas -->
   {#key goal.id}
-    <CoachAdvice {view} disabled={busy !== null} onask={askAdvice} />
+    <CoachAdvice {view} disabled={busy !== null} onask={READONLY ? undefined : askAdvice} />
   {/key}
 
   {#if view.profile || view.goal_type === "trail"}
@@ -209,7 +223,7 @@
     </details>
   {/if}
 
-  {#if view.goal_type === "trail"}
+  {#if view.goal_type === "trail" && !READONLY}
     <section class="card lg stack">
       <h2>Ravitaillements</h2>
       <AidStations
@@ -223,6 +237,7 @@
     </section>
   {/if}
 
+  {#if !READONLY}
   <div class="row actions">
     {#if formError}<span class="error" role="alert">{formError}</span>{/if}
     {#if dirty}<span class="meta" role="status">Modifications non enregistrées</span>{/if}
@@ -235,6 +250,7 @@
     {/if}
     {#if view.export_error}<span class="error" role="alert">Échec de l'envoi : {view.export_error}</span>{/if}
   </div>
+  {/if}
 {/if}
 
 {#if editing}

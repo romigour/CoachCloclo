@@ -1,23 +1,28 @@
-"""Guide de course : phases (départ, installation, cœur, final) et passages kilométriques. Module pur."""
+"""Guide de course : phases, passages, eau et nutrition, matin et préparation. Module pur."""
 
 from typing import Literal
 
 from pydantic import BaseModel
 
+from coach.analysis import race_guide_texts as texts
 from coach.analysis.race_plan import (
     _PACE_TOLERANCE_S,
     _ZONES,
     RaceBasis,
     RacePlan,
+    RaceSettings,
     Segment,
     clock_at,
     hhmm_s,
+    intake_per_hour,
+    intake_tier,
     race_hr_zone,
 )
 from coach.analysis.zones import HrZoneName
 
 DistanceBand = Literal["court", "semi", "marathon", "ultra"]
 PhaseName = Literal["Départ", "Installation", "Cœur de course", "Final"]
+PrepTitle = Literal["La semaine d'avant", "La veille", "Le matin"]
 
 _HALF_KM = 21.0975
 _BAND_LIMITS_KM: tuple[tuple[float, DistanceBand], ...] = ((12.0, "court"), (25.0, "semi"), (45.0, "marathon"))
@@ -40,6 +45,15 @@ _MARATHON_MARKS: tuple[tuple[float, str], ...] = (
     (30.0, "30 km"),
     (35.0, "35 km"),
 )
+_GEL_G = 25
+_FIRST_GEL_S = 40 * 60
+_NO_GEL_LAST_S = 15 * 60
+_GEL = f"Gel ({_GEL_G} g) + quelques gorgées"
+# Durée supposée sans temps de référence, pour choisir le palier de nutrition : 10 km < 1 h 15, semi < 2 h 30.
+_BAND_DURATION_S: dict[DistanceBand, int] = {"court": 0, "semi": 2 * 3600, "marathon": 4 * 3600, "ultra": 8 * 3600}
+_BREAKFAST_BEFORE_S: dict[DistanceBand, int] = {"court": 2 * 3600, "semi": 3 * 3600, "marathon": 3 * 3600, "ultra": 3 * 3600}
+_ARRIVAL_BEFORE_S = 60 * 60
+_WARMUP_BEFORE_S: dict[DistanceBand, int] = {"court": 30 * 60, "semi": 25 * 60, "marathon": 15 * 60, "ultra": 15 * 60}
 
 
 def distance_band(distance_km: float) -> DistanceBand:
@@ -202,3 +216,104 @@ def build_splits(plan: RacePlan, start_time: str) -> list[Split]:
         Split(km=km, label=label, elapsed_s=round(clock.elapsed_at(km)), clock=clock_at(start_s, clock.elapsed_at(km)))
         for km, label in _split_marks(plan.distance_km)
     ]
+
+
+class Intake(BaseModel):
+    km: float
+    clock: str | None
+    what: str
+
+
+class GuideNutrition(BaseModel):
+    carbs_g_h: int
+    water_ml_h: int
+    recommended: bool  # glucides et eau tirés de la recommandation (aucun des deux saisi)
+    principle: str
+    intakes: list[Intake]
+
+
+class MorningStep(BaseModel):
+    clock: str
+    label: str
+
+
+class PrepBlock(BaseModel):
+    title: PrepTitle
+    items: list[str]
+
+
+class RaceGuide(BaseModel):
+    band: DistanceBand
+    reference_time_s: int | None
+    avg_pace_s_km: int | None  # route seulement
+    phases: list[Phase]
+    splits: list[Split]
+    nutrition: GuideNutrition
+    morning: list[MorningStep]
+    preparation: list[PrepBlock]
+
+
+def _intakes(plan: RacePlan, carbs_g_h: int, start_s: int) -> list[Intake]:
+    """Gels route : le premier à 40 min, puis au rythme des glucides visés ; aucun dans les 15 dernières minutes."""
+    total = plan.reference_time_s
+    if total is None or carbs_g_h <= 0:
+        return []
+    clock, step = _Clock(plan), _GEL_G / carbs_g_h * 3600
+    out: list[Intake] = []
+    t = float(_FIRST_GEL_S)
+    while t <= total - _NO_GEL_LAST_S:
+        out.append(Intake(km=round(clock.km_at(t), 1), clock=clock_at(start_s, t), what=_GEL))
+        t += step
+    return out
+
+
+def _nutrition(
+    plan: RacePlan, trail: bool, settings: RaceSettings, band: DistanceBand, start_s: int
+) -> GuideNutrition:
+    duration = plan.reference_time_s if plan.reference_time_s is not None else _BAND_DURATION_S[band]
+    carbs, water = intake_per_hour(settings, duration)
+    return GuideNutrition(
+        carbs_g_h=carbs,
+        water_ml_h=water,
+        recommended=settings.carbs_g_h is None and settings.water_ml_h is None,
+        principle=texts.PRINCIPLE[(trail, intake_tier(duration))],
+        intakes=[] if trail else _intakes(plan, carbs, start_s),
+    )
+
+
+def _morning(band: DistanceBand, start_s: int) -> list[MorningStep]:
+    steps = [
+        (_BREAKFAST_BEFORE_S[band], texts.MORNING_BREAKFAST),
+        (_ARRIVAL_BEFORE_S, texts.MORNING_ARRIVAL),
+        (_WARMUP_BEFORE_S[band], texts.MORNING_WARMUP.format(texts.WARMUP[band])),
+        (0, texts.MORNING_START),
+    ]
+    return [MorningStep(clock=clock_at(start_s, -before), label=label) for before, label in steps]
+
+
+def _advice(trail: bool, band: DistanceBand, phase: Phase) -> str:
+    advice = texts.PHASE_ADVICE[(trail, band, phase.name)]
+    if not trail and phase.terrain:
+        advice = f"{advice} {texts.ROAD_CLIMB_HINT}"
+    return advice
+
+
+def build_race_guide(*, plan: RacePlan, trail: bool, settings: RaceSettings, basis: RaceBasis) -> RaceGuide:
+    """Guide complet tiré du plan ; sans temps de référence, ni allure ni passage, mais conseils et matin datés."""
+    band = distance_band(plan.distance_km)
+    start_s = hhmm_s(settings.start_time)
+    phases = [
+        p.model_copy(update={"advice": _advice(trail, band, p)})
+        for p in build_phases(plan, trail, basis, settings.start_time)
+    ]
+    reference = plan.reference_time_s
+    return RaceGuide(
+        band=band,
+        reference_time_s=reference,
+        avg_pace_s_km=None if reference is None or trail else round(reference / plan.distance_km),
+        phases=phases,
+        splits=build_splits(plan, settings.start_time),
+        nutrition=_nutrition(plan, trail, settings, band, start_s),
+        morning=_morning(band, start_s),
+        preparation=[PrepBlock(title=title, items=items) for title, items in texts.PREPARATION[(trail, band)].items()],
+    )

@@ -29,6 +29,7 @@ _MAX_SEGMENTS = 25
 _SLICE_SIZES_KM = (1, 2, 5, 10)
 
 SegmentKind = Literal["montée", "plat", "descente"]
+IntakeTier = Literal["court", "moyen", "long"]
 _KINDS: tuple[SegmentKind, ...] = ("plat", "montée", "descente")
 
 
@@ -217,6 +218,9 @@ _TIGHT_MARGIN_S = 30 * 60
 _Z4_MAX_S = 90 * 60
 _Z3_MAX_S = 4 * 3600
 _ZONES: tuple[HrZoneName, ...] = get_args(HrZoneName)
+_NO_CARBS_UNDER_S = 75 * 60  # sous 1 h 15, les réserves suffisent
+_MEDIUM_MAX_S = 150 * 60  # jusqu'à 2 h 30 : 30–60 g/h ; au-delà : 60–90 g/h
+_INTAKE: dict[IntakeTier, tuple[int, int]] = {"court": (0, 0), "moyen": (45, 400), "long": (75, 500)}
 
 
 class AidStation(BaseModel):
@@ -233,8 +237,8 @@ class RaceSettings(BaseModel):
     """Réglages de la stratégie saisis par l'athlète."""
 
     start_time: str = Field("08:00", pattern=_HHMM)
-    carbs_g_h: int = Field(60, ge=0, le=150)
-    water_ml_h: int = Field(500, ge=0, le=2000)
+    carbs_g_h: int | None = Field(None, ge=0, le=150)  # None : recommandation selon la durée prévue
+    water_ml_h: int | None = Field(None, ge=0, le=2000)
     carry_ml: int = Field(1000, gt=0, le=5000)
     aid_stations: list[AidStation] = []
 
@@ -309,6 +313,27 @@ def clock_at(start_s: int, elapsed_s: float) -> str:
     """Heure du jour (HH:MM, à la minute la plus proche), modulo 24 h."""
     minutes = round((start_s + elapsed_s) / 60) % _DAY_MIN
     return f"{minutes // 60:02d}:{minutes % 60:02d}"
+
+
+def intake_tier(duration_s: int) -> IntakeTier:
+    """Palier de nutrition selon la durée prévue : moins de 1 h 15, jusqu'à 2 h 30, au-delà."""
+    if duration_s < _NO_CARBS_UNDER_S:
+        return "court"
+    return "moyen" if duration_s <= _MEDIUM_MAX_S else "long"
+
+
+def recommended_intake(duration_s: int) -> tuple[int, int]:
+    """(glucides g/h, eau ml/h) recommandés : rien sous 1 h 15, milieu de 30–60 g/h jusqu'à 2 h 30, de 60–90 au-delà."""
+    return _INTAKE[intake_tier(duration_s)]
+
+
+def intake_per_hour(settings: RaceSettings, duration_s: int) -> tuple[int, int]:
+    """Glucides et eau par heure : les réglages, ou la recommandation pour chaque champ non renseigné."""
+    carbs, water = recommended_intake(duration_s)
+    return (
+        carbs if settings.carbs_g_h is None else settings.carbs_g_h,
+        water if settings.water_ml_h is None else settings.water_ml_h,
+    )
 
 
 def pacing_weight(start_km: float, end_km: float, distance_km: float) -> float:
@@ -387,10 +412,11 @@ def _nutrition(timing: _Timing, distance_km: float, settings: RaceSettings, tota
         arrive = timing.arrival(idx)
         points.append((st.name, st.km, arrive + st.stop_min * 60, arrive))
     points.append(("Arrivée", distance_km, total_s, total_s))
+    carbs_h, water_h = intake_per_hour(settings, round(total_s))
     legs: list[NutritionLeg] = []
     for (name, km, leave, _), (to_name, to_km, _, arrive) in zip(points, points[1:]):
         duration = arrive - leave
-        water = round(duration / 3600 * settings.water_ml_h)
+        water = round(duration / 3600 * water_h)
         legs.append(
             NutritionLeg(
                 from_name=name,
@@ -398,7 +424,7 @@ def _nutrition(timing: _Timing, distance_km: float, settings: RaceSettings, tota
                 from_km=km,
                 to_km=to_km,
                 duration_s=round(duration),
-                carbs_g=round(duration / 3600 * settings.carbs_g_h),
+                carbs_g=round(duration / 3600 * carbs_h),
                 water_ml=water,
                 over_capacity=water > settings.carry_ml,
             )

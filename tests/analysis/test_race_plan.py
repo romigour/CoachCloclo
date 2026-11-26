@@ -15,6 +15,7 @@ from coach.analysis.race_plan import (
     pacing_weight,
     predict_run_time,
     race_hr_zone,
+    recommended_intake,
     split_segments,
     step_eq_km,
 )
@@ -145,7 +146,7 @@ STATION = AidStation(km=5, name="Col", kind="complet", cutoff="08:50", stop_min=
 
 
 def test_aid_passage_margin_and_nutrition():
-    p = plan(trail=True, settings=RaceSettings(aid_stations=[STATION]))
+    p = plan(trail=True, settings=RaceSettings(aid_stations=[STATION], carbs_g_h=60, water_ml_h=500))
     assert p.stops_s == 180 and p.reference_time_s == 3060
     a = p.aid_passages[0].passage
     assert (a.elapsed_s, a.clock, a.margin_min, a.status) == (1440, "08:24", 26, "serré")
@@ -155,7 +156,7 @@ def test_aid_passage_margin_and_nutrition():
 
 def test_late_cutoff_warns_and_capacity_alert():
     st = STATION.model_copy(update={"cutoff": "08:20"})
-    p = plan(trail=True, settings=RaceSettings(aid_stations=[st], carry_ml=100))
+    p = plan(trail=True, settings=RaceSettings(aid_stations=[st], water_ml_h=500, carry_ml=100))
     assert p.aid_passages[0].passage.status == "hors délai"
     assert LATE.format("Col") in p.warnings and all(n.over_capacity for n in p.nutrition)
 
@@ -230,3 +231,28 @@ def test_pacing_weight_partial_overlap():
     assert pacing_weight(1.0, 1.4, 10) == pytest.approx((0.2 * 1.02 + 0.2) / 0.4)
     assert pacing_weight(4, 6, 10) == pytest.approx(1.0)
     assert pacing_weight(9, 10, 10) == pytest.approx(0.99)
+
+
+@pytest.mark.parametrize("t,want", [(4499, (0, 0)), (4500, (45, 400)), (9000, (45, 400)), (9001, (75, 500))])
+def test_recommended_intake_tiers(t, want):
+    assert recommended_intake(t) == want
+
+
+def test_nutrition_uses_recommended_when_none():
+    p = plan(trail=True, settings=RaceSettings(aid_stations=[STATION.model_copy(update={"cutoff": None})]),
+             target_time_s=5 * 3600)
+    assert RaceSettings().carbs_g_h is None and RaceSettings().water_ml_h is None
+    assert len(p.nutrition) == 2
+    for leg in p.nutrition:
+        assert leg.carbs_g == round(leg.duration_s / 3600 * 75)
+        assert leg.water_ml == round(leg.duration_s / 3600 * 500)
+    mixed = plan(trail=True, settings=RaceSettings(aid_stations=[STATION], carbs_g_h=30), target_time_s=5 * 3600)
+    assert mixed.nutrition[0].carbs_g == round(mixed.nutrition[0].duration_s / 3600 * 30)
+    assert mixed.nutrition[0].water_ml == round(mixed.nutrition[0].duration_s / 3600 * 500)
+
+
+def test_intake_settings_bounds():
+    with pytest.raises(ValueError):
+        RaceSettings(carbs_g_h=151)
+    with pytest.raises(ValueError):
+        RaceSettings(water_ml_h=-1)

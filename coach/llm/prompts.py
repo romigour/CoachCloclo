@@ -7,6 +7,7 @@ from typing import get_args
 
 from coach.analysis.laps import StepComparison, StepResult
 from coach.analysis.long_history import LongHistory, MonthVolume, PastRace
+from coach.analysis.race_guide import fmt_km
 from coach.analysis.race_plan import RacePlan
 from coach.analysis.zones import Zones
 from coach.llm.schemas import AdjustmentResponse, CoachAdvice, PlanResponse, Weekday
@@ -744,7 +745,7 @@ def _pace_range(low: int | None, high: int | None) -> str | None:
 
 
 def _phase_line(p) -> str:
-    parts = [f"- {p.name}, km {p.start_km:g}–{p.end_km:g}"]
+    parts = [f"- {p.name}, km {fmt_km(p.start_km)}–{fmt_km(p.end_km)}"]
     if (pace := _pace_range(p.pace_low_s_km, p.pace_high_s_km)) is not None:
         parts.append(f"allure {pace}")
     if p.hr_zone is not None:
@@ -777,7 +778,7 @@ def _guide_text(view) -> str:
     lines.append(f"Nutrition : {n.carbs_g_h} g de glucides et {n.water_ml_h} ml d'eau par heure ({origin}). {n.principle}")
     if n.intakes:
         lines.append(
-            "Prises prévues : " + " ; ".join(f"km {i.km:g}" + (f" ({i.clock})" if i.clock else "") + f" : {i.what}"
+            "Prises prévues : " + " ; ".join(f"km {fmt_km(i.km)}" + (f" ({i.clock})" if i.clock else "") + f" : {i.what}"
                                              for i in n.intakes)
         )
     if g.morning:

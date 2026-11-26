@@ -168,8 +168,10 @@ def _slices(distance_km: float) -> list[Span]:
     ]
 
 
-def split_segments(profile: list[ProfilePoint] | None, distance_km: float) -> list[Span]:
-    """Découpe [0, distance] en montées/plats/descentes (au plus 25), sans trou."""
+def split_segments(
+    profile: list[ProfilePoint] | None, distance_km: float, max_segments: int = _MAX_SEGMENTS
+) -> list[Span]:
+    """Découpe [0, distance] en montées/plats/descentes (au plus max_segments), sans trou."""
     if not profile or len(profile) < 2:
         return _slices(distance_km)
     kinds = _step_kinds(profile)
@@ -182,7 +184,7 @@ def split_segments(profile: list[ProfilePoint] | None, distance_km: float) -> li
             break
         nb = [x for x in (i - 1, i + 1) if 0 <= x < len(runs)]
         runs = _merge_at(runs, i, max(nb, key=lambda x: runs[x].km()))
-    while len(runs) > _MAX_SEGMENTS:
+    while len(runs) > max_segments:
         i = min(range(len(runs)), key=lambda x: runs[x].km())
         nb = [x for x in (i - 1, i + 1) if 0 <= x < len(runs)]
         runs = _merge_at(runs, i, min(nb, key=lambda x: runs[x].km()))
@@ -214,6 +216,7 @@ _PACE_TOLERANCE_S = 5
 _PACING_EDGE = 0.12  # part de la distance concernée au départ et à l'arrivée (route)
 _START_WEIGHT = 1.02  # départ prudent
 _FINISH_WEIGHT = 0.99  # final un peu plus vite
+_MIN_CUT_KM = 0.05  # pas de coupe à moins de 50 m d'une borne existante
 _TIGHT_MARGIN_S = 30 * 60
 _Z4_MAX_S = 90 * 60
 _Z3_MAX_S = 4 * 3600
@@ -334,6 +337,36 @@ def intake_per_hour(settings: RaceSettings, duration_s: int) -> tuple[int, int]:
         carbs if settings.carbs_g_h is None else settings.carbs_g_h,
         water if settings.water_ml_h is None else settings.water_ml_h,
     )
+
+
+def _cut(spans: list[Span], km: float) -> list[Span]:
+    """Coupe en deux le tronçon qui contient km ; distance équivalente et dénivelés au prorata."""
+    out: list[Span] = []
+    for s in spans:
+        if not s.start_km + _MIN_CUT_KM < km < s.end_km - _MIN_CUT_KM:
+            out.append(s)
+            continue
+        f = (km - s.start_km) / (s.end_km - s.start_km)
+        up, down = round(s.d_plus_m * f), round(s.d_minus_m * f)
+        out.append(s.model_copy(update={"end_km": km, "eq_km": s.eq_km * f, "d_plus_m": up, "d_minus_m": down}))
+        out.append(
+            s.model_copy(
+                update={
+                    "start_km": km,
+                    "eq_km": s.eq_km * (1 - f),
+                    "d_plus_m": s.d_plus_m - up,
+                    "d_minus_m": s.d_minus_m - down,
+                }
+            )
+        )
+    return out
+
+
+def pace_edges(spans: list[Span], distance_km: float) -> list[Span]:
+    """Route avec profil : coupe les tronçons aux bornes du départ prudent et du final (2 de plus au plus)."""
+    for km in (_PACING_EDGE * distance_km, (1 - _PACING_EDGE) * distance_km):
+        spans = _cut(spans, km)
+    return spans
 
 
 def pacing_weight(start_km: float, end_km: float, distance_km: float) -> float:
@@ -463,7 +496,10 @@ def build_race_plan(
     target = target_time_s
     if target is not None and target <= stops_s:
         raise ValueError("Le temps visé doit dépasser la durée des arrêts aux ravitos")
-    spans = split_segments(profile, distance_km)
+    if trail or not profile:
+        spans = split_segments(profile, distance_km)
+    else:  # un long plat garderait sinon la même allure du départ à l'arrivée
+        spans = pace_edges(split_segments(profile, distance_km, _MAX_SEGMENTS - 2), distance_km)
     eq_km = sum(s.eq_km for s in spans)
     reference = target
     if reference is None:  # repli : estimation d'après les données Garmin

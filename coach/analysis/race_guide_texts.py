@@ -22,12 +22,11 @@ PHASE_ADVICE: dict[tuple[bool, str, str], str] = {
         "Tu ne gagnes rien à aller vite ici, tu peux tout perdre."
     ),
     (False, "semi", "Installation"): (
-        "Cale-toi sur ton allure et n'en bouge plus. Respiration régulière, foulée souple. "
-        "Si tu es en avance sur tes passages, ne creuse pas l'écart."
+        "Cale-toi sur ton allure et n'en bouge plus. Respiration régulière, foulée souple."
     ),
     (False, "semi", "Cœur de course"): (
         "C'est ici que la course se joue. L'effort monte alors que l'allure reste la même : c'est normal. "
-        "Pense à ta posture et prends tes gels à l'heure prévue."
+        "Pense à ta posture."
     ),
     (False, "semi", "Final"): (
         "Si tu te sens bien, accélère un peu. Sinon, tiens simplement ton allure. "
@@ -44,7 +43,7 @@ PHASE_ADVICE: dict[tuple[bool, str, str], str] = {
     ),
     (False, "marathon", "Cœur de course"): (
         "Économise-toi : pas d'à-coups, abrite-toi du vent derrière un groupe. "
-        "Prends tes gels à l'heure, même sans faim. La vraie course commence vers le 30e km."
+        "La vraie course commence vers le 30e km."
     ),
     (False, "marathon", "Final"): (
         "Les jambes deviennent lourdes : c'est le moment de tenir. Raccourcis la foulée et garde une cadence vive. "
@@ -133,6 +132,17 @@ PHASE_ADVICE: dict[tuple[bool, str, str], str] = {
     ),
 }
 
+# Ajouté au conseil d'une phase route quand le guide a des passages (temps de référence).
+ROAD_SPLIT_HINT: dict[tuple[str, str], str] = {
+    ("semi", "Installation"): "Si tu es en avance sur tes passages, ne creuse pas l'écart.",
+}
+
+# Ajouté au conseil d'une phase route quand le guide prévoit des gels.
+ROAD_GEL_HINT: dict[tuple[str, str], str] = {
+    ("semi", "Cœur de course"): "Prends tes gels à l'heure prévue.",
+    ("marathon", "Cœur de course"): "Prends tes gels à l'heure, même sans faim.",
+}
+
 # Ajouté au conseil d'une phase route qui contient une montée notable.
 ROAD_CLIMB_HINT = "Dans les côtes, garde l'effort, pas l'allure : tu reprendras le temps sur le plat et en descente."
 
@@ -166,6 +176,13 @@ PRINCIPLE: dict[tuple[bool, str], str] = {
         "Le tableau par tronçon dit quoi emporter entre deux ravitos."
     ),
 }
+
+# Principe quand l'athlète a saisi ses glucides (et peut-être son eau) : il remplace la recommandation.
+CHOSEN = "Tu as choisi {} par heure : garde ce que tu as testé à l'entraînement, et bois à ta soif."
+CHOSEN_GELS = "Prends tes gels à l'heure prévue, avec quelques gorgées d'eau."
+CHOSEN_TRAIL = "Le tableau par tronçon dit quoi emporter."
+# Ajouté à la recommandation quand l'athlète n'a saisi que son eau.
+CHOSEN_WATER = "Tu as choisi {} ml d'eau par heure."
 
 # Matin de course : libellés des étapes ; l'échauffement dépend de la tranche de distance.
 MORNING_BREAKFAST = "Petit-déjeuner : un repas connu, riche en glucides, pauvre en fibres et en graisses"

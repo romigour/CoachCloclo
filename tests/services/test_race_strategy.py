@@ -405,3 +405,25 @@ def test_export_trail_keeps_segments(repo, coach_home, garmin):
     view = export_race(repo, garmin, goal.id)
     steps = garmin.workouts[view.workout_id]["workoutSegments"][0]["workoutSteps"]
     assert len(steps) == len(view.plan.segments)
+
+
+def test_export_road_one_km_has_no_empty_step(repo, coach_home, garmin):
+    goal = make_goal(repo, garmin, kind="route", distance_km=1, gpx=None)
+    set_target(repo, goal, 300)
+    view = export_race(repo, garmin, goal.id)
+    steps = garmin.workouts[view.workout_id]["workoutSegments"][0]["workoutSteps"]
+    assert steps and all(s["endConditionValue"] > 0 for s in steps)
+    assert sum(s["endConditionValue"] for s in steps) == 1000
+
+
+def test_export_unpaced_phases_is_a_coach_error(repo, coach_home, garmin, monkeypatch):
+    import coach.services.race_strategy as rs
+
+    def _no_pace(guide, *, name):
+        raise ValueError("Pas de temps de référence : saisis un temps visé")
+
+    monkeypatch.setattr(rs, "race_phases_to_workout_json", _no_pace)
+    goal = make_goal(repo, garmin, kind="route", gpx=None)
+    set_target(repo, goal, 3000)
+    with pytest.raises(CoachError, match="montre"):
+        export_race(repo, garmin, goal.id)

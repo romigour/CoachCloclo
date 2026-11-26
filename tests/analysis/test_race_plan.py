@@ -256,3 +256,17 @@ def test_intake_settings_bounds():
         RaceSettings(carbs_g_h=151)
     with pytest.raises(ValueError):
         RaceSettings(water_ml_h=-1)
+
+
+def test_road_profile_cut_at_pacing_edges():
+    bumpy = plan(distance_km=36, profile=_prof([(0.6, 0.08), (0.6, -0.08)] * 30), target_time_s=12000)
+    assert len(bumpy.segments) <= 25
+    assert all(a.end_km == b.start_km for a, b in zip(bumpy.segments, bumpy.segments[1:]))
+    assert bumpy.segments[-1].elapsed_s == 12000
+    flat = plan(distance_km=10, profile=_prof([(10, 0)]), target_time_s=3000)
+    assert [s.end_km for s in flat.segments] == [pytest.approx(1.2), pytest.approx(8.8), 10]
+    assert flat.segments[0].pace_s_km > flat.segments[1].pace_s_km > flat.segments[2].pace_s_km
+    climb = plan(distance_km=10, profile=_prof([(10, 0.02)]), target_time_s=3000)
+    assert sum(s.d_plus_m for s in climb.segments) == split_segments(_prof([(10, 0.02)]), 10)[0].d_plus_m
+    tr = plan(trail=True, distance_km=10, profile=_prof([(10, 0)]), target_time_s=3000)
+    assert len(tr.segments) == 1  # trail : pas de coupe

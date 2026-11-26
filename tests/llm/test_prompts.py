@@ -870,6 +870,9 @@ def test_prompt_contains_notes_and_phases():
     assert f"{view.guide.nutrition.carbs_g_h} g" in p
     assert "Départ à 08:30" in p
     assert "45 min" in p  # historique récent
+    assert "- Départ, km 0–2, " in p and "- Installation, km 2–8,5, " in p and "- Final, km 18–21,1, " in p  # km à la française
+    assert "Prises prévues : km " in p and not any(f"km {i.km:g}" in p for i in view.guide.nutrition.intakes
+                                                  if i.km != int(i.km))
     assert ADVICE_FIGURES_RULE in p
     assert '"tips"' in p
 

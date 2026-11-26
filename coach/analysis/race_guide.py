@@ -145,17 +145,40 @@ def _boundaries(plan: RacePlan, trail: bool, shares: list[float]) -> list[tuple[
     return out
 
 
-def _terrain(segments: list[Segment], start_km: float, end_km: float, trail: bool) -> list[str]:
-    lines: list[str] = []
+def fmt_km(km: float) -> str:
+    """Kilomètre à la française, une décimale au plus : « 10,1 », « 3 »."""
+    return f"{round(km, 1):g}".replace(".", ",")
+
+
+def _terrain(segments: list[Segment], trail: bool) -> list[tuple[float, float, str]]:
+    """Montées (et descentes en trail) notables : (début, fin, libellé), segments voisins de même type réunis."""
+    blocks: list[list[Segment]] = []
     for s in segments:
-        if min(s.end_km, end_km) - max(s.start_km, start_km) <= 0:
-            continue
-        span = f"km {s.start_km:g}–{s.end_km:g}"
-        if s.kind == "montée" and s.d_plus_m >= _CLIMB_MIN_M[trail]:
-            lines.append(f"Montée {span}, +{s.d_plus_m} m")
-        elif trail and s.kind == "descente" and s.d_minus_m >= _DESCENT_MIN_M:
-            lines.append(f"Descente {span}, −{s.d_minus_m} m")
-    return lines
+        if blocks and blocks[-1][-1].kind == s.kind:
+            blocks[-1].append(s)
+        else:
+            blocks.append([s])
+    out: list[tuple[float, float, str]] = []
+    for b in blocks:
+        start, end, kind = b[0].start_km, b[-1].end_km, b[0].kind
+        span = f"km {fmt_km(start)}–{fmt_km(end)}"
+        up, down = sum(s.d_plus_m for s in b), sum(s.d_minus_m for s in b)
+        if kind == "montée" and up >= _CLIMB_MIN_M[trail]:
+            out.append((start, end, f"Montée {span}, +{up} m"))
+        elif trail and kind == "descente" and down >= _DESCENT_MIN_M:
+            out.append((start, end, f"Descente {span}, −{down} m"))
+    return out
+
+
+def _terrain_by_phase(plan: RacePlan, trail: bool, ranges: list[tuple[float, float]]) -> list[list[str]]:
+    """Chaque relief n'apparaît qu'une fois, dans la phase qui en couvre le plus (la première à égalité)."""
+    out: list[list[str]] = [[] for _ in ranges]
+    for start, end, line in _terrain(plan.segments, trail):
+        cover = [min(end, hi) - max(start, lo) for lo, hi in ranges]
+        best = max(range(len(ranges)), key=lambda i: (cover[i], -i))
+        if cover[best] > 0:
+            out[best].append(line)
+    return out
 
 
 def build_phases(plan: RacePlan, trail: bool, basis: RaceBasis, start_time: str) -> list[Phase]:
@@ -176,6 +199,10 @@ def build_phases(plan: RacePlan, trail: bool, basis: RaceBasis, start_time: str)
             elif end_km > prev_km:
                 pace = round((elapsed - prev_elapsed) / (end_km - prev_km))
                 pace_low, pace_high = pace - _PACE_TOLERANCE_S, pace + _PACE_TOLERANCE_S
+                if name == "Départ":  # « pas plus vite » : jamais sous l'allure de la phase
+                    pace_low, pace_high = pace, pace + 2 * _PACE_TOLERANCE_S
+        if end_km <= prev_km:  # course très courte : la phase n'a plus de longueur
+            continue
         phases.append(
             Phase(
                 name=name,
@@ -188,12 +215,13 @@ def build_phases(plan: RacePlan, trail: bool, basis: RaceBasis, start_time: str)
                 hr_high=hr_high,
                 elapsed_end_s=None if elapsed is None else round(elapsed),
                 clock_end=None if elapsed is None else clock_at(start_s, elapsed),
-                terrain=_terrain(plan.segments, prev_km, end_km, trail),
+                terrain=[],
                 advice="",
             )
         )
         prev_km, prev_elapsed = end_km, elapsed or 0.0
-    return phases
+    terrain = _terrain_by_phase(plan, trail, [(p.start_km, p.end_km) for p in phases])
+    return [p.model_copy(update={"terrain": t}) for p, t in zip(phases, terrain)]
 
 
 def _split_marks(distance_km: float) -> list[tuple[float, str]]:
@@ -272,13 +300,30 @@ def _nutrition(
 ) -> GuideNutrition:
     duration = plan.reference_time_s if plan.reference_time_s is not None else _BAND_DURATION_S[band]
     carbs, water = intake_per_hour(settings, duration)
+    intakes = [] if trail else _intakes(plan, carbs, start_s)
     return GuideNutrition(
         carbs_g_h=carbs,
         water_ml_h=water,
         recommended=settings.carbs_g_h is None and settings.water_ml_h is None,
-        principle=texts.PRINCIPLE[(trail, intake_tier(duration))],
-        intakes=[] if trail else _intakes(plan, carbs, start_s),
+        principle=_principle(trail, intake_tier(duration), settings, bool(intakes)),
+        intakes=intakes,
     )
+
+
+def _principle(trail: bool, tier: str, settings: RaceSettings, gels: bool) -> str:
+    """Principe de la recommandation, ou des valeurs saisies : il ne les contredit jamais."""
+    if settings.carbs_g_h is None:
+        text = texts.PRINCIPLE[(trail, tier)]
+        return text if settings.water_ml_h is None else f"{text} {texts.CHOSEN_WATER.format(settings.water_ml_h)}"
+    chosen = f"{settings.carbs_g_h} g de glucides"
+    if settings.water_ml_h is not None:
+        chosen += f" et {settings.water_ml_h} ml d'eau"
+    parts = [texts.CHOSEN.format(chosen)]
+    if gels:
+        parts.append(texts.CHOSEN_GELS)
+    if trail:
+        parts.append(texts.CHOSEN_TRAIL)
+    return " ".join(parts)
 
 
 def _morning(band: DistanceBand, start_s: int) -> list[MorningStep]:
@@ -291,19 +336,28 @@ def _morning(band: DistanceBand, start_s: int) -> list[MorningStep]:
     return [MorningStep(clock=clock_at(start_s, -before), label=label) for before, label in steps]
 
 
-def _advice(trail: bool, band: DistanceBand, phase: Phase) -> str:
-    advice = texts.PHASE_ADVICE[(trail, band, phase.name)]
-    if not trail and phase.terrain:
-        advice = f"{advice} {texts.ROAD_CLIMB_HINT}"
-    return advice
+def _advice(trail: bool, band: DistanceBand, phase: Phase, splits: bool, gels: bool) -> str:
+    """Conseil de la phase ; passages et gels cités seulement si le guide en a."""
+    parts = [texts.PHASE_ADVICE[(trail, band, phase.name)]]
+    if not trail:
+        key = (band, phase.name)
+        if splits and key in texts.ROAD_SPLIT_HINT:
+            parts.append(texts.ROAD_SPLIT_HINT[key])
+        if gels and key in texts.ROAD_GEL_HINT:
+            parts.append(texts.ROAD_GEL_HINT[key])
+        if phase.terrain:
+            parts.append(texts.ROAD_CLIMB_HINT)
+    return " ".join(parts)
 
 
 def build_race_guide(*, plan: RacePlan, trail: bool, settings: RaceSettings, basis: RaceBasis) -> RaceGuide:
     """Guide complet tiré du plan ; sans temps de référence, ni allure ni passage, mais conseils et matin datés."""
     band = distance_band(plan.distance_km)
     start_s = hhmm_s(settings.start_time)
+    splits = build_splits(plan, settings.start_time)
+    nutrition = _nutrition(plan, trail, settings, band, start_s)
     phases = [
-        p.model_copy(update={"advice": _advice(trail, band, p)})
+        p.model_copy(update={"advice": _advice(trail, band, p, bool(splits), bool(nutrition.intakes))})
         for p in build_phases(plan, trail, basis, settings.start_time)
     ]
     reference = plan.reference_time_s
@@ -312,8 +366,8 @@ def build_race_guide(*, plan: RacePlan, trail: bool, settings: RaceSettings, bas
         reference_time_s=reference,
         avg_pace_s_km=None if reference is None or trail else round(reference / plan.distance_km),
         phases=phases,
-        splits=build_splits(plan, settings.start_time),
-        nutrition=_nutrition(plan, trail, settings, band, start_s),
+        splits=splits,
+        nutrition=nutrition,
         morning=_morning(band, start_s),
         preparation=[PrepBlock(title=title, items=items) for title, items in texts.PREPARATION[(trail, band)].items()],
     )

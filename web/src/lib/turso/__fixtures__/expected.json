@@ -547,8 +547,8 @@
               "hr_low": null,
               "hr_zone": null,
               "name": "Départ",
-              "pace_high_s_km": 323,
-              "pace_low_s_km": 313,
+              "pace_high_s_km": 328,
+              "pace_low_s_km": 318,
               "start_km": 0.0,
               "terrain": []
             },
@@ -567,7 +567,7 @@
               "terrain": []
             },
             {
-              "advice": "C'est ici que la course se joue. L'effort monte alors que l'allure reste la même : c'est normal. Pense à ta posture et prends tes gels à l'heure prévue.",
+              "advice": "C'est ici que la course se joue. L'effort monte alors que l'allure reste la même : c'est normal. Pense à ta posture. Prends tes gels à l'heure prévue.",
               "clock_end": "09:34",
               "elapsed_end_s": 5639,
               "end_km": 18.0,

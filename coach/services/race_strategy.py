@@ -312,7 +312,10 @@ def export_race(repo: Repo, garmin: GarminPort, goal_id: int) -> RaceView:
             settings=RaceSettings.model_validate_json(strategy.settings_json),
             basis=RaceBasis.model_validate_json(strategy.basis_json),
         )
-        workout = race_phases_to_workout_json(guide, name=name)
+        try:
+            workout = race_phases_to_workout_json(guide, name=name)
+        except ValueError as exc:  # phase sans allure : rien d'exploitable à envoyer
+            raise CoachError("Impossible de préparer le Jour J pour la montre : une phase n'a pas d'allure") from exc
     else:
         workout = race_to_workout_json(plan, name=name)
     try:

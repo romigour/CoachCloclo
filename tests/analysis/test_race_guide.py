@@ -4,7 +4,7 @@ import pytest
 
 from coach.analysis.gpx import ProfilePoint
 from coach.analysis.race_guide import build_phases, build_race_guide, build_splits, distance_band
-from coach.analysis.race_guide_texts import PHASE_ADVICE, PREPARATION, PRINCIPLE
+from coach.analysis.race_guide_texts import PHASE_ADVICE, PREPARATION, PRINCIPLE, ROAD_CLIMB_HINT
 from coach.analysis.race_plan import (
     AidStation,
     RaceBasis,
@@ -136,10 +136,11 @@ def test_trail_phases_time_based_snap_to_aid():
 
 def test_phase_terrain_lists_climbs():
     phases = build_phases(road(20, 6000, hill_profile()), False, BASIS, "08:00")
-    assert any(t == "Montée km 0–10.05, +600 m" for t in phases[0].terrain)
+    # coupée à 2,4 km par le plan, relue d'un bloc, dans la phase qui en couvre le plus (km 2–8)
+    assert [p.terrain for p in phases] == [[], ["Montée km 0–10,1, +600 m"], [], []]
     assert not any(t.startswith("Descente") for p in phases for t in p.terrain)  # route : montées seules
     tr = build_phases(trail(), True, BASIS, "08:00")
-    assert any(t == "Descente km 10.05–20, −597 m" for t in tr[-1].terrain)
+    assert tr[2].terrain == ["Descente km 10,1–20, −597 m"]  # km 6,5–16 en couvre le plus
     low = build_phases(road(4, 1200, hill_profile(up_m=100, km_each=2)), False, BASIS, "08:00")
     assert any("Montée" in t for p in low for t in p.terrain)  # +100 m passe le seuil route (20 m)
     mild = build_phases(trail(), True, BASIS, "08:00")
@@ -161,10 +162,11 @@ def test_road_gels_half():
     assert [i.clock for i in n.intakes] == ["08:40", "09:13"]  # 40 min puis 25/45 h ≈ 33 min ; rien après 1:30
     assert all(i.what == GEL for i in n.intakes)
     assert 0 < n.intakes[0].km < n.intakes[1].km < 21.0975
-    assert n.principle == PRINCIPLE[(False, "moyen")]
+    assert n.principle.startswith("Tu as choisi 45 g de glucides par heure")
     rec = guide(road(21.0975, 6300)).nutrition
     assert (rec.carbs_g_h, rec.water_ml_h, rec.recommended) == (45, 400, True)
     assert [i.clock for i in rec.intakes] == ["08:40", "09:13"]
+    assert rec.principle == PRINCIPLE[(False, "moyen")]
 
 
 def test_no_gels_10k():
@@ -222,19 +224,97 @@ def test_every_phase_has_advice(km, band, is_trail):
                            today=date(2026, 11, 10), target_time_s=round(km * 360))
     g = guide(plan, trail=is_trail)
     assert g.band == band
-    assert all(p.advice and p.advice == PHASE_ADVICE[(is_trail, band, p.name)] for p in g.phases)
+    assert all(p.advice and p.advice.startswith(PHASE_ADVICE[(is_trail, band, p.name)]) for p in g.phases)
     assert all(b.items for b in g.preparation)
     assert {b.title for b in g.preparation} == set(PREPARATION[(is_trail, band)])
 
 
 def test_road_climb_adds_effort_hint():
     g = guide(road(20, 6000, hill_profile()))
-    first = g.phases[0]
-    assert first.terrain and first.advice.startswith(PHASE_ADVICE[(False, "semi", "Départ")])
-    assert first.advice != PHASE_ADVICE[(False, "semi", "Départ")]
+    hilly = g.phases[1]
+    assert hilly.terrain and hilly.advice.startswith(PHASE_ADVICE[(False, "semi", "Installation")])
+    assert hilly.advice.endswith(ROAD_CLIMB_HINT)
+    assert not g.phases[0].advice.endswith(ROAD_CLIMB_HINT)
 
 
 def test_texts_never_per_kilo():
     texts = list(PHASE_ADVICE.values()) + list(PRINCIPLE.values())
     texts += [item for blocks in PREPARATION.values() for items in blocks.values() for item in items]
     assert texts and all("/kg" not in t and "par kilo" not in t for t in texts)
+
+
+def flat_profile(distance_km, step=0.05):
+    n = round(distance_km / step)
+    return [ProfilePoint(km=min(i * step, distance_km), ele_m=100) for i in range(n + 1)]
+
+
+def test_flat_gpx_half_keeps_paced_start_and_finish():
+    plan = road(21.0975, 6300, flat_profile(21.0975))
+    assert [(s.start_km, s.end_km) for s in plan.segments] == [
+        (0, pytest.approx(0.12 * 21.0975)), (pytest.approx(0.12 * 21.0975), pytest.approx(0.88 * 21.0975)),
+        (pytest.approx(0.88 * 21.0975), 21.0975),
+    ]
+    assert plan.segments[-1].elapsed_s == 6300
+    g = guide(plan)
+    paces = {p.name: p.pace_high_s_km for p in g.phases}
+    assert paces["Départ"] > paces["Cœur de course"] > paces["Final"]
+    assert g.phases[-1].elapsed_end_s == 6300 and g.splits[-1].elapsed_s == 6300
+
+
+def test_trail_climb_listed_once():
+    phases = build_phases(trail(), True, BASIS, "08:00")
+    lines = [t for p in phases for t in p.terrain]
+    assert lines.count("Montée km 0–10,1, +600 m") == 1
+    assert len(lines) == len(set(lines))
+    holder = next(p for p in phases if "Montée km 0–10,1, +600 m" in p.terrain)
+    covered = {p.name: min(p.end_km, 10.05) - max(p.start_km, 0) for p in phases}
+    assert holder.name == max(covered, key=covered.get)
+
+
+def test_road_start_range_never_faster_than_average():
+    g = guide(road(10, 3000))
+    start = g.phases[0]
+    assert start.pace_low_s_km >= g.avg_pace_s_km
+    assert start.pace_high_s_km - start.pace_low_s_km == 10
+    core = g.phases[1]
+    assert core.pace_high_s_km - core.pace_low_s_km == 10
+
+
+def test_short_race_has_no_empty_phase():
+    phases = build_phases(road(1, 300), False, BASIS, "08:00")
+    assert phases and all(p.end_km > p.start_km for p in phases)
+    assert all(p.pace_low_s_km is not None for p in phases)
+    assert phases[-1].end_km == 1
+
+
+def _gels(text):
+    return "gel" in text.lower()
+
+
+def test_no_gel_advice_without_intakes():
+    fast = guide(road(21.0975, 4200))  # moins de 1 h 15 : aucun gel
+    assert fast.nutrition.intakes == []
+    assert not any(_gels(p.advice) for p in fast.phases)
+    for km in (21.0975, 42.195):
+        bare = guide(road(km, None))
+        assert not any(_gels(p.advice) for p in bare.phases)
+        assert not any("passages" in p.advice for p in bare.phases)
+    paced = guide(road(21.0975, 6300))
+    assert paced.nutrition.intakes and any(_gels(p.advice) for p in paced.phases)
+    assert any("passages" in p.advice for p in paced.phases)
+    assert any(_gels(p.advice) for p in guide(road(42.195, 12600)).phases)
+
+
+def test_chosen_carbs_acknowledged():
+    forced = RaceSettings(carbs_g_h=60)
+    n = guide(road(10, 2700, settings=forced), settings=forced).nutrition
+    assert n.carbs_g_h == 60 and not n.recommended
+    assert n.principle.startswith("Tu as choisi 60 g de glucides par heure")
+    assert "pas besoin de glucides" not in n.principle and not _gels(n.principle)  # aucun gel prévu sur 45 min
+    water = RaceSettings(water_ml_h=300)
+    w = guide(road(21.0975, 6300, settings=water), settings=water).nutrition
+    assert w.principle.startswith(PRINCIPLE[(False, "moyen")]) and "Tu as choisi 300 ml d'eau par heure" in w.principle
+    t = RaceSettings(carbs_g_h=40)
+    tn = guide(build_race_plan(distance_km=20, trail=True, profile=hill_profile(), basis=BASIS, settings=t,
+                               today=date(2026, 11, 10), target_time_s=5 * 3600), trail=True, settings=t).nutrition
+    assert tn.principle.startswith("Tu as choisi 40 g de glucides par heure") and "60 à 90" not in tn.principle

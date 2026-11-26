@@ -165,8 +165,8 @@ def test_race_workout_steps():
     assert steps[0]["endCondition"]["conditionTypeKey"] == "distance"
     assert steps[0]["stepType"]["stepTypeKey"] == "interval"
     assert steps[0]["targetType"]["workoutTargetTypeKey"] == "pace.zone"
-    assert steps[0]["targetValueOne"] == pytest.approx(1000 / 293)
-    assert steps[0]["targetValueTwo"] == pytest.approx(1000 / 283)
+    assert steps[0]["targetValueOne"] == pytest.approx(1000 / 298)
+    assert steps[0]["targetValueTwo"] == pytest.approx(1000 / 288)
     assert [s["stepOrder"] for s in steps] == list(range(1, 11))
     assert steps[0]["description"] == "Plat – viser 5 min"
 

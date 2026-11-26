@@ -12,6 +12,7 @@ from coach.analysis.race_plan import (
     RaceSettings,
     build_race_plan,
     grade_multiplier,
+    pacing_weight,
     predict_run_time,
     race_hr_zone,
     split_segments,
@@ -124,13 +125,13 @@ def test_flat_route_falls_back_on_prediction_and_pace_targets():
     p = plan()
     assert p.target_time_s is None and p.reference_time_s == 2880 and len(p.segments) == 10
     s = p.segments[0]
-    assert (s.time_s, s.pace_s_km, s.target_kind, s.target_low, s.target_high) == (288, 288, "pace", 283, 293)
+    assert (s.time_s, s.pace_s_km, s.target_kind, s.target_low, s.target_high) == (293, 293, "pace", 288, 298)
     assert p.segments[-1].clock == "08:48" and p.aid_passages == [] and p.nutrition == []
 
 
 def test_target_time_rescales():
     p = plan(target_time_s=2700)
-    assert p.target_time_s == p.reference_time_s == 2700 and p.segments[0].time_s == 270
+    assert p.target_time_s == p.reference_time_s == 2700 and p.segments[0].time_s == 275
     assert "predicted_time_s" not in p.model_dump()
 
 
@@ -209,3 +210,23 @@ def test_negative_margin_floored():
     p = plan(trail=True, settings=RaceSettings(aid_stations=[st]), target_time_s=3600)
     t = p.aid_passages[0].passage
     assert (t.margin_min, t.status) == (-1, "hors délai")
+
+
+def test_road_start_slower_finish_faster():
+    p = plan(target_time_s=3000)
+    paces = [s.pace_s_km for s in p.segments]
+    assert paces[0] > paces[5] > paces[-1]
+    assert p.segments[-1].elapsed_s == 3000
+    assert 4 <= paces[0] - 300 <= 8  # ≈ +6 s/km au départ
+
+
+def test_trail_pacing_unchanged():
+    p = plan(trail=True, target_time_s=3000)
+    assert {s.pace_s_km for s in p.segments} == {300}
+
+
+def test_pacing_weight_partial_overlap():
+    assert pacing_weight(0, 1.2, 10) == pytest.approx(1.02)
+    assert pacing_weight(1.0, 1.4, 10) == pytest.approx((0.2 * 1.02 + 0.2) / 0.4)
+    assert pacing_weight(4, 6, 10) == pytest.approx(1.0)
+    assert pacing_weight(9, 10, 10) == pytest.approx(0.99)

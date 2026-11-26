@@ -210,6 +210,9 @@ _HHMM = r"^([01]\d|2[0-3]):[0-5]\d$"
 _DAY_MIN = 24 * 60
 _STALE_DAYS = 30
 _PACE_TOLERANCE_S = 5
+_PACING_EDGE = 0.12  # part de la distance concernée au départ et à l'arrivée (route)
+_START_WEIGHT = 1.02  # départ prudent
+_FINISH_WEIGHT = 0.99  # final un peu plus vite
 _TIGHT_MARGIN_S = 30 * 60
 _Z4_MAX_S = 90 * 60
 _Z3_MAX_S = 4 * 3600
@@ -308,13 +311,32 @@ def _clock(start_s: int, elapsed_s: float) -> str:
     return f"{minutes // 60:02d}:{minutes % 60:02d}"
 
 
-class _Timing:
-    """Temps de course réparti sur les segments au prorata de leur distance équivalente."""
+def pacing_weight(start_km: float, end_km: float, distance_km: float) -> float:
+    """Multiplicateur moyen d'effort d'un tronçon : départ prudent, final plus rapide, 1 ailleurs."""
+    length = end_km - start_km
+    if length <= 0:
+        return 1.0
+    edge = _PACING_EDGE * distance_km
 
-    def __init__(self, spans: list[Span], run_s: float, stations: list[AidStation]):
-        total_eq = sum(s.eq_km for s in spans)
+    def overlap(lo: float, hi: float) -> float:
+        return max(0.0, min(end_km, hi) - max(start_km, lo))
+
+    head = overlap(0.0, edge)
+    tail = overlap(distance_km - edge, distance_km)
+    return (head * _START_WEIGHT + tail * _FINISH_WEIGHT + (length - head - tail)) / length
+
+
+class _Timing:
+    """Temps de course réparti sur les segments au prorata de leur distance équivalente pondérée."""
+
+    def __init__(
+        self, spans: list[Span], run_s: float, stations: list[AidStation], weights: list[float] | None = None
+    ):
+        w = weights or [1.0] * len(spans)
+        cost = [s.eq_km * x for s, x in zip(spans, w)]
+        total = sum(cost)
         self.spans, self.stations = spans, stations
-        self.seg_s = [run_s * s.eq_km / total_eq for s in spans]
+        self.seg_s = [run_s * c / total for c in cost]
         self.cum_s = [0.0]
         for t in self.seg_s:
             self.cum_s.append(self.cum_s[-1] + t)
@@ -429,7 +451,8 @@ def build_race_plan(
     if (trail or target is None) and (today - basis.captured_on).days > _STALE_DAYS:
         warnings.append(STALE.format(basis.captured_on))
 
-    ref = None if reference is None else _Timing(spans, reference - stops_s, stations)
+    weights = None if trail else [pacing_weight(s.start_km, s.end_km, distance_km) for s in spans]
+    ref = None if reference is None else _Timing(spans, reference - stops_s, stations, weights)
     segments: list[Segment] = []
     for i, s in enumerate(spans):
         length = s.end_km - s.start_km

@@ -26,7 +26,7 @@ CREATE TABLE appstate (
 	value_json VARCHAR NOT NULL, 
 	PRIMARY KEY ("key")
 );
-INSERT INTO "appstate" VALUES('schema_version','{"v": 4}');
+INSERT INTO "appstate" VALUES('schema_version','{"v": 5}');
 CREATE TABLE athletesnapshot (
 	id INTEGER NOT NULL, 
 	date DATE NOT NULL, 
@@ -160,6 +160,11 @@ CREATE TABLE racestrategy (
 	pending_old_schedule_id INTEGER, 
 	export_error VARCHAR, 
 	exported_hash VARCHAR, 
+	view_json VARCHAR, 
+	view_updated_at DATETIME, 
+	advice_json VARCHAR, 
+	advice_at DATETIME, 
+	advice_hash VARCHAR, 
 	PRIMARY KEY (id)
 );
 CREATE TABLE session (

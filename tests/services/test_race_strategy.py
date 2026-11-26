@@ -1,3 +1,4 @@
+import json
 from datetime import date, timedelta
 from pathlib import Path
 
@@ -15,6 +16,7 @@ from coach.services.race_strategy import (
     get_race_view,
     race_line_for_prompt,
     race_plan_for,
+    refresh_snapshot,
     refresh_basis,
     reimport_stations,
     save_settings,
@@ -314,3 +316,66 @@ def test_race_strategy_reads_gpx_from_db(repo, coach_home, garmin):
     view = get_race_view(repo, garmin, goal.id)
     assert view.profile is not None
     assert [s.name for s in view.settings.aid_stations] == ["Ravito Col"]
+
+
+def test_view_has_guide(repo, coach_home, garmin):
+    goal = make_goal(repo, garmin)
+    view = get_race_view(repo, garmin, goal.id)
+    assert view.guide.band
+    assert view.guide.phases
+
+
+def test_snapshot_written_once(repo, coach_home, garmin):
+    goal = make_goal(repo, garmin)
+    view = get_race_view(repo, garmin, goal.id)
+    stored = repo.race_strategy(goal.id)
+    assert stored.view_json and stored.view_updated_at is not None
+    assert "updated_at" not in json.loads(stored.view_json)
+    assert view.updated_at == stored.view_updated_at
+    first = stored.view_updated_at
+    get_race_view(repo, garmin, goal.id)
+    assert repo.race_strategy(goal.id).view_updated_at == first
+
+
+def test_snapshot_rewritten_when_settings_change(repo, coach_home, garmin):
+    goal = make_goal(repo, garmin)
+    get_race_view(repo, garmin, goal.id)
+    before = repo.race_strategy(goal.id).view_json
+    save_settings(repo, garmin, goal.id, RaceSettings(start_time="09:30"))
+    assert repo.race_strategy(goal.id).view_json != before
+
+
+def test_snapshot_write_failure_does_not_break_read(repo, coach_home, garmin, monkeypatch):
+    goal = make_goal(repo, garmin)
+    get_race_view(repo, garmin, goal.id)
+    save_settings(repo, garmin, goal.id, RaceSettings(start_time="09:30"))
+    real_update = repo.update
+
+    def failing(obj):
+        raise RuntimeError("base indisponible")
+
+    monkeypatch.setattr(repo, "update", failing)
+    assert get_race_view(repo, garmin, goal.id).settings.start_time == "09:30"
+    monkeypatch.setattr(repo, "update", real_update)
+
+
+def test_new_strategy_nutrition_is_none(repo, coach_home, garmin):
+    goal = make_goal(repo, garmin, kind="route")
+    view = get_race_view(repo, garmin, goal.id)
+    assert view.settings.carbs_g_h is None and view.settings.water_ml_h is None
+
+
+def test_refresh_snapshot_without_strategy_is_noop(repo, coach_home, garmin):
+    goal = make_goal(repo, garmin)
+    refresh_snapshot(repo, goal, garmin.today())
+    assert repo.race_strategy(goal.id) is None
+    assert garmin.metrics_reads == 0
+
+
+def test_refresh_snapshot_updates_changed_copy(repo, coach_home, garmin):
+    goal = make_goal(repo, garmin)
+    get_race_view(repo, garmin, goal.id)
+    goal.race_date = date(2027, 3, 7)
+    goal = repo.update(goal)
+    refresh_snapshot(repo, goal, garmin.today())
+    assert json.loads(repo.race_strategy(goal.id).view_json)["race_date"] == "2027-03-07"

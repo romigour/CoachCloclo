@@ -1,12 +1,14 @@
 """Stratégie du jour J : création, réglages et lecture du plan de course."""
 
 import hashlib
-from datetime import date
+import logging
+from datetime import date, datetime, timezone
 from typing import Literal
 
 from pydantic import BaseModel
 
 from coach.analysis.gpx import _NO_ELE, ProfilePoint, profile, waypoints
+from coach.analysis.race_guide import RaceGuide, build_race_guide
 from coach.analysis.race_plan import AidStation, RaceBasis, RacePlan, RaceSettings, build_race_plan
 from coach.export.garmin_workout import race_to_workout_json
 from coach.garmin.port import GarminAuthRequired, GarminPort, GarminRateLimited, GarminUnavailable
@@ -22,6 +24,7 @@ _GARMIN_ERRORS = (GarminUnavailable, GarminAuthRequired, GarminRateLimited)
 _NO_FILE = "Fichier GPX introuvable : découpage sans profil"
 _IGNORED = "Ravito « {} » au-delà de la distance : ignoré"
 _NAME_MAX = 60
+log = logging.getLogger(__name__)
 
 
 class RaceView(BaseModel):
@@ -39,6 +42,8 @@ class RaceView(BaseModel):
     workout_id: int | None
     export_error: str | None
     export_stale: bool  # plan modifié (réglages ou base) depuis le dernier envoi à la montre
+    guide: RaceGuide
+    updated_at: datetime | None = None  # date de la copie stockée pour le mobile
 
 
 def _capture_basis(garmin: GarminPort) -> RaceBasis:
@@ -124,29 +129,48 @@ def _compute(
     return plan, prof
 
 
+def _store_snapshot(repo: Repo, strategy: RaceStrategy, view: RaceView) -> RaceView:
+    """Écrit la copie JSON de la vue si elle a changé ; un échec d'écriture est journalisé, la vue reste servie."""
+    raw = view.model_dump_json(exclude={"updated_at"})
+    if strategy.view_json == raw:
+        return view.model_copy(update={"updated_at": strategy.view_updated_at})
+    strategy.view_json = raw
+    strategy.view_updated_at = datetime.now(timezone.utc).replace(microsecond=0)
+    try:
+        strategy = repo.update(strategy)
+    except Exception:
+        log.exception("copie de la vue Jour J non enregistrée (objectif %s)", view.goal_id)
+        return view
+    return view.model_copy(update={"updated_at": strategy.view_updated_at})
+
+
 def _view(repo: Repo, strategy: RaceStrategy, goal: Goal, today: date) -> RaceView:
     plan, prof = _compute(repo, strategy, goal, today)
-    return RaceView(
+    settings = RaceSettings.model_validate_json(strategy.settings_json)
+    basis = RaceBasis.model_validate_json(strategy.basis_json)
+    view = RaceView(
         goal_id=goal.id,
         goal_type=goal.type,
         race_date=goal.race_date,
-        settings=RaceSettings.model_validate_json(strategy.settings_json),
+        settings=settings,
         target_time_s=goal.target_time_s,
         target_source=goal.target_source,
-        basis_date=RaceBasis.model_validate_json(strategy.basis_json).captured_on,
+        basis_date=basis.captured_on,
         profile=_downsample(prof) if prof else None,
         plan=plan,
         workout_id=strategy.garmin_workout_id,
         export_error=strategy.export_error,
         export_stale=strategy.garmin_workout_id is not None and strategy.exported_hash != _fingerprint(strategy, goal),
+        guide=build_race_guide(plan=plan, trail=goal.type == "trail", settings=settings, basis=basis),
     )
+    return _store_snapshot(repo, strategy, view)
 
 
 def _get_or_create(repo: Repo, garmin: GarminPort, goal: Goal) -> RaceStrategy:
     strategy = repo.race_strategy(goal.id)
     if strategy is not None:
         return strategy
-    settings = RaceSettings(aid_stations=_stations_from_gpx(repo, goal))
+    settings = RaceSettings(aid_stations=_stations_from_gpx(repo, goal), carbs_g_h=None, water_ml_h=None)
     return repo.add(
         RaceStrategy(
             goal_id=goal.id,
@@ -189,6 +213,13 @@ def reimport_stations(repo: Repo, garmin: GarminPort, goal_id: int) -> RaceView:
     settings.aid_stations = _stations_from_gpx(repo, goal)
     strategy.settings_json = settings.model_dump_json()
     return _view(repo, repo.update(strategy), goal, garmin.today())
+
+
+def refresh_snapshot(repo: Repo, goal: Goal, today: date) -> None:
+    """Remet à jour la copie de la vue d'un objectif ; sans stratégie (jamais créée ici), ne fait rien."""
+    strategy = repo.race_strategy(goal.id)
+    if strategy is not None:
+        _view(repo, strategy, goal, today)
 
 
 def race_plan_for(repo: Repo, goal: Goal, today: date) -> RacePlan | None:

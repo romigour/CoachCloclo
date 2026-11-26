@@ -5,6 +5,7 @@ from typing import NamedTuple, get_args
 
 from pydantic import BaseModel
 
+from coach.analysis.race_guide import RaceGuide
 from coach.analysis.race_plan import RacePlan, Segment
 from coach.analysis.zones import HrZoneName, PaceZoneName, Zones
 from coach.llm.schemas import RepeatSpec, SessionSpec, StepSpec
@@ -185,6 +186,38 @@ def race_to_workout_json(plan: RacePlan, *, name: str) -> dict:
             **_race_target(seg),
         }
         for i, seg in enumerate(plan.segments, start=1)
+    ]
+    return {
+        "workoutName": name,
+        "sportType": dict(_SPORT_RUNNING),
+        "workoutSegments": [{"segmentOrder": 1, "sportType": dict(_SPORT_RUNNING), "workoutSteps": steps}],
+    }
+
+
+def _mmss(seconds: int) -> str:
+    return f"{seconds // 60}:{seconds % 60:02d}"
+
+
+def race_phases_to_workout_json(guide: RaceGuide, *, name: str) -> dict:
+    """Workout du jour J d'une course sur route sans profil : une étape à la distance par phase du guide."""
+    if guide.reference_time_s is None or any(
+        p.pace_low_s_km is None or p.pace_high_s_km is None for p in guide.phases
+    ):
+        raise ValueError("Pas de temps de référence : saisis un temps visé")
+    steps = [
+        {
+            "type": "ExecutableStepDTO",
+            "stepOrder": i,
+            "stepType": dict(_STEP_TYPES["active"]),
+            "endCondition": dict(_END_DISTANCE),
+            "endConditionValue": round((ph.end_km - ph.start_km) * 1000),
+            "description": f"{ph.name} – {_mmss(ph.pace_low_s_km)}–{_mmss(ph.pace_high_s_km)} /km",
+            "targetType": dict(_TARGET_PACE),
+            # m/s, borne lente (vitesse la plus basse) en premier.
+            "targetValueOne": 1000 / ph.pace_high_s_km,
+            "targetValueTwo": 1000 / ph.pace_low_s_km,
+        }
+        for i, ph in enumerate(guide.phases, start=1)
     ]
     return {
         "workoutName": name,

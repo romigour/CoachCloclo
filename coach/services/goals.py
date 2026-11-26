@@ -471,13 +471,18 @@ def update_goal(repo: Repo, garmin: GarminPort, goal_id: int, data: GoalUpdate) 
                 notes.append(f"précisions « {one_line(text)} » au lieu de « {one_line(goal.notes)} »")
     if not update:
         raise GoalError("Aucune modification")
-    return _reshape(
+    saved, result = _reshape(
         repo, garmin,
         before=goal,
         after=goal.model_copy(update=update),
         note=f"L'athlète a modifié l'objectif {_describe(goal)} : {' ; '.join(notes)}. {_NOTE_END}",
         write=_write_goal(goal_id, update),
     )
+    if "target_time_s" in update or "race_date" in update:  # la copie du Jour J suit, hors transaction
+        from coach.services.race_strategy import refresh_snapshots  # import tardif : race_strategy importe ce module
+
+        refresh_snapshots(repo, [saved], today)
+    return saved, result
 
 
 def remove_goal(repo: Repo, garmin: GarminPort, goal_id: int) -> ChangeResult:

@@ -1,3 +1,4 @@
+import json
 from datetime import date, timedelta
 from pathlib import Path
 
@@ -22,6 +23,7 @@ from coach.services.goals import (
     update_goal,
 )
 from coach.services.adjust import request_adjustment
+from coach.services.garmin_export import apply_proposal
 from coach.services.plans import accept_plan
 from coach.services.race_strategy import export_race
 from tests.plan.factories import make_db_session
@@ -788,3 +790,44 @@ def test_update_goal_notes_change_note_is_single_line(repo, monday_garmin):
     update_goal(repo, monday_garmin, goal.id, GoalUpdate(notes="Neige\n\npuis marches"))
     note = repo.active_cycle().adjust_notes()[0]
     assert "précisions « Neige puis marches » au lieu de « C D »" in note and "\n" not in note
+
+
+def _stored_view(repo, goal_id) -> dict:
+    return json.loads(repo.race_strategy(goal_id).view_json)
+
+
+def test_update_goal_refreshes_race_copy(repo, monday_garmin):
+    from coach.services.race_strategy import get_race_view
+
+    goal = accepted_goal(repo, monday_garmin, target_time_s=18000)
+    get_race_view(repo, monday_garmin, goal.id)
+    assert _stored_view(repo, goal.id)["target_time_s"] == 18000
+    update_goal(repo, monday_garmin, goal.id, GoalUpdate(target_time="5:30"))
+    assert _stored_view(repo, goal.id)["target_time_s"] == 19800
+
+
+def test_update_goal_survives_copy_failure(repo, monday_garmin, monkeypatch):
+    from coach.services import race_strategy
+    from coach.services.race_strategy import get_race_view
+
+    goal = accepted_goal(repo, monday_garmin, target_time_s=18000)
+    get_race_view(repo, monday_garmin, goal.id)
+
+    def boom(*a, **k):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(race_strategy, "refresh_snapshot", boom)
+    update_goal(repo, monday_garmin, goal.id, GoalUpdate(target_time="5:30"))
+    assert _goals(repo)[0].target_time_s == 19800
+
+
+def test_accepted_estimate_refreshes_race_copy(repo, monday_garmin):
+    from coach.services.race_strategy import get_race_view
+
+    accepted_goal(repo, monday_garmin)
+    goal, _ = add_goal(repo, monday_garmin, other_input(race_date=date(2027, 1, 31)))
+    get_race_view(repo, monday_garmin, goal.id)
+    llm = FakeLLMProvider([race_adjustment_json(repo, 13, goal_id=goal.id, seconds=3000)])
+    request_adjustment(repo, monday_garmin, llm)
+    apply_proposal(repo, monday_garmin, _proposals(repo)[0][0])
+    assert _stored_view(repo, goal.id)["target_time_s"] == 3000

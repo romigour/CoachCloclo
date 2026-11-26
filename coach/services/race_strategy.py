@@ -10,7 +10,7 @@ from pydantic import BaseModel
 from coach.analysis.gpx import _NO_ELE, ProfilePoint, profile, waypoints
 from coach.analysis.race_guide import RaceGuide, build_race_guide
 from coach.analysis.race_plan import AidStation, RaceBasis, RacePlan, RaceSettings, build_race_plan
-from coach.export.garmin_workout import race_to_workout_json
+from coach.export.garmin_workout import race_phases_to_workout_json, race_to_workout_json
 from coach.garmin.port import GarminAuthRequired, GarminPort, GarminRateLimited, GarminUnavailable
 from coach.llm.prompts import race_text
 from coach.plan.models import Goal, RaceStrategy
@@ -222,6 +222,15 @@ def refresh_snapshot(repo: Repo, goal: Goal, today: date) -> None:
         _view(repo, strategy, goal, today)
 
 
+def refresh_snapshots(repo: Repo, goals: list[Goal], today: date) -> None:
+    """Rafraîchit la copie de chaque objectif, hors transaction ; une erreur est journalisée, jamais remontée."""
+    for goal in goals:
+        try:
+            refresh_snapshot(repo, goal, today)
+        except Exception:
+            log.exception("copie de la vue Jour J non rafraîchie (objectif %s)", goal.id)
+
+
 def race_plan_for(repo: Repo, goal: Goal, today: date) -> RacePlan | None:
     """Plan de course de l'objectif, ou None s'il n'a pas de stratégie."""
     strategy = repo.race_strategy(goal.id)
@@ -276,10 +285,19 @@ def export_race(repo: Repo, garmin: GarminPort, goal_id: int) -> RaceView:
     """
     goal = _get_goal(repo, goal_id)
     strategy = _get_or_create(repo, garmin, goal)
-    plan, _ = _compute(repo, strategy, goal, garmin.today())
+    plan, prof = _compute(repo, strategy, goal, garmin.today())
     if plan.reference_time_s is None:
         raise CoachError(_NO_REFERENCE)
-    workout = race_to_workout_json(plan, name=f"Jour J – {goal.distance_km:g} km")
+    name = f"Jour J – {goal.distance_km:g} km"
+    if goal.type == "route" and prof is None:  # sans profil : une étape par phase du guide
+        guide = build_race_guide(
+            plan=plan, trail=False,
+            settings=RaceSettings.model_validate_json(strategy.settings_json),
+            basis=RaceBasis.model_validate_json(strategy.basis_json),
+        )
+        workout = race_phases_to_workout_json(guide, name=name)
+    else:
+        workout = race_to_workout_json(plan, name=name)
     try:
         strategy = _cleanup_old(repo, garmin, strategy)
         workout_id, schedule_id = _upload_and_schedule(garmin, workout, goal.race_date)

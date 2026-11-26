@@ -344,13 +344,20 @@ def mark_for_cleanup(s: Session, *, removal: bool) -> None:
     s.sync_error = _PENDING_MSG
 
 
-def _apply_estimates(db, proposal: Proposal) -> None:
-    """Temps estimés de la proposition, pour les objectifs à venir dont le temps revient encore à Claude."""
+def _apply_estimates(db, proposal: Proposal) -> list[int]:
+    """Temps estimés de la proposition, pour les objectifs à venir dont le temps revient encore à Claude.
+
+    Renvoie les ids des objectifs dont le temps a changé.
+    """
+    changed: list[int] = []
     for estimate in _ESTIMATES.validate_json(proposal.estimates_json):
         g = db.get(Goal, estimate.goal_id)
         if g is not None and g.status == "active" and g.target_source == "claude":
+            if g.target_time_s != estimate.seconds:
+                changed.append(g.id)
             g.target_time_s = estimate.seconds
             db.add(g)
+    return changed
 
 
 def apply_proposal(repo: Repo, garmin: GarminPort, proposal_id: int) -> list[int]:
@@ -416,8 +423,12 @@ def apply_proposal(repo: Repo, garmin: GarminPort, proposal_id: int) -> list[int
                 mark_for_cleanup(s, removal=True)
                 to_sync.append(s.id)
                 db.add(s)
-        _apply_estimates(db, proposal)
+        changed = _apply_estimates(db, proposal)
         proposal.status = "accepted"
         db.add(proposal)
 
+    if changed:  # la copie du Jour J suit, hors transaction
+        from coach.services.race_strategy import refresh_snapshots  # import tardif : race_strategy importe goals
+
+        refresh_snapshots(repo, [g for g in repo.upcoming_goals() if g.id in changed], garmin.today())
     return sync_marked(repo, garmin, to_sync, zones)

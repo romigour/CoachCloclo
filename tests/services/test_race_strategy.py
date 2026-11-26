@@ -389,3 +389,19 @@ def test_refresh_snapshot_updates_changed_copy(repo, coach_home, garmin):
     goal = repo.update(goal)
     refresh_snapshot(repo, goal, garmin.today())
     assert json.loads(repo.race_strategy(goal.id).view_json)["race_date"] == "2027-03-07"
+
+
+def test_export_road_without_gpx_uses_phases(repo, coach_home, garmin):
+    goal = make_goal(repo, garmin, kind="route", gpx=None)
+    set_target(repo, goal, 3000)
+    view = export_race(repo, garmin, goal.id)
+    steps = garmin.workouts[view.workout_id]["workoutSegments"][0]["workoutSteps"]
+    assert len(steps) == len(view.guide.phases) == 3
+    assert sum(s["endConditionValue"] for s in steps) == 10000
+
+
+def test_export_trail_keeps_segments(repo, coach_home, garmin):
+    goal = make_goal(repo, garmin)
+    view = export_race(repo, garmin, goal.id)
+    steps = garmin.workouts[view.workout_id]["workoutSegments"][0]["workoutSteps"]
+    assert len(steps) == len(view.plan.segments)

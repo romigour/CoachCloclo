@@ -48,8 +48,10 @@
         </li>
       {/each}
     </ul>
-  {:else}
+  {:else if onask}
     <p class="meta">Claude relit ton objectif, tes notes et tes dernières courses pour ajouter quelques conseils personnels au guide.</p>
+  {:else}
+    <p class="meta">Demande-les depuis l'ordinateur.</p>
   {/if}
 
   {#if onask}

@@ -13,6 +13,11 @@
   });
   const WHEN = new Intl.DateTimeFormat("fr-FR", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
   const INT = new Intl.NumberFormat("fr-FR");
+  const KIND_LABELS: Record<LlmUsageRow["kind"], string> = {
+    generation: "Génération de plan",
+    adjustment: "Ajustement",
+    race_advice: "Conseils du jour J",
+  };
 
   function eur(v: number | null): string {
     return v === null ? "—" : `≈ ${EUR.format(v)}`;
@@ -72,7 +77,7 @@
             <details>
               <summary>
                 <span class="meta">{WHEN.format(new Date(r.created_at))}</span>
-                <span>{r.kind === "generation" ? "Génération de plan" : "Ajustement"}</span>
+                <span>{KIND_LABELS[r.kind]}</span>
                 <span class="cost">{eur(r.cost_eur)}</span>
                 {#if r.attempts > 1}<span class="pill">{r.attempts} essais</span>{/if}
                 {#if r.status === "failed"}<span class="pill">échec</span>{/if}

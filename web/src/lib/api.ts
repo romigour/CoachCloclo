@@ -376,7 +376,7 @@ export type DiagnosticsView = { trace_claude: boolean; trace_garmin: boolean; lo
 
 export type LlmUsageRow = {
   created_at: string;
-  kind: "generation" | "adjustment";
+  kind: "generation" | "adjustment" | "race_advice";
   status: "ok" | "failed";
   attempts: number;
   cost_eur: number | null;

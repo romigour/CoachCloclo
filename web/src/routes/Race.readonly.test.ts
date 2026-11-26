@@ -33,6 +33,16 @@ test("readonly hides settings and buttons, keeps the guide and the stale advice"
   expect(fetchSpy).not.toHaveBeenCalled();
 });
 
+test("readonly without advice: points to the desktop, no promised button", async () => {
+  vi.stubGlobal("fetch", vi.fn());
+  copy.view = { ...(fx.race["1"] as RaceView), advice: null, advice_at: null, advice_stale: false };
+  render(Race, { goals: [goal], goalId: goal.id });
+  const section = await screen.findByRole("region", { name: "Conseils du coach" });
+  expect(within(section).getByText("Demande-les depuis l'ordinateur.")).toBeVisible();
+  expect(within(section).queryByText(/Claude relit/)).toBeNull();
+  expect(within(section).queryByRole("button")).toBeNull();
+});
+
 test("readonly trail: no aid station editing", async () => {
   copy.view = fx.race["2"] as RaceView;
   render(Race, { goals: [trailGoal], goalId: trailGoal.id });

@@ -72,4 +72,24 @@ describe("raceView", () => {
       expect(await raceView(db, 1)).toBeNull();
     }
   });
+
+  it("est null si une liste ou la nutrition du guide manque", async () => {
+    const db = await loadFixtureDb("active");
+    const row = await db.execute("SELECT view_json FROM racestrategy WHERE goal_id = 1");
+    const good = JSON.parse(row.rows[0].view_json as string);
+    expect(await raceView(db, 1)).not.toBeNull();
+    const breaks: ((v: any) => void)[] = [
+      (v) => (v.guide = {}),
+      ...["segments", "warnings", "aid_passages", "nutrition"].map((k) => (v: any) => (v.plan[k] = {})),
+      ...["phases", "splits", "morning", "preparation"].map((k) => (v: any) => delete v.guide[k]),
+      (v) => (v.guide.nutrition = []),
+      (v) => delete v.guide.nutrition.intakes,
+    ];
+    for (const breakIt of breaks) {
+      const v = structuredClone(good);
+      breakIt(v);
+      await db.execute({ sql: "UPDATE racestrategy SET view_json = ? WHERE goal_id = 1", args: [JSON.stringify(v)] });
+      expect(await raceView(db, 1)).toBeNull();
+    }
+  });
 });

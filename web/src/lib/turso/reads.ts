@@ -179,6 +179,20 @@ function utcIso(value: unknown): string | null {
   return m ? `${m[1]}T${m[2]}Z` : null;
 }
 
+const arrays = (o: Record<string, unknown>, keys: string[]) => keys.every((k) => Array.isArray(o[k]));
+
+/** Forme minimale lue par l'écran Jour J : listes du plan et du guide, nutrition avec ses prises. */
+function usableView(v: unknown): v is Record<string, unknown> {
+  if (!isObject(v) || !isObject(v.plan) || !isObject(v.guide) || !isObject(v.settings)) return false;
+  const { plan, guide } = v;
+  return (
+    arrays(plan, ["segments", "warnings", "aid_passages", "nutrition"]) &&
+    arrays(guide, ["phases", "splits", "morning", "preparation"]) &&
+    isObject(guide.nutrition) &&
+    Array.isArray(guide.nutrition.intakes)
+  );
+}
+
 /** Copie de la vue Jour J enregistrée par le bureau ; `null` si absente ou inutilisable (jamais d'exception). */
 export async function raceView(db: Db, goalId: number): Promise<RaceView | null> {
   const r = await first(db, "SELECT view_json, view_updated_at FROM racestrategy WHERE goal_id = ?", [goalId]);
@@ -189,6 +203,6 @@ export async function raceView(db: Db, goalId: number): Promise<RaceView | null>
   } catch {
     return null;
   }
-  if (!isObject(parsed) || !isObject(parsed.plan) || !isObject(parsed.guide) || !isObject(parsed.settings)) return null;
+  if (!usableView(parsed)) return null;
   return { ...parsed, updated_at: utcIso(r.view_updated_at) } as unknown as RaceView;
 }

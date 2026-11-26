@@ -75,7 +75,7 @@ def generate_plan(repo: Repo, garmin: GarminPort, llm: LLMProvider) -> PlanRespo
     horizon = repo.horizon_goals(cycle)
     _, zones = refresh_snapshot(repo, garmin)
     n = calendar.n_weeks(cycle.plan_start, cycle.end_date)
-    from coach.services.race_strategy import race_line_for_prompt  # import tardif : race_strategy importe ce module
+    from coach.services.race_strategy import race_line_for_prompt, refresh_snapshots  # import tardif : race_strategy importe ce module
 
     today = garmin.today()
     sessions = repo.sessions(cycle.id)
@@ -137,11 +137,15 @@ def generate_plan(repo: Repo, garmin: GarminPort, llm: LLMProvider) -> PlanRespo
         clear_adjust(c)  # le nouveau plan tient compte de tous les objectifs
         db.add(c)
         stale_pending(db)  # les propositions portaient sur le plan remplacé
+        changed: list[int] = []
         for estimate in plan.estimated_times:
             g = db.get(Goal, estimate.goal_id)
             if estimate.goal_id in estimate_min_s and g is not None and g.target_source == "claude":
+                if g.target_time_s != estimate.seconds:
+                    changed.append(g.id)
                 g.target_time_s = estimate.seconds
                 db.add(g)
+    refresh_snapshots(repo, [g for g in repo.upcoming_goals() if g.id in changed], today)  # hors transaction
     return plan
 
 

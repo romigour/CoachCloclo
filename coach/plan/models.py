@@ -260,6 +260,13 @@ class RaceStrategy(SQLModel, table=True):
     export_error: str | None = None
     # Empreinte (settings_json + basis_json) du plan au dernier export réussi
     exported_hash: str | None = None
+    # Copie de la vue Jour J (JSON sans sa date) pour le mobile, qui lit la base sans Python
+    view_json: str | None = None
+    view_updated_at: dt.datetime | None = None
+    # Conseil du coach : JSON, date, et empreinte des données sur lesquelles il a été écrit
+    advice_json: str | None = None
+    advice_at: dt.datetime | None = None
+    advice_hash: str | None = None
 
 
 class AppState(SQLModel, table=True):

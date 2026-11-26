@@ -490,3 +490,14 @@ def test_long_history_months_start_at_oldest_stored_activity(repo, fake_garmin):
     assert "Volume mensuel de course à pied (2 derniers mois, plus récent d'abord) :" in p
     assert "- novembre 2026 : aucune course" in p
     assert "septembre 2026" not in p
+
+
+def test_generate_refreshes_race_copy(repo, fake_garmin):
+    import json
+
+    from coach.services.race_strategy import get_race_view
+
+    goal = _goal(repo, fake_garmin)
+    get_race_view(repo, fake_garmin, goal.id)
+    generate_plan(repo, fake_garmin, FakeLLMProvider([valid_plan_json(14, 3, estimated_time_s=19800)]))
+    assert json.loads(repo.race_strategy(goal.id).view_json)["target_time_s"] == 19800

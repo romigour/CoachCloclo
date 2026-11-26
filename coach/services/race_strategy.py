@@ -1,16 +1,19 @@
 """Stratégie du jour J : création, réglages et lecture du plan de course."""
 
 import hashlib
-from datetime import date
+import logging
+from datetime import date, datetime, timezone
 from typing import Literal
 
 from pydantic import BaseModel
 
 from coach.analysis.gpx import _NO_ELE, ProfilePoint, profile, waypoints
+from coach.analysis.race_guide import RaceGuide, build_race_guide
 from coach.analysis.race_plan import AidStation, RaceBasis, RacePlan, RaceSettings, build_race_plan
-from coach.export.garmin_workout import race_to_workout_json
+from coach.export.garmin_workout import race_phases_to_workout_json, race_to_workout_json
 from coach.garmin.port import GarminAuthRequired, GarminPort, GarminRateLimited, GarminUnavailable
 from coach.llm.prompts import race_text
+from coach.llm.schemas import CoachAdvice
 from coach.plan.models import Goal, RaceStrategy
 from coach.plan.repo import Repo
 from coach.services import CoachError
@@ -22,6 +25,7 @@ _GARMIN_ERRORS = (GarminUnavailable, GarminAuthRequired, GarminRateLimited)
 _NO_FILE = "Fichier GPX introuvable : découpage sans profil"
 _IGNORED = "Ravito « {} » au-delà de la distance : ignoré"
 _NAME_MAX = 60
+log = logging.getLogger(__name__)
 
 
 class RaceView(BaseModel):
@@ -39,6 +43,11 @@ class RaceView(BaseModel):
     workout_id: int | None
     export_error: str | None
     export_stale: bool  # plan modifié (réglages ou base) depuis le dernier envoi à la montre
+    guide: RaceGuide
+    advice: CoachAdvice | None = None  # conseils du coach (Claude), à la demande
+    advice_at: datetime | None = None
+    advice_stale: bool = False  # course modifiée depuis les conseils : à redemander
+    updated_at: datetime | None = None  # date de la copie stockée pour le mobile
 
 
 def _capture_basis(garmin: GarminPort) -> RaceBasis:
@@ -73,6 +82,15 @@ def _fmt_km(km: float) -> str:
 def _fingerprint(strategy: RaceStrategy, goal: Goal) -> str:
     """Empreinte des réglages, de la base, de la date et du temps visé : change dès que le plan envoyé est périmé."""
     raw = f"{strategy.settings_json}|{strategy.basis_json}|{goal.race_date}|{goal.target_time_s}"
+    return hashlib.sha256(raw.encode()).hexdigest()
+
+
+def advice_fingerprint(goal: Goal, plan: RacePlan) -> str:
+    """Empreinte de ce qui change la course pour les conseils : temps de référence, date, distance, GPX, précisions.
+
+    L'heure de départ et la nutrition n'y entrent pas : un détail ne rend pas les conseils périmés.
+    """
+    raw = f"{plan.reference_time_s}|{goal.race_date}|{goal.distance_km}|{goal.gpx_summary_json}|{goal.notes}"
     return hashlib.sha256(raw.encode()).hexdigest()
 
 
@@ -124,29 +142,52 @@ def _compute(
     return plan, prof
 
 
+def _store_snapshot(repo: Repo, strategy: RaceStrategy, view: RaceView) -> RaceView:
+    """Écrit la copie JSON de la vue si elle a changé ; un échec d'écriture est journalisé, la vue reste servie."""
+    raw = view.model_dump_json(exclude={"updated_at"})
+    if strategy.view_json == raw:
+        return view.model_copy(update={"updated_at": strategy.view_updated_at})
+    strategy.view_json = raw
+    strategy.view_updated_at = datetime.now(timezone.utc).replace(microsecond=0)
+    try:
+        strategy = repo.update(strategy)
+    except Exception:
+        log.exception("copie de la vue Jour J non enregistrée (objectif %s)", view.goal_id)
+        return view
+    return view.model_copy(update={"updated_at": strategy.view_updated_at})
+
+
 def _view(repo: Repo, strategy: RaceStrategy, goal: Goal, today: date) -> RaceView:
     plan, prof = _compute(repo, strategy, goal, today)
-    return RaceView(
+    settings = RaceSettings.model_validate_json(strategy.settings_json)
+    basis = RaceBasis.model_validate_json(strategy.basis_json)
+    advice = CoachAdvice.model_validate_json(strategy.advice_json) if strategy.advice_json else None
+    view = RaceView(
         goal_id=goal.id,
         goal_type=goal.type,
         race_date=goal.race_date,
-        settings=RaceSettings.model_validate_json(strategy.settings_json),
+        settings=settings,
         target_time_s=goal.target_time_s,
         target_source=goal.target_source,
-        basis_date=RaceBasis.model_validate_json(strategy.basis_json).captured_on,
+        basis_date=basis.captured_on,
         profile=_downsample(prof) if prof else None,
         plan=plan,
         workout_id=strategy.garmin_workout_id,
         export_error=strategy.export_error,
         export_stale=strategy.garmin_workout_id is not None and strategy.exported_hash != _fingerprint(strategy, goal),
+        guide=build_race_guide(plan=plan, trail=goal.type == "trail", settings=settings, basis=basis),
+        advice=advice,
+        advice_at=strategy.advice_at if advice is not None else None,
+        advice_stale=advice is not None and strategy.advice_hash != advice_fingerprint(goal, plan),
     )
+    return _store_snapshot(repo, strategy, view)
 
 
 def _get_or_create(repo: Repo, garmin: GarminPort, goal: Goal) -> RaceStrategy:
     strategy = repo.race_strategy(goal.id)
     if strategy is not None:
         return strategy
-    settings = RaceSettings(aid_stations=_stations_from_gpx(repo, goal))
+    settings = RaceSettings(aid_stations=_stations_from_gpx(repo, goal), carbs_g_h=None, water_ml_h=None)
     return repo.add(
         RaceStrategy(
             goal_id=goal.id,
@@ -189,6 +230,22 @@ def reimport_stations(repo: Repo, garmin: GarminPort, goal_id: int) -> RaceView:
     settings.aid_stations = _stations_from_gpx(repo, goal)
     strategy.settings_json = settings.model_dump_json()
     return _view(repo, repo.update(strategy), goal, garmin.today())
+
+
+def refresh_snapshot(repo: Repo, goal: Goal, today: date) -> None:
+    """Remet à jour la copie de la vue d'un objectif ; sans stratégie (jamais créée ici), ne fait rien."""
+    strategy = repo.race_strategy(goal.id)
+    if strategy is not None:
+        _view(repo, strategy, goal, today)
+
+
+def refresh_snapshots(repo: Repo, goals: list[Goal], today: date) -> None:
+    """Rafraîchit la copie de chaque objectif, hors transaction ; une erreur est journalisée, jamais remontée."""
+    for goal in goals:
+        try:
+            refresh_snapshot(repo, goal, today)
+        except Exception:
+            log.exception("copie de la vue Jour J non rafraîchie (objectif %s)", goal.id)
 
 
 def race_plan_for(repo: Repo, goal: Goal, today: date) -> RacePlan | None:
@@ -245,10 +302,22 @@ def export_race(repo: Repo, garmin: GarminPort, goal_id: int) -> RaceView:
     """
     goal = _get_goal(repo, goal_id)
     strategy = _get_or_create(repo, garmin, goal)
-    plan, _ = _compute(repo, strategy, goal, garmin.today())
+    plan, prof = _compute(repo, strategy, goal, garmin.today())
     if plan.reference_time_s is None:
         raise CoachError(_NO_REFERENCE)
-    workout = race_to_workout_json(plan, name=f"Jour J – {goal.distance_km:g} km")
+    name = f"Jour J – {goal.distance_km:g} km"
+    if goal.type == "route" and prof is None:  # sans profil : une étape par phase du guide
+        guide = build_race_guide(
+            plan=plan, trail=False,
+            settings=RaceSettings.model_validate_json(strategy.settings_json),
+            basis=RaceBasis.model_validate_json(strategy.basis_json),
+        )
+        try:
+            workout = race_phases_to_workout_json(guide, name=name)
+        except ValueError as exc:  # phase sans allure : rien d'exploitable à envoyer
+            raise CoachError("Impossible de préparer le Jour J pour la montre : une phase n'a pas d'allure") from exc
+    else:
+        workout = race_to_workout_json(plan, name=name)
     try:
         strategy = _cleanup_old(repo, garmin, strategy)
         workout_id, schedule_id = _upload_and_schedule(garmin, workout, goal.race_date)

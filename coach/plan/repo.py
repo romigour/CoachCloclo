@@ -38,7 +38,7 @@ from coach.storage.pages import is_remote, pages
 _LAPS = TypeAdapter(list[LapSummary])
 
 # Chaque changement de schéma futur doit incrémenter SCHEMA_VERSION.
-SCHEMA_VERSION = 4  # 4 : D+ prévu des séances
+SCHEMA_VERSION = 5  # 5 : copie du guide Jour J et conseil du coach
 
 
 class SchemaTooNew(Exception):
@@ -101,7 +101,7 @@ def make_engine(path: Path) -> Engine:
     return prepare_engine(create_engine(f"sqlite:///{path}"))
 
 
-_MIGRATED = ("goal", "session", "proposal", "cycle", "event", "athletesnapshot")
+_MIGRATED = ("goal", "session", "proposal", "cycle", "event", "athletesnapshot", "racestrategy")
 
 
 def _read_columns(conn: Connection) -> dict[str, set[str]]:
@@ -190,6 +190,34 @@ def _migrate(engine: Engine) -> None:
         add_columns("session", {"export_hr_zones_json": "VARCHAR"})
         # D+ prévu de la séance
         add_columns("session", {"d_plus_m": "INTEGER"})
+        # copie du guide Jour J et conseil du coach ; sur route, nutrition de nouveau déduite de la durée
+        if "view_json" not in existing["racestrategy"]:
+            add_columns(
+                "racestrategy",
+                {
+                    "view_json": "VARCHAR",
+                    "view_updated_at": "DATETIME",
+                    "advice_json": "VARCHAR",
+                    "advice_at": "DATETIME",
+                    "advice_hash": "VARCHAR",
+                },
+            )
+            rows = conn.execute(
+                text(
+                    "SELECT r.id, r.settings_json FROM racestrategy r "
+                    "JOIN goal g ON g.id = r.goal_id WHERE g.type = 'route'"
+                )
+            ).all()
+            for strategy_id, settings_json in rows:
+                try:
+                    settings = json.loads(settings_json)
+                    settings["carbs_g_h"] = settings["water_ml_h"] = None
+                except (ValueError, TypeError):
+                    continue  # ligne corrompue : ignorée
+                conn.execute(
+                    text("UPDATE racestrategy SET settings_json = :s WHERE id = :id"),
+                    {"s": json.dumps(settings), "id": strategy_id},
+                )
 
 
 def active_cycle_stmt() -> Select:

@@ -20,7 +20,7 @@
   type Route = "week" | "program" | "race" | "stats" | "goal" | "setup" | "proposal" | "welcome" | "connection";
   // En lecture seule (PWA mobile) : seules les pages de consultation et la connexion existent.
   const ROUTES: readonly Route[] = READONLY
-    ? ["week", "program", "stats", "connection"]
+    ? ["week", "program", "race", "stats", "connection"]
     : ["week", "program", "race", "stats", "goal", "setup", "proposal", "welcome"];
   // anciennes adresses (Aujourd'hui, Programme) : fusionnées dans « Ma semaine »
   const ALIASES: Record<string, Route> = { today: "week", plan: "week" };
@@ -444,7 +444,10 @@
           {:else if !status && !error}
             <p class="busy">Chargement…</p>
           {:else if status}
-            <p class="card">Aucun objectif actif : le jour J se prépare à partir d'un objectif. <a href="#/goal">Créer un objectif</a></p>
+            <p class="card">
+              Aucun objectif actif : le jour J se prépare à partir d'un objectif.
+              {#if !READONLY}<a href="#/goal">Créer un objectif</a>{/if}
+            </p>
           {/if}
         {:else if route === "stats"}
           <Stats {version} tab={statsTab} history={status?.history ?? null} onimport={importHistory} />

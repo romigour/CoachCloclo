@@ -124,13 +124,12 @@ def test_pace_zone_without_pace_zones_raises():
         session_to_workout_json(INTERVALS_SESSION, zones, name="x")
 
 
-def _race_plan(*, trail: bool):
+def _race_basis():
     from datetime import date
 
-    from coach.analysis.gpx import ProfilePoint
-    from coach.analysis.race_plan import RaceBasis, RaceSettings, build_race_plan
+    from coach.analysis.race_plan import RaceBasis
 
-    basis = RaceBasis(
+    return RaceBasis(
         captured_on=date(2026, 11, 1),
         pred_5k_s=None,
         pred_10k_s=2880,
@@ -139,6 +138,15 @@ def _race_plan(*, trail: bool):
         threshold_pace_s_km=None,
         hr={"Z1": (100, 120), "Z2": (120, 140), "Z3": (140, 160), "Z4": (160, 175), "Z5": (175, 190)},
     )
+
+
+def _race_plan(*, trail: bool):
+    from datetime import date
+
+    from coach.analysis.gpx import ProfilePoint
+    from coach.analysis.race_plan import RaceSettings, build_race_plan
+
+    basis = _race_basis()
     profile = None
     if trail:  # 1 km plat, 3 km à +10 %, 1 km plat
         profile = [ProfilePoint(km=0.0, ele_m=100.0)]
@@ -165,8 +173,8 @@ def test_race_workout_steps():
     assert steps[0]["endCondition"]["conditionTypeKey"] == "distance"
     assert steps[0]["stepType"]["stepTypeKey"] == "interval"
     assert steps[0]["targetType"]["workoutTargetTypeKey"] == "pace.zone"
-    assert steps[0]["targetValueOne"] == pytest.approx(1000 / 293)
-    assert steps[0]["targetValueTwo"] == pytest.approx(1000 / 283)
+    assert steps[0]["targetValueOne"] == pytest.approx(1000 / 298)
+    assert steps[0]["targetValueTwo"] == pytest.approx(1000 / 288)
     assert [s["stepOrder"] for s in steps] == list(range(1, 11))
     assert steps[0]["description"] == "Plat – viser 5 min"
 
@@ -234,3 +242,26 @@ def test_flat_steps_numbers_several_repeats_in_fit_order():
     spec = make_session(steps=[RepeatSpec(repeat=2, steps=[run, run]), run, RepeatSpec(repeat=2, steps=[run]), run])
     # groupes aux rangs 3 et 6, après leurs enfants
     assert [f.step_order for f in flat_steps(spec)] == [1, 2, 1, 2, 4, 5, 5, 7]
+
+
+def test_phases_workout_10k():
+    from coach.analysis.race_guide import build_race_guide
+    from coach.analysis.race_plan import RaceSettings
+    from coach.export.garmin_workout import race_phases_to_workout_json
+
+    plan = _race_plan(trail=False)
+    basis = _race_basis()
+    guide = build_race_guide(plan=plan, trail=False, settings=RaceSettings(), basis=basis)
+    workout = race_phases_to_workout_json(guide, name="Jour J – 10 km")
+    steps = workout["workoutSegments"][0]["workoutSteps"]
+    assert workout["workoutName"] == "Jour J – 10 km"
+    assert [s["endConditionValue"] for s in steps] == [1500, 7000, 1500]
+    assert [s["stepOrder"] for s in steps] == [1, 2, 3]
+    phase = guide.phases[0]
+    assert steps[0]["targetType"]["workoutTargetTypeKey"] == "pace.zone"
+    assert steps[0]["targetValueOne"] == pytest.approx(1000 / phase.pace_high_s_km)
+    assert steps[0]["targetValueTwo"] == pytest.approx(1000 / phase.pace_low_s_km)
+    low, high = phase.pace_low_s_km, phase.pace_high_s_km
+    assert steps[0]["description"] == (
+        f"{phase.name} – {low // 60}:{low % 60:02d}–{high // 60}:{high % 60:02d} /km"
+    )

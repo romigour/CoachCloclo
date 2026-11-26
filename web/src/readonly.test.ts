@@ -77,10 +77,10 @@ test("Stats : aucune action d'import ni de compétition", async () => {
   expect(actions()).toEqual([]);
 });
 
-test("Sidebar : liens de lecture seulement", () => {
+test("readonly sidebar shows the Jour J link (liens de lecture seulement)", () => {
   render(Sidebar, { route: "week", status: f.status });
-  for (const h of ["week", "stats", "connection"]) expect(document.querySelector(`a[href="#/${h}"]`)).not.toBeNull();
-  for (const h of ["goal", "setup", "race", "proposal", "today", "plan"]) expect(document.querySelector(`a[href="#/${h}"]`)).toBeNull();
+  for (const h of ["week", "race", "stats", "connection"]) expect(document.querySelector(`a[href="#/${h}"]`)).not.toBeNull();
+  for (const h of ["goal", "setup", "proposal", "today", "plan"]) expect(document.querySelector(`a[href="#/${h}"]`)).toBeNull();
   expect(actions()).toEqual([]);
 });
 
@@ -160,7 +160,7 @@ test("ErrorBanner : lien et redirection vers la connexion", async () => {
   await waitFor(() => expect(location.hash).toBe("#/connection"));
 });
 
-const DESKTOP_ONLY = ['a[href="#/goal"]', 'a[href="#/setup"]', 'a[href="#/race"]', 'a[href="#/proposal"]'];
+const DESKTOP_ONLY = ['a[href="#/goal"]', 'a[href="#/setup"]', 'a[href="#/proposal"]'];
 const noDesktopLink = () => {
   for (const sel of DESKTOP_ONLY) expect(document.querySelector(sel)).toBeNull();
 };

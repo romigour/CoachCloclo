@@ -12,8 +12,10 @@ from coach.analysis.race_plan import (
     RaceSettings,
     build_race_plan,
     grade_multiplier,
+    pacing_weight,
     predict_run_time,
     race_hr_zone,
+    recommended_intake,
     split_segments,
     step_eq_km,
 )
@@ -124,13 +126,13 @@ def test_flat_route_falls_back_on_prediction_and_pace_targets():
     p = plan()
     assert p.target_time_s is None and p.reference_time_s == 2880 and len(p.segments) == 10
     s = p.segments[0]
-    assert (s.time_s, s.pace_s_km, s.target_kind, s.target_low, s.target_high) == (288, 288, "pace", 283, 293)
+    assert (s.time_s, s.pace_s_km, s.target_kind, s.target_low, s.target_high) == (293, 293, "pace", 288, 298)
     assert p.segments[-1].clock == "08:48" and p.aid_passages == [] and p.nutrition == []
 
 
 def test_target_time_rescales():
     p = plan(target_time_s=2700)
-    assert p.target_time_s == p.reference_time_s == 2700 and p.segments[0].time_s == 270
+    assert p.target_time_s == p.reference_time_s == 2700 and p.segments[0].time_s == 275
     assert "predicted_time_s" not in p.model_dump()
 
 
@@ -144,7 +146,7 @@ STATION = AidStation(km=5, name="Col", kind="complet", cutoff="08:50", stop_min=
 
 
 def test_aid_passage_margin_and_nutrition():
-    p = plan(trail=True, settings=RaceSettings(aid_stations=[STATION]))
+    p = plan(trail=True, settings=RaceSettings(aid_stations=[STATION], carbs_g_h=60, water_ml_h=500))
     assert p.stops_s == 180 and p.reference_time_s == 3060
     a = p.aid_passages[0].passage
     assert (a.elapsed_s, a.clock, a.margin_min, a.status) == (1440, "08:24", 26, "serré")
@@ -154,7 +156,7 @@ def test_aid_passage_margin_and_nutrition():
 
 def test_late_cutoff_warns_and_capacity_alert():
     st = STATION.model_copy(update={"cutoff": "08:20"})
-    p = plan(trail=True, settings=RaceSettings(aid_stations=[st], carry_ml=100))
+    p = plan(trail=True, settings=RaceSettings(aid_stations=[st], water_ml_h=500, carry_ml=100))
     assert p.aid_passages[0].passage.status == "hors délai"
     assert LATE.format("Col") in p.warnings and all(n.over_capacity for n in p.nutrition)
 
@@ -209,3 +211,62 @@ def test_negative_margin_floored():
     p = plan(trail=True, settings=RaceSettings(aid_stations=[st]), target_time_s=3600)
     t = p.aid_passages[0].passage
     assert (t.margin_min, t.status) == (-1, "hors délai")
+
+
+def test_road_start_slower_finish_faster():
+    p = plan(target_time_s=3000)
+    paces = [s.pace_s_km for s in p.segments]
+    assert paces[0] > paces[5] > paces[-1]
+    assert p.segments[-1].elapsed_s == 3000
+    assert 4 <= paces[0] - 300 <= 8  # ≈ +6 s/km au départ
+
+
+def test_trail_pacing_unchanged():
+    p = plan(trail=True, target_time_s=3000)
+    assert {s.pace_s_km for s in p.segments} == {300}
+
+
+def test_pacing_weight_partial_overlap():
+    assert pacing_weight(0, 1.2, 10) == pytest.approx(1.02)
+    assert pacing_weight(1.0, 1.4, 10) == pytest.approx((0.2 * 1.02 + 0.2) / 0.4)
+    assert pacing_weight(4, 6, 10) == pytest.approx(1.0)
+    assert pacing_weight(9, 10, 10) == pytest.approx(0.99)
+
+
+@pytest.mark.parametrize("t,want", [(4499, (0, 0)), (4500, (45, 400)), (9000, (45, 400)), (9001, (75, 500))])
+def test_recommended_intake_tiers(t, want):
+    assert recommended_intake(t) == want
+
+
+def test_nutrition_uses_recommended_when_none():
+    p = plan(trail=True, settings=RaceSettings(aid_stations=[STATION.model_copy(update={"cutoff": None})]),
+             target_time_s=5 * 3600)
+    assert RaceSettings().carbs_g_h is None and RaceSettings().water_ml_h is None
+    assert len(p.nutrition) == 2
+    for leg in p.nutrition:
+        assert leg.carbs_g == round(leg.duration_s / 3600 * 75)
+        assert leg.water_ml == round(leg.duration_s / 3600 * 500)
+    mixed = plan(trail=True, settings=RaceSettings(aid_stations=[STATION], carbs_g_h=30), target_time_s=5 * 3600)
+    assert mixed.nutrition[0].carbs_g == round(mixed.nutrition[0].duration_s / 3600 * 30)
+    assert mixed.nutrition[0].water_ml == round(mixed.nutrition[0].duration_s / 3600 * 500)
+
+
+def test_intake_settings_bounds():
+    with pytest.raises(ValueError):
+        RaceSettings(carbs_g_h=151)
+    with pytest.raises(ValueError):
+        RaceSettings(water_ml_h=-1)
+
+
+def test_road_profile_cut_at_pacing_edges():
+    bumpy = plan(distance_km=36, profile=_prof([(0.6, 0.08), (0.6, -0.08)] * 30), target_time_s=12000)
+    assert len(bumpy.segments) <= 25
+    assert all(a.end_km == b.start_km for a, b in zip(bumpy.segments, bumpy.segments[1:]))
+    assert bumpy.segments[-1].elapsed_s == 12000
+    flat = plan(distance_km=10, profile=_prof([(10, 0)]), target_time_s=3000)
+    assert [s.end_km for s in flat.segments] == [pytest.approx(1.2), pytest.approx(8.8), 10]
+    assert flat.segments[0].pace_s_km > flat.segments[1].pace_s_km > flat.segments[2].pace_s_km
+    climb = plan(distance_km=10, profile=_prof([(10, 0.02)]), target_time_s=3000)
+    assert sum(s.d_plus_m for s in climb.segments) == split_segments(_prof([(10, 0.02)]), 10)[0].d_plus_m
+    tr = plan(trail=True, distance_km=10, profile=_prof([(10, 0)]), target_time_s=3000)
+    assert len(tr.segments) == 1  # trail : pas de coupe

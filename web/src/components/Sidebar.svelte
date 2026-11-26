@@ -42,7 +42,7 @@
         <span class="count" aria-label="1 proposition en attente">1</span>
       {/if}
     </a>
-    {#if !READONLY && status?.next_goal}
+    {#if status?.next_goal}
       <a href="#/race" class:active={route === "race"} aria-current={route === "race" ? "page" : undefined}>
         <Icon name="race" /> Jour J
       </a>

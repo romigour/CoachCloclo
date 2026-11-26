@@ -826,3 +826,67 @@ def test_session_line_shows_d_plus():
     assert _session_line(s).endswith(" | D+ 600 m")
     s.d_plus_m = None
     assert "D+" not in _session_line(s)
+
+
+# --- conseils du coach (jour J) ---------------------------------------------------------------
+
+
+def _race_view(goal, target_time_s=6300):
+    from coach.analysis.race_guide import build_race_guide
+    from coach.analysis.race_plan import RaceBasis, RaceSettings, build_race_plan
+    from coach.services.race_strategy import RaceView
+
+    basis = RaceBasis(
+        captured_on=date(2026, 11, 20), pred_5k_s=None, pred_10k_s=2880, pred_half_s=None, pred_marathon_s=None,
+        threshold_pace_s_km=None, hr={"Z2": (120, 140), "Z3": (140, 155), "Z4": (155, 170)},
+    )
+    settings = RaceSettings(start_time="08:30")
+    plan = build_race_plan(
+        distance_km=goal.distance_km, trail=goal.type == "trail", profile=None, basis=basis, settings=settings,
+        today=date(2026, 11, 26), target_time_s=target_time_s,
+    )
+    guide = build_race_guide(plan=plan, trail=goal.type == "trail", settings=settings, basis=basis)
+    return RaceView(
+        goal_id=1, goal_type=goal.type, race_date=goal.race_date, settings=settings, target_time_s=target_time_s,
+        target_source="user", basis_date=basis.captured_on, profile=None, plan=plan, workout_id=None,
+        export_error=None, export_stale=False, guide=guide,
+    )
+
+
+def test_prompt_contains_notes_and_phases():
+    from coach.llm.prompts import ADVICE_FIGURES_RULE, build_race_advice_prompt
+
+    goal = make_goal(type="route", distance_km=21.1, d_plus_m=100, target_time_s=6300, notes="Genou fragile")
+    goal.id = 1
+    view = _race_view(goal)
+    history = [make_activity()]
+    p = build_race_advice_prompt(goal, view, history, None, [])
+    assert "Genou fragile" in p
+    for phase in view.guide.phases:
+        assert phase.name in p
+    assert "1 h 45" in p  # temps de référence
+    assert "/km" in p  # allures des phases
+    assert view.guide.splits[0].clock in p  # passages
+    assert f"{view.guide.nutrition.carbs_g_h} g" in p
+    assert "Départ à 08:30" in p
+    assert "45 min" in p  # historique récent
+    assert "- Départ, km 0–2, " in p and "- Installation, km 2–8,5, " in p and "- Final, km 18–21,1, " in p  # km à la française
+    assert "Prises prévues : km " in p and not any(f"km {i.km:g}" in p for i in view.guide.nutrition.intakes
+                                                  if i.km != int(i.km))
+    assert ADVICE_FIGURES_RULE in p
+    assert '"tips"' in p
+
+
+def test_prompt_lists_recent_races_and_long_history():
+    from coach.analysis.long_history import LongHistory, PastRace
+    from coach.llm.prompts import ADVICE_FIGURES_RULE, build_race_advice_prompt
+
+    goal = make_goal(type="route", distance_km=21.1, d_plus_m=100, target_time_s=6300)
+    goal.id = 1
+    recent = [make_goal(type="route", distance_km=10, d_plus_m=0, race_date=date(2026, 11, 15), status="done")]
+    lh = LongHistory(months=[], races=[PastRace(date=date(2026, 3, 15), name="Semi de mars", distance_km=21.1,
+                                                d_plus_m=None, time_s=6480, overall_rank=None, overall_total=None)],
+                     records=[])
+    p = build_race_advice_prompt(goal, _race_view(goal), [], lh, recent)
+    assert "Semi de mars" in p and "1:48:00" in p
+    assert "2026-11-15" in p

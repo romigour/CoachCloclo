@@ -376,7 +376,7 @@ export type DiagnosticsView = { trace_claude: boolean; trace_garmin: boolean; lo
 
 export type LlmUsageRow = {
   created_at: string;
-  kind: "generation" | "adjustment";
+  kind: "generation" | "adjustment" | "race_advice";
   status: "ok" | "failed";
   attempts: number;
   cost_eur: number | null;
@@ -421,8 +421,9 @@ export type AidStation = { km: number; name: string; kind: "eau" | "complet"; cu
 
 export type RaceSettings = {
   start_time: string;
-  carbs_g_h: number;
-  water_ml_h: number;
+  /** null : recommandation selon la durée prévue (valeur effective dans `guide.nutrition`). */
+  carbs_g_h: number | null;
+  water_ml_h: number | null;
   carry_ml: number;
   aid_stations: AidStation[];
 };
@@ -473,6 +474,55 @@ export type RacePlan = {
   warnings: string[];
 };
 
+export type Phase = {
+  name: "Départ" | "Installation" | "Cœur de course" | "Final";
+  start_km: number;
+  end_km: number;
+  /** Route : fourchette d'allure (s/km). */
+  pace_low_s_km: number | null;
+  pace_high_s_km: number | null;
+  /** Trail : zone FC et ses bornes (bpm). */
+  hr_zone: HrZone | null;
+  hr_low: number | null;
+  hr_high: number | null;
+  elapsed_end_s: number | null;
+  clock_end: string | null;
+  /** Montées et descentes notables, texte prêt à afficher. */
+  terrain: string[];
+  advice: string;
+};
+
+export type Split = { km: number; label: string; elapsed_s: number; clock: string };
+
+export type Intake = { km: number; clock: string | null; what: string };
+
+export type GuideNutrition = {
+  carbs_g_h: number;
+  water_ml_h: number;
+  /** Glucides et eau tirés de la recommandation (aucun des deux saisi). */
+  recommended: boolean;
+  principle: string;
+  intakes: Intake[];
+};
+
+export type MorningStep = { clock: string; label: string };
+
+export type PrepBlock = { title: "La semaine d'avant" | "La veille" | "Le matin"; items: string[] };
+
+export type RaceGuide = {
+  band: "court" | "semi" | "marathon" | "ultra";
+  reference_time_s: number | null;
+  /** Route seulement. */
+  avg_pace_s_km: number | null;
+  phases: Phase[];
+  splits: Split[];
+  nutrition: GuideNutrition;
+  morning: MorningStep[];
+  preparation: PrepBlock[];
+};
+
+export type CoachAdvice = { tips: { title: string; text: string }[] };
+
 export type RaceView = {
   goal_id: number;
   goal_type: "route" | "trail";
@@ -486,6 +536,14 @@ export type RaceView = {
   export_stale: boolean;
   target_time_s: number | null;
   target_source: "user" | "claude" | null;
+  guide: RaceGuide;
+  /** Conseils du coach (Claude), à la demande. */
+  advice: CoachAdvice | null;
+  advice_at: string | null;
+  /** Course modifiée depuis les conseils : à redemander. */
+  advice_stale: boolean;
+  /** Date de la copie enregistrée pour le mobile. */
+  updated_at: string | null;
 };
 
 export type GoalInput = {
@@ -653,11 +711,16 @@ const rawApi = {
     if (READONLY) return (await import("./turso")).plan();
     return get<Plan>("/plan");
   },
-  racePlan: (goalId: number) => get<RaceView>(`/goals/${goalId}/race-plan`),
+  /** Lecture seule : copie enregistrée par le bureau, `null` s'il n'y en a pas. */
+  racePlan: async (goalId: number): Promise<RaceView | null> => {
+    if (READONLY) return (await import("./turso")).raceView(goalId);
+    return get<RaceView>(`/goals/${goalId}/race-plan`);
+  },
   saveRacePlan: (goalId: number, settings: RaceSettings) => put<RaceView>(`/goals/${goalId}/race-plan`, settings),
   refreshRacePlan: (goalId: number) => post<RaceView>(`/goals/${goalId}/race-plan/refresh`),
   reimportRacePlan: (goalId: number) => post<RaceView>(`/goals/${goalId}/race-plan/reimport`),
   exportRacePlan: (goalId: number) => post<RaceView>(`/goals/${goalId}/race-plan/export`),
+  raceAdvice: (goalId: number) => post<RaceView>(`/goals/${goalId}/race-plan/advice`),
   exportCheck: (id: number, date: string) =>
     get<{ warnings: string[] }>(`/sessions/${id}/export-check?date=${encodeURIComponent(date)}`),
   exportSession: (id: number, date: string) => post<{ warnings: string[] }>(`/sessions/${id}/export`, { date }),
@@ -713,7 +776,7 @@ const rawApi = {
 
 /** Lectures servies par Turso et lectures sans objet (null) : tout le reste est refusé en lecture seule. */
 const READONLY_OK = new Set<string>([
-  "status", "plan", "events", "activities", "trailActivities", "zones", "statsActivities", "statsRecords",
+  "status", "plan", "racePlan", "events", "activities", "trailActivities", "zones", "statsActivities", "statsRecords",
   "setupStatus", "update", "lan",
 ]);
 

@@ -1,3 +1,4 @@
+import json
 import sqlite3
 from datetime import date
 
@@ -5,8 +6,9 @@ import pytest
 
 from coach.garmin.port import LapSummary
 from coach.llm.schemas import RepeatSpec, StepSpec
-from coach.plan.models import Activity, AthleteSnapshot, Event, Goal, Proposal, Session
+from coach.plan.models import Activity, AthleteSnapshot, Event, Goal, Proposal, RaceStrategy, Session
 from coach.plan.repo import (
+    SCHEMA_VERSION,
     Repo,
     active_cycle_stmt,
     count_activities_stmt,
@@ -599,7 +601,7 @@ def test_migration_adds_rest_hr_and_export_zones_columns(tmp_path):
     conn.close()
     assert {"hr_rest_source", "hr_rest_nights"} <= snap_cols
     assert "export_hr_zones_json" in session_cols
-    assert repo.get_state("schema_version") == {"v": 4}
+    assert repo.get_state("schema_version") == {"v": SCHEMA_VERSION}
     snap = repo.latest_snapshot()
     assert (snap.hr_rest, snap.hr_rest_source, snap.hr_rest_nights) == (50, None, None)
 
@@ -808,7 +810,7 @@ def test_open_repairs_missing_table_column_and_version(opened):
     prepare_engine(make())
     assert _sql(path, _SCHEMA) == want
     assert "notes" in {r[1] for r in _sql(path, "PRAGMA table_info(goal)")[0]}
-    assert _sql(path, _VERSION) == [[('{"v": 4}',)]]
+    assert _sql(path, _VERSION) == [[('{"v": 5}',)]]
 
 
 def test_open_migrates_base_from_before_cycles(opened):
@@ -836,7 +838,7 @@ def test_open_migrates_base_from_before_cycles(opened):
     assert repo.active_cycle().id == goal.id
     assert len(repo.sessions(goal.id)) == 1
     assert repo.upcoming_goals()[0].target_time_s == 5400
-    assert repo.get_state("schema_version") == {"v": 4}
+    assert repo.get_state("schema_version") == {"v": SCHEMA_VERSION}
 
 
 def test_missing_index_goes_through_create_all(remote_db, monkeypatch):
@@ -869,4 +871,64 @@ def test_migration_adds_session_d_plus(tmp_path):
     conn.close()
     repo = Repo(make_engine(path))
     assert repo.sessions(cycle.id)[0].d_plus_m is None
-    assert repo.get_state("schema_version") == {"v": 4}
+    assert repo.get_state("schema_version") == {"v": SCHEMA_VERSION}
+
+
+_SNAPSHOT_COLUMNS = ("view_json", "view_updated_at", "advice_json", "advice_at", "advice_hash")
+
+
+def _v4_strategy_db(path):
+    """Base au schéma 4 : une stratégie route et une trail, toutes deux avec nutrition réglée."""
+    repo = Repo(make_engine(path))
+    route = repo.add(make_goal(type="route", distance_km=21.1))
+    trail = repo.add(make_goal(type="trail"))
+    for goal in (route, trail):
+        repo.add(
+            RaceStrategy(
+                goal_id=goal.id,
+                settings_json='{"carbs_g_h": 60, "water_ml_h": 500, "start_time": "08:00"}',
+                basis_json="{}",
+            )
+        )
+    conn = sqlite3.connect(path)
+    for name in _SNAPSHOT_COLUMNS:
+        conn.execute(f"ALTER TABLE racestrategy DROP COLUMN {name}")
+    conn.execute("UPDATE appstate SET value_json = '{\"v\": 4}' WHERE key = 'schema_version'")
+    conn.commit()
+    conn.close()
+    return route.id, trail.id
+
+
+def _settings_by_goal(path):
+    conn = sqlite3.connect(path)
+    rows = conn.execute("SELECT goal_id, settings_json FROM racestrategy").fetchall()
+    conn.close()
+    return {g: json.loads(s) for g, s in rows}
+
+
+def test_migration_adds_race_snapshot_columns_and_resets_route_nutrition(tmp_path):
+    path = tmp_path / "old.db"
+    route_id, trail_id = _v4_strategy_db(path)
+    repo = Repo(make_engine(path))
+    conn = sqlite3.connect(path)
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(racestrategy)")}
+    conn.close()
+    assert set(_SNAPSHOT_COLUMNS) <= cols
+    by_goal = _settings_by_goal(path)
+    assert by_goal[route_id]["carbs_g_h"] is None and by_goal[route_id]["water_ml_h"] is None
+    assert by_goal[route_id]["start_time"] == "08:00"
+    assert by_goal[trail_id]["carbs_g_h"] == 60 and by_goal[trail_id]["water_ml_h"] == 500
+    assert repo.race_strategy(route_id).view_json is None
+    assert repo.get_state("schema_version") == {"v": SCHEMA_VERSION}
+
+
+def test_migration_race_snapshot_is_idempotent(tmp_path):
+    path = tmp_path / "old.db"
+    route_id, _ = _v4_strategy_db(path)
+    make_engine(path)
+    conn = sqlite3.connect(path)
+    conn.execute("UPDATE racestrategy SET settings_json = '{\"carbs_g_h\": 70}' WHERE goal_id = ?", (route_id,))
+    conn.commit()
+    conn.close()
+    make_engine(path)
+    assert _settings_by_goal(path)[route_id]["carbs_g_h"] == 70

@@ -47,8 +47,9 @@ const numIn = (v: number, min: number, max: number) => Number.isFinite(v) && v >
 /** Premier réglage invalide (champ vidé, hors bornes) en français, ou null si tout est valide. */
 export function settingsError(s: RaceSettings): string | null {
   if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(s.start_time ?? "")) return "Heure de départ manquante : saisis-la au format hh:mm.";
-  if (!intIn(s.carbs_g_h, 0, 150)) return "Glucides : saisis un nombre entier de 0 à 150 g/h.";
-  if (!intIn(s.water_ml_h, 0, 2000)) return "Eau : saisis un nombre entier de 0 à 2000 ml/h.";
+  // vide (null) : recommandation selon la durée
+  if (s.carbs_g_h != null && !intIn(s.carbs_g_h, 0, 150)) return "Glucides : saisis un nombre entier de 0 à 150 g/h.";
+  if (s.water_ml_h != null && !intIn(s.water_ml_h, 0, 2000)) return "Eau : saisis un nombre entier de 0 à 2000 ml/h.";
   if (!intIn(s.carry_ml, 1, 5000)) return "Contenance emportée : saisis un nombre entier de 1 à 5000 ml.";
   for (const [i, st] of s.aid_stations.entries()) {
     const name = st.name?.trim() ?? "";

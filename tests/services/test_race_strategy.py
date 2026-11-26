@@ -1,3 +1,4 @@
+import json
 from datetime import date, timedelta
 from pathlib import Path
 
@@ -15,6 +16,7 @@ from coach.services.race_strategy import (
     get_race_view,
     race_line_for_prompt,
     race_plan_for,
+    refresh_snapshot,
     refresh_basis,
     reimport_stations,
     save_settings,
@@ -314,3 +316,114 @@ def test_race_strategy_reads_gpx_from_db(repo, coach_home, garmin):
     view = get_race_view(repo, garmin, goal.id)
     assert view.profile is not None
     assert [s.name for s in view.settings.aid_stations] == ["Ravito Col"]
+
+
+def test_view_has_guide(repo, coach_home, garmin):
+    goal = make_goal(repo, garmin)
+    view = get_race_view(repo, garmin, goal.id)
+    assert view.guide.band
+    assert view.guide.phases
+
+
+def test_snapshot_written_once(repo, coach_home, garmin, monkeypatch):
+    goal = make_goal(repo, garmin)
+    view = get_race_view(repo, garmin, goal.id)
+    stored = repo.race_strategy(goal.id)
+    assert stored.view_json and stored.view_updated_at is not None
+    assert "updated_at" not in json.loads(stored.view_json)
+    assert view.updated_at == stored.view_updated_at
+    calls = []
+    real_update = repo.update
+    monkeypatch.setattr(repo, "update", lambda obj: calls.append(obj) or real_update(obj))
+    again = get_race_view(repo, garmin, goal.id)
+    assert calls == []
+    assert again.updated_at == stored.view_updated_at
+
+
+def test_snapshot_rewritten_when_settings_change(repo, coach_home, garmin):
+    goal = make_goal(repo, garmin)
+    get_race_view(repo, garmin, goal.id)
+    before = repo.race_strategy(goal.id).view_json
+    save_settings(repo, garmin, goal.id, RaceSettings(start_time="09:30"))
+    assert repo.race_strategy(goal.id).view_json != before
+
+
+def test_snapshot_write_failure_does_not_break_read(repo, coach_home, garmin, monkeypatch, caplog):
+    goal = make_goal(repo, garmin)
+    get_race_view(repo, garmin, goal.id)
+    strategy = repo.race_strategy(goal.id)
+    settings = RaceSettings.model_validate_json(strategy.settings_json).model_copy(update={"start_time": "09:30"})
+    strategy.settings_json = settings.model_dump_json()
+    repo.update(strategy)  # la copie stockée ne correspond plus : la prochaine lecture doit l'écrire
+    calls = []
+
+    def failing(obj):
+        calls.append(obj)
+        raise RuntimeError("base indisponible")
+
+    monkeypatch.setattr(repo, "update", failing)
+    with caplog.at_level("ERROR"):
+        view = get_race_view(repo, garmin, goal.id)
+    assert len(calls) == 1
+    assert "copie de la vue Jour J" in caplog.text
+    assert view.settings.start_time == "09:30"
+
+
+def test_new_strategy_nutrition_is_none(repo, coach_home, garmin):
+    goal = make_goal(repo, garmin, kind="route")
+    view = get_race_view(repo, garmin, goal.id)
+    assert view.settings.carbs_g_h is None and view.settings.water_ml_h is None
+
+
+def test_refresh_snapshot_without_strategy_is_noop(repo, coach_home, garmin):
+    goal = make_goal(repo, garmin)
+    refresh_snapshot(repo, goal, garmin.today())
+    assert repo.race_strategy(goal.id) is None
+    assert garmin.metrics_reads == 0
+
+
+def test_refresh_snapshot_updates_changed_copy(repo, coach_home, garmin):
+    goal = make_goal(repo, garmin)
+    get_race_view(repo, garmin, goal.id)
+    goal.race_date = date(2027, 3, 7)
+    goal = repo.update(goal)
+    refresh_snapshot(repo, goal, garmin.today())
+    assert json.loads(repo.race_strategy(goal.id).view_json)["race_date"] == "2027-03-07"
+
+
+def test_export_road_without_gpx_uses_phases(repo, coach_home, garmin):
+    goal = make_goal(repo, garmin, kind="route", gpx=None)
+    set_target(repo, goal, 3000)
+    view = export_race(repo, garmin, goal.id)
+    steps = garmin.workouts[view.workout_id]["workoutSegments"][0]["workoutSteps"]
+    assert len(steps) == len(view.guide.phases) == 3
+    assert sum(s["endConditionValue"] for s in steps) == 10000
+
+
+def test_export_trail_keeps_segments(repo, coach_home, garmin):
+    goal = make_goal(repo, garmin)
+    view = export_race(repo, garmin, goal.id)
+    steps = garmin.workouts[view.workout_id]["workoutSegments"][0]["workoutSteps"]
+    assert len(steps) == len(view.plan.segments)
+
+
+def test_export_road_one_km_has_no_empty_step(repo, coach_home, garmin):
+    goal = make_goal(repo, garmin, kind="route", distance_km=1, gpx=None)
+    set_target(repo, goal, 300)
+    view = export_race(repo, garmin, goal.id)
+    steps = garmin.workouts[view.workout_id]["workoutSegments"][0]["workoutSteps"]
+    assert steps and all(s["endConditionValue"] > 0 for s in steps)
+    assert sum(s["endConditionValue"] for s in steps) == 1000
+
+
+def test_export_unpaced_phases_is_a_coach_error(repo, coach_home, garmin, monkeypatch):
+    import coach.services.race_strategy as rs
+
+    def _no_pace(guide, *, name):
+        raise ValueError("Pas de temps de référence : saisis un temps visé")
+
+    monkeypatch.setattr(rs, "race_phases_to_workout_json", _no_pace)
+    goal = make_goal(repo, garmin, kind="route", gpx=None)
+    set_target(repo, goal, 3000)
+    with pytest.raises(CoachError, match="montre"):
+        export_race(repo, garmin, goal.id)

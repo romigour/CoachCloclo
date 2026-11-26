@@ -29,6 +29,7 @@ _MAX_SEGMENTS = 25
 _SLICE_SIZES_KM = (1, 2, 5, 10)
 
 SegmentKind = Literal["montée", "plat", "descente"]
+IntakeTier = Literal["court", "moyen", "long"]
 _KINDS: tuple[SegmentKind, ...] = ("plat", "montée", "descente")
 
 
@@ -167,8 +168,10 @@ def _slices(distance_km: float) -> list[Span]:
     ]
 
 
-def split_segments(profile: list[ProfilePoint] | None, distance_km: float) -> list[Span]:
-    """Découpe [0, distance] en montées/plats/descentes (au plus 25), sans trou."""
+def split_segments(
+    profile: list[ProfilePoint] | None, distance_km: float, max_segments: int = _MAX_SEGMENTS
+) -> list[Span]:
+    """Découpe [0, distance] en montées/plats/descentes (au plus max_segments), sans trou."""
     if not profile or len(profile) < 2:
         return _slices(distance_km)
     kinds = _step_kinds(profile)
@@ -181,7 +184,7 @@ def split_segments(profile: list[ProfilePoint] | None, distance_km: float) -> li
             break
         nb = [x for x in (i - 1, i + 1) if 0 <= x < len(runs)]
         runs = _merge_at(runs, i, max(nb, key=lambda x: runs[x].km()))
-    while len(runs) > _MAX_SEGMENTS:
+    while len(runs) > max_segments:
         i = min(range(len(runs)), key=lambda x: runs[x].km())
         nb = [x for x in (i - 1, i + 1) if 0 <= x < len(runs)]
         runs = _merge_at(runs, i, min(nb, key=lambda x: runs[x].km()))
@@ -210,10 +213,17 @@ _HHMM = r"^([01]\d|2[0-3]):[0-5]\d$"
 _DAY_MIN = 24 * 60
 _STALE_DAYS = 30
 _PACE_TOLERANCE_S = 5
+_PACING_EDGE = 0.12  # part de la distance concernée au départ et à l'arrivée (route)
+_START_WEIGHT = 1.02  # départ prudent
+_FINISH_WEIGHT = 0.99  # final un peu plus vite
+_MIN_CUT_KM = 0.05  # pas de coupe à moins de 50 m d'une borne existante
 _TIGHT_MARGIN_S = 30 * 60
 _Z4_MAX_S = 90 * 60
 _Z3_MAX_S = 4 * 3600
 _ZONES: tuple[HrZoneName, ...] = get_args(HrZoneName)
+_NO_CARBS_UNDER_S = 75 * 60  # sous 1 h 15, les réserves suffisent
+_MEDIUM_MAX_S = 150 * 60  # jusqu'à 2 h 30 : 30–60 g/h ; au-delà : 60–90 g/h
+_INTAKE: dict[IntakeTier, tuple[int, int]] = {"court": (0, 0), "moyen": (45, 400), "long": (75, 500)}
 
 
 class AidStation(BaseModel):
@@ -230,8 +240,8 @@ class RaceSettings(BaseModel):
     """Réglages de la stratégie saisis par l'athlète."""
 
     start_time: str = Field("08:00", pattern=_HHMM)
-    carbs_g_h: int = Field(60, ge=0, le=150)
-    water_ml_h: int = Field(500, ge=0, le=2000)
+    carbs_g_h: int | None = Field(None, ge=0, le=150)  # None : recommandation selon la durée prévue
+    water_ml_h: int | None = Field(None, ge=0, le=2000)
     carry_ml: int = Field(1000, gt=0, le=5000)
     aid_stations: list[AidStation] = []
 
@@ -297,24 +307,94 @@ def race_hr_zone(total_s: int) -> HrZoneName:
     return "Z3" if total_s <= _Z3_MAX_S else "Z2"
 
 
-def _hhmm_s(hhmm: str) -> int:
+def hhmm_s(hhmm: str) -> int:
     h, m = hhmm.split(":")
     return int(h) * 3600 + int(m) * 60
 
 
-def _clock(start_s: int, elapsed_s: float) -> str:
+def clock_at(start_s: int, elapsed_s: float) -> str:
     """Heure du jour (HH:MM, à la minute la plus proche), modulo 24 h."""
     minutes = round((start_s + elapsed_s) / 60) % _DAY_MIN
     return f"{minutes // 60:02d}:{minutes % 60:02d}"
 
 
-class _Timing:
-    """Temps de course réparti sur les segments au prorata de leur distance équivalente."""
+def intake_tier(duration_s: int) -> IntakeTier:
+    """Palier de nutrition selon la durée prévue : moins de 1 h 15, jusqu'à 2 h 30, au-delà."""
+    if duration_s < _NO_CARBS_UNDER_S:
+        return "court"
+    return "moyen" if duration_s <= _MEDIUM_MAX_S else "long"
 
-    def __init__(self, spans: list[Span], run_s: float, stations: list[AidStation]):
-        total_eq = sum(s.eq_km for s in spans)
+
+def recommended_intake(duration_s: int) -> tuple[int, int]:
+    """(glucides g/h, eau ml/h) recommandés : rien sous 1 h 15, milieu de 30–60 g/h jusqu'à 2 h 30, de 60–90 au-delà."""
+    return _INTAKE[intake_tier(duration_s)]
+
+
+def intake_per_hour(settings: RaceSettings, duration_s: int) -> tuple[int, int]:
+    """Glucides et eau par heure : les réglages, ou la recommandation pour chaque champ non renseigné."""
+    carbs, water = recommended_intake(duration_s)
+    return (
+        carbs if settings.carbs_g_h is None else settings.carbs_g_h,
+        water if settings.water_ml_h is None else settings.water_ml_h,
+    )
+
+
+def _cut(spans: list[Span], km: float) -> list[Span]:
+    """Coupe en deux le tronçon qui contient km ; distance équivalente et dénivelés au prorata."""
+    out: list[Span] = []
+    for s in spans:
+        if not s.start_km + _MIN_CUT_KM < km < s.end_km - _MIN_CUT_KM:
+            out.append(s)
+            continue
+        f = (km - s.start_km) / (s.end_km - s.start_km)
+        up, down = round(s.d_plus_m * f), round(s.d_minus_m * f)
+        out.append(s.model_copy(update={"end_km": km, "eq_km": s.eq_km * f, "d_plus_m": up, "d_minus_m": down}))
+        out.append(
+            s.model_copy(
+                update={
+                    "start_km": km,
+                    "eq_km": s.eq_km * (1 - f),
+                    "d_plus_m": s.d_plus_m - up,
+                    "d_minus_m": s.d_minus_m - down,
+                }
+            )
+        )
+    return out
+
+
+def pace_edges(spans: list[Span], distance_km: float) -> list[Span]:
+    """Route avec profil : coupe les tronçons aux bornes du départ prudent et du final (2 de plus au plus)."""
+    for km in (_PACING_EDGE * distance_km, (1 - _PACING_EDGE) * distance_km):
+        spans = _cut(spans, km)
+    return spans
+
+
+def pacing_weight(start_km: float, end_km: float, distance_km: float) -> float:
+    """Multiplicateur moyen d'effort d'un tronçon : départ prudent, final plus rapide, 1 ailleurs."""
+    length = end_km - start_km
+    if length <= 0:
+        return 1.0
+    edge = _PACING_EDGE * distance_km
+
+    def overlap(lo: float, hi: float) -> float:
+        return max(0.0, min(end_km, hi) - max(start_km, lo))
+
+    head = overlap(0.0, edge)
+    tail = overlap(distance_km - edge, distance_km)
+    return (head * _START_WEIGHT + tail * _FINISH_WEIGHT + (length - head - tail)) / length
+
+
+class _Timing:
+    """Temps de course réparti sur les segments au prorata de leur distance équivalente pondérée."""
+
+    def __init__(
+        self, spans: list[Span], run_s: float, stations: list[AidStation], weights: list[float] | None = None
+    ):
+        w = weights or [1.0] * len(spans)
+        cost = [s.eq_km * x for s, x in zip(spans, w)]
+        total = sum(cost)
         self.spans, self.stations = spans, stations
-        self.seg_s = [run_s * s.eq_km / total_eq for s in spans]
+        self.seg_s = [run_s * c / total for c in cost]
         self.cum_s = [0.0]
         for t in self.seg_s:
             self.cum_s.append(self.cum_s[-1] + t)
@@ -342,7 +422,7 @@ def _passage(elapsed: float, start_s: int, cutoff: str | None) -> Passage:
     """Passage à un ravito ; marge et statut seulement si une barrière est saisie."""
     margin_s = None
     if cutoff is not None:
-        cutoff_s = _hhmm_s(cutoff)
+        cutoff_s = hhmm_s(cutoff)
         if cutoff_s < start_s:  # barrière avant l'heure de départ : c'est le lendemain
             cutoff_s += _DAY_MIN * 60
         margin_s = cutoff_s - (start_s + elapsed)
@@ -351,7 +431,7 @@ def _passage(elapsed: float, start_s: int, cutoff: str | None) -> Passage:
         status = "hors délai" if margin_s < 0 else "ok" if margin_s > _TIGHT_MARGIN_S else "serré"
     return Passage(
         elapsed_s=round(elapsed),
-        clock=_clock(start_s, elapsed),
+        clock=clock_at(start_s, elapsed),
         margin_min=None if margin_s is None else floor(margin_s / 60),  # -30 s → -1, jamais 0 hors délai
         status=status,
     )
@@ -365,10 +445,11 @@ def _nutrition(timing: _Timing, distance_km: float, settings: RaceSettings, tota
         arrive = timing.arrival(idx)
         points.append((st.name, st.km, arrive + st.stop_min * 60, arrive))
     points.append(("Arrivée", distance_km, total_s, total_s))
+    carbs_h, water_h = intake_per_hour(settings, round(total_s))
     legs: list[NutritionLeg] = []
     for (name, km, leave, _), (to_name, to_km, _, arrive) in zip(points, points[1:]):
         duration = arrive - leave
-        water = round(duration / 3600 * settings.water_ml_h)
+        water = round(duration / 3600 * water_h)
         legs.append(
             NutritionLeg(
                 from_name=name,
@@ -376,7 +457,7 @@ def _nutrition(timing: _Timing, distance_km: float, settings: RaceSettings, tota
                 from_km=km,
                 to_km=to_km,
                 duration_s=round(duration),
-                carbs_g=round(duration / 3600 * settings.carbs_g_h),
+                carbs_g=round(duration / 3600 * carbs_h),
                 water_ml=water,
                 over_capacity=water > settings.carry_ml,
             )
@@ -415,13 +496,16 @@ def build_race_plan(
     target = target_time_s
     if target is not None and target <= stops_s:
         raise ValueError("Le temps visé doit dépasser la durée des arrêts aux ravitos")
-    spans = split_segments(profile, distance_km)
+    if trail or not profile:
+        spans = split_segments(profile, distance_km)
+    else:  # un long plat garderait sinon la même allure du départ à l'arrivée
+        spans = pace_edges(split_segments(profile, distance_km, _MAX_SEGMENTS - 2), distance_km)
     eq_km = sum(s.eq_km for s in spans)
     reference = target
     if reference is None:  # repli : estimation d'après les données Garmin
         pred_run = predict_run_time(eq_km, basis)
         reference = None if pred_run is None else pred_run + stops_s
-    start_s = _hhmm_s(settings.start_time)
+    start_s = hhmm_s(settings.start_time)
     warnings: list[str] = []
     if reference is None:
         warnings.append(NO_TIME)
@@ -429,7 +513,8 @@ def build_race_plan(
     if (trail or target is None) and (today - basis.captured_on).days > _STALE_DAYS:
         warnings.append(STALE.format(basis.captured_on))
 
-    ref = None if reference is None else _Timing(spans, reference - stops_s, stations)
+    weights = None if trail else [pacing_weight(s.start_km, s.end_km, distance_km) for s in spans]
+    ref = None if reference is None else _Timing(spans, reference - stops_s, stations, weights)
     segments: list[Segment] = []
     for i, s in enumerate(spans):
         length = s.end_km - s.start_km
@@ -438,7 +523,7 @@ def build_race_plan(
             time_s = round(ref.seg_s[i])
             pace = round(ref.seg_s[i] / length) if length > 0 else None
             elapsed = round(ref.seg_elapsed(i))
-            clock = _clock(start_s, ref.seg_elapsed(i))
+            clock = clock_at(start_s, ref.seg_elapsed(i))
         kind, low, high, zone = _target(s.kind, pace, reference, trail, basis)
         segments.append(
             Segment(

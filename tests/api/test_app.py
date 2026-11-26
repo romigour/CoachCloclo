@@ -1,3 +1,4 @@
+import json
 import logging
 import sqlite3
 import threading
@@ -1445,6 +1446,30 @@ def test_race_plan_routes(make_client):
     r = client.post(f"{url}/export")
     assert r.status_code == 200
     assert r.json()["workout_id"] is not None
+
+
+_ADVICE = json.dumps({"tips": [{"title": f"Conseil {i}", "text": "Pars calmement."} for i in range(3)]})
+
+
+def test_race_plan_advice_route(make_client):
+    client = make_client(llm=FakeLLMProvider([_ADVICE]))
+    gid = _create_trail_goal(client)
+    assert client.get(f"/api/goals/{gid}/race-plan").json()["advice"] is None
+    r = client.post(f"/api/goals/{gid}/race-plan/advice")
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert len(body["advice"]["tips"]) == 3 and body["advice_at"] and body["advice_stale"] is False
+
+
+def test_race_plan_advice_llm_errors(make_client):
+    client = make_client(llm=BrokenLLM())
+    gid = _create_trail_goal(client)
+    r = client.post(f"/api/goals/{gid}/race-plan/advice")
+    assert r.status_code == 502 and r.json()["code"] == "llm_error"
+    client = make_client(llm=FakeLLMProvider(["pas de json", "toujours pas"]))
+    r = client.post(f"/api/goals/{gid}/race-plan/advice")
+    assert r.status_code == 502 and r.json()["code"] == "llm_invalid"
+    assert client.get(f"/api/goals/{gid}/race-plan").status_code == 200  # la page reste lisible
 
 
 def test_race_plan_archived_goal_422(make_client):

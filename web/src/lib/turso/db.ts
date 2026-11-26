@@ -7,7 +7,7 @@ export type Db = {
   execute(stmt: string | { sql: string; args: Arg[] }): Promise<{ rows: Record<string, unknown>[] }>;
 };
 
-const KNOWN_SCHEMA = 4; // 4 : D+ prévu des séances
+const KNOWN_SCHEMA = 5; // 5 : copie de la vue Jour J (racestrategy.view_json)
 
 const MESSAGES = {
   auth: "Jeton Turso refusé",
@@ -77,6 +77,7 @@ export const REQUIRED_COLUMNS: Record<string, string[]> = {
   personalrecord: ["id", "kind", "value", "garmin_activity_id", "date"],
   athletesnapshot: ["id", "date", "zones_json"],
   proposal: ["id", "status"],
+  racestrategy: ["goal_id", "view_json", "view_updated_at"],
 };
 
 export async function checkSchema(db: Db): Promise<void> {

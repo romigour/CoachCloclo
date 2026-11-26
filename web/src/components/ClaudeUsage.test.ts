@@ -23,13 +23,18 @@ test("affiche total du mois, moyenne et dernières actions", async () => {
   serve({
     month: { generations: 4, adjustments: 3, cost_eur: 2.1 },
     avg_generation_eur: 0.38,
-    recent: [row({ attempts: 2 }), row({ kind: "adjustment", status: "failed", cost_eur: null })],
+    recent: [
+      row({ attempts: 2 }),
+      row({ kind: "adjustment", status: "failed", cost_eur: null }),
+      row({ kind: "race_advice", created_at: "2026-11-15T08:00:00+00:00", cost_eur: 0.05 }),
+    ],
   });
   render(ClaudeUsage);
   expect(await screen.findByText(/4 générations · 3 ajustements · ≈ 2,10 €/)).toBeInTheDocument();
   expect(screen.getByText(/Coût moyen d'une génération de plan : ≈ 0,38 €/)).toBeInTheDocument();
   expect(screen.getByText("Génération de plan")).toBeInTheDocument();
   expect(screen.getByText("Ajustement")).toBeInTheDocument();
+  expect(screen.getByText("Conseils du jour J")).toBeInTheDocument();
   expect(screen.getByText("≈ 0,41 €")).toBeInTheDocument();
   expect(screen.getByText("2 essais")).toBeInTheDocument();
   expect(screen.getByText("échec")).toBeInTheDocument();

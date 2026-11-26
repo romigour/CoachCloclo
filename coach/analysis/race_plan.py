@@ -300,12 +300,12 @@ def race_hr_zone(total_s: int) -> HrZoneName:
     return "Z3" if total_s <= _Z3_MAX_S else "Z2"
 
 
-def _hhmm_s(hhmm: str) -> int:
+def hhmm_s(hhmm: str) -> int:
     h, m = hhmm.split(":")
     return int(h) * 3600 + int(m) * 60
 
 
-def _clock(start_s: int, elapsed_s: float) -> str:
+def clock_at(start_s: int, elapsed_s: float) -> str:
     """Heure du jour (HH:MM, à la minute la plus proche), modulo 24 h."""
     minutes = round((start_s + elapsed_s) / 60) % _DAY_MIN
     return f"{minutes // 60:02d}:{minutes % 60:02d}"
@@ -364,7 +364,7 @@ def _passage(elapsed: float, start_s: int, cutoff: str | None) -> Passage:
     """Passage à un ravito ; marge et statut seulement si une barrière est saisie."""
     margin_s = None
     if cutoff is not None:
-        cutoff_s = _hhmm_s(cutoff)
+        cutoff_s = hhmm_s(cutoff)
         if cutoff_s < start_s:  # barrière avant l'heure de départ : c'est le lendemain
             cutoff_s += _DAY_MIN * 60
         margin_s = cutoff_s - (start_s + elapsed)
@@ -373,7 +373,7 @@ def _passage(elapsed: float, start_s: int, cutoff: str | None) -> Passage:
         status = "hors délai" if margin_s < 0 else "ok" if margin_s > _TIGHT_MARGIN_S else "serré"
     return Passage(
         elapsed_s=round(elapsed),
-        clock=_clock(start_s, elapsed),
+        clock=clock_at(start_s, elapsed),
         margin_min=None if margin_s is None else floor(margin_s / 60),  # -30 s → -1, jamais 0 hors délai
         status=status,
     )
@@ -443,7 +443,7 @@ def build_race_plan(
     if reference is None:  # repli : estimation d'après les données Garmin
         pred_run = predict_run_time(eq_km, basis)
         reference = None if pred_run is None else pred_run + stops_s
-    start_s = _hhmm_s(settings.start_time)
+    start_s = hhmm_s(settings.start_time)
     warnings: list[str] = []
     if reference is None:
         warnings.append(NO_TIME)
@@ -461,7 +461,7 @@ def build_race_plan(
             time_s = round(ref.seg_s[i])
             pace = round(ref.seg_s[i] / length) if length > 0 else None
             elapsed = round(ref.seg_elapsed(i))
-            clock = _clock(start_s, ref.seg_elapsed(i))
+            clock = clock_at(start_s, ref.seg_elapsed(i))
         kind, low, high, zone = _target(s.kind, pace, reference, trail, basis)
         segments.append(
             Segment(
